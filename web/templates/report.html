@@ -1,0 +1,976 @@
+<!DOCTYPE html>
+<html lang="{{ .Lang }}">
+<head>
+<meta charset="UTF-8">
+<title>{{ .T.title }}</title>
+<link rel="icon" type="image/svg+xml" href="/static/icon.svg">
+<style>
+* { box-sizing: border-box; margin: 0; padding: 0; }
+body { background:#0d1117; color:#c9d1d9; font-family:'Consolas','Monaco',monospace; font-size:13px; }
+.header { display:flex; align-items:center; justify-content:space-between; padding:14px 24px;
+    background:#161b22; border-bottom:1px solid #30363d; position:sticky; top:0; z-index:100; }
+.header h1 { color:#58a6ff; font-size:18px; letter-spacing:1px; display:flex; align-items:center; gap:8px; }
+.header h1 .logo { width:26px; height:26px; vertical-align:middle; }
+.controls { display:flex; align-items:center; gap:12px; }
+.btn { background:#21262d; color:#c9d1d9; border:1px solid #30363d; padding:5px 12px;
+    border-radius:4px; cursor:pointer; font-family:inherit; font-size:12px; text-decoration:none; }
+.btn:hover { background:#30363d; }
+.btn:disabled { opacity:.45; cursor:default; } .btn:disabled:hover { background:#21262d; }
+.btn-stop { background:#3d1c1c; color:#f85149; border-color:#8b1a1a; }
+.lang { display:inline-flex; gap:7px; align-items:center; }
+.lang a { display:inline-block; line-height:0; opacity:.4; filter:grayscale(.6); border:1.5px solid transparent; border-radius:3px; transition:opacity .15s, filter .15s, border-color .15s; }
+.lang a:hover { opacity:.85; filter:grayscale(.2); }
+.lang a.active { opacity:1; filter:none; border-color:#58a6ff; box-shadow:0 0 0 1px #58a6ff33; }
+.lang a svg { width:30px; height:20px; display:block; border-radius:2px; }
+table { width:100%; border-collapse:collapse; }
+th { background:#161b22; color:#8b949e; font-weight:600; font-size:11px; text-transform:uppercase;
+    letter-spacing:.5px; padding:8px 12px; text-align:left; border-bottom:1px solid #30363d; }
+td { padding:6px 12px; border-bottom:1px solid #21262d; white-space:nowrap; vertical-align:middle; }
+.main-row { cursor:pointer; }
+.main-row:hover { background:#161b22; }
+.main-row.suspicious { background:#1a1205; }
+.main-row.open td, .main-row.open:hover td, .main-row.open.suspicious td { background:#15314e; }
+.main-row.open td:first-child { box-shadow:inset 3px 0 0 #2f81f7; }
+.main-row.pinned-row td, .main-row.pinned-row:hover td, .main-row.pinned-row.suspicious td, .main-row.pinned-row.open td { background:#3a2a0d; }
+.main-row.pinned-row td:first-child { box-shadow:inset 3px 0 0 #e3914e; }
+.details-row td { background:#0d1117; }
+.detail-block { padding:10px 16px; }
+.detail-block h4 { color:#58a6ff; font-size:11px; text-transform:uppercase; margin-bottom:6px; }
+.detail-line { display:flex; gap:10px; padding:2px 0; }
+.detail-label { color:#8b949e; min-width:90px; }
+.listen { color:#8b949e; } .established { color:#3fb950; } .remote-yes { color:#58a6ff; }
+.threat { display:inline-block; min-width:30px; text-align:center; padding:1px 7px; border-radius:10px; font-weight:bold; }
+.threat-high{background:#3d1c1c;color:#f85149;} .threat-med{background:#3a2e10;color:#e3b341;}
+.threat-low{background:#21262d;color:#d29922;} .threat-min{background:#12261a;color:#3fb950;}
+.threat-partial{background:#1c2128;color:#8b949e;border:1px dashed #484f58;} /* low score but incomplete data */
+.partial-mark{margin-left:1px;font-weight:normal;opacity:.85;}
+.risk-info{cursor:default;color:#8b949e;font-weight:normal;font-size:11px;}
+.pw-wrap{position:relative;}
+.pw-eye{position:absolute;right:9px;top:50%;transform:translateY(-50%);cursor:pointer;opacity:.55;font-size:14px;user-select:none;}
+.pw-eye:hover{opacity:.9;}
+/* lock toggle switch */
+.lock-switch{display:inline-flex;align-items:center;gap:7px;cursor:pointer;user-select:none;font-size:12px;color:#c9d1d9;}
+.lock-switch input{display:none;}
+.lock-track{width:38px;height:20px;background:#30363d;border-radius:20px;position:relative;transition:background .15s;flex:0 0 auto;}
+.lock-thumb{position:absolute;top:2px;left:2px;width:16px;height:16px;background:#8b949e;border-radius:50%;transition:left .15s,background .15s;}
+.lock-switch input:checked + .lock-track{background:#1f6feb;}
+.lock-switch input:checked + .lock-track .lock-thumb{left:20px;background:#fff;}
+/* pinned (locked) snapshots — discreet, collapsible, orange-accented */
+.pinned-panel{border:1px solid #30363d;border-left:3px solid #e3914e;background:#0d1117;border-radius:6px;margin:0 0 12px;}
+.pinned-head{display:flex;justify-content:space-between;align-items:center;padding:5px 12px;color:#e3914e;font-weight:600;font-size:12px;cursor:pointer;user-select:none;}
+#pinned-chevron{display:inline-block;transition:transform .15s;font-size:10px;}
+.pinned-panel.collapsed #pinned-chevron{transform:rotate(-90deg);}
+.pinned-panel.collapsed .pinned-list{display:none;}
+.btn-mini{padding:2px 8px;font-size:11px;}
+.hist-tools{display:flex;align-items:center;gap:6px;flex-wrap:wrap;}
+.hist-sel{background:#0d1117;color:#c9d1d9;border:1px solid #30363d;border-radius:4px;padding:3px 6px;font-size:11px;}
+.pinned-list{padding:8px 12px;display:flex;flex-direction:column;gap:8px;}
+.pinned-card{border:1px solid #30363d;border-radius:6px;background:#161b22;}
+.pinned-card-head{display:flex;justify-content:space-between;align-items:center;gap:10px;padding:7px 12px;border-bottom:1px solid #21262d;flex-wrap:wrap;}
+.pc-info{display:flex;align-items:center;gap:8px;flex-wrap:wrap;font-size:12px;}
+.pc-info .t{color:#8b949e;font-weight:normal;}
+.pinned-card .details-content{padding:8px 12px 12px;}
+.sig-ok{color:#3fb950;} .sig-bad{color:#f85149;font-weight:bold;} .sig-na{color:#484f58;}
+.badge-wl{color:#3fb950;}
+.vt-bad{color:#f85149;font-weight:bold;} .vt-ok{color:#3fb950;} .vt-na{color:#484f58;}
+.loading-cell{text-align:center;color:#8b949e;padding:28px;font-size:14px;}
+.live-panel{margin:8px;border:1px solid #30363d;border-radius:6px;background:#0d1117;}
+.live-head{display:flex;align-items:center;justify-content:space-between;gap:16px;padding:6px 12px;
+    background:#161b22;border-bottom:1px solid #30363d;font-size:12px;color:#8b949e;}
+.live-head .l{display:flex;align-items:center;gap:12px;}
+.live-toggle{display:flex;align-items:center;gap:5px;cursor:pointer;}
+#live-count{background:#21262d;border-radius:10px;padding:1px 8px;color:#58a6ff;}
+.live-feed{max-height:160px;overflow-y:auto;padding:6px 12px;font-size:12px;line-height:1.7;}
+.live-feed:empty::after{content:attr(data-empty);color:#484f58;}
+.live-ev{white-space:nowrap;} .live-ev .t{color:#484f58;}
+.ev-new{color:#3fb950;} .ev-remote{color:#58a6ff;} .ev-closed{color:#6e7681;} .ev-alert{color:#f85149;font-weight:bold;}
+th{cursor:pointer;user-select:none;} th:hover{color:#58a6ff;}
+.status-pill{font-size:11px;padding:3px 10px;border-radius:12px;border:1px solid #30363d;color:#8b949e;white-space:nowrap;}
+.status-on{color:#3fb950;border-color:#238636;} .status-off{color:#f85149;border-color:#8b1a1a;} .status-cap{color:#e3b341;border-color:#9e7a16;}
+select{background:#0d1117;color:#c9d1d9;border:1px solid #30363d;padding:3px 6px;border-radius:4px;font-family:inherit;font-size:12px;max-width:240px;}
+.details-content{display:flex;flex-wrap:wrap;gap:12px;padding:8px 16px;}
+.detail-block{flex:1;min-width:260px;}
+.cmdline-block{background:#161b22;border:1px solid #21262d;border-radius:4px;padding:6px 8px;
+    color:#8b949e;font-size:11px;white-space:pre-wrap;word-break:break-all;max-height:80px;overflow:auto;}
+.conn-list{max-height:120px;overflow:auto;} .conn-entry{padding:2px 0;color:#8b949e;}
+.actions-block{flex:0 0 auto;margin-left:auto;display:flex;flex-direction:column;align-items:flex-start;gap:8px;}
+.action-btns{display:flex;flex-direction:column;align-items:stretch;gap:6px;width:max-content;}
+.action-btns .btn{text-align:center;}
+.ipsel-panel{display:flex;flex-direction:column;gap:6px;margin-top:4px;align-items:flex-start;}
+.ipsel-title{color:#8b949e;font-size:11px;}
+.ipsel-box{display:flex;flex-direction:column;gap:6px;font-size:13px;color:#c9d1d9;max-height:50vh;overflow-y:auto;overflow-x:hidden;border:1px solid #21262d;border-radius:4px;padding:8px 10px;}
+.ipsel-item{display:flex;align-items:center;gap:8px;cursor:pointer;white-space:nowrap;margin:0;}
+.ipsel-item input{margin:0;width:auto;flex:0 0 auto;}
+.btn-sniff{background:#1f3a5f;color:#58a6ff;border-color:#1f6feb;}
+.capture-panel{flex-basis:100%;border:1px solid #1f3a5f;border-radius:6px;margin-top:6px;}
+.capture-header{display:flex;justify-content:space-between;padding:6px 12px;background:#0d1b2e;color:#58a6ff;font-size:12px;}
+.capture-stats{padding:4px 12px;color:#8b949e;font-size:11px;border-bottom:1px solid #21262d;}
+.capture-stats.cap-active{color:#e3b341;font-weight:bold;}
+.capture-stats.cap-stopped{color:#8b949e;}
+.capture-stats.cap-err{color:#f85149;}
+.capture-output{padding:8px 12px;height:240px;overflow:auto;font-size:12px;line-height:1.6;white-space:pre-wrap;word-break:break-all;}
+.pkt-time{color:#484f58;} .pkt-flow{color:#c9d1d9;} .pkt-tls{color:#3fb950;} .pkt-http{color:#58a6ff;}
+.pkt-dns{color:#d2a8ff;} .pkt-syn{color:#e3b341;} .pkt-fin{color:#f85149;} .pkt-flags{color:#8b949e;}
+.pkt-dir{color:#6e7681;} .pkt-proto{color:#58a6ff;font-weight:bold;} .pkt-size{color:#6e7681;}
+.cap-ctrls{display:flex;align-items:center;gap:8px;}
+.cap-count{padding:2px 4px;max-width:70px;}
+.cap-protos{color:#8b949e;}
+.capture-doms{padding:4px 12px;font-size:11px;color:#8b949e;max-height:54px;overflow:auto;line-height:1.8;}
+.cap-dom{display:inline-block;background:#161b22;border:1px solid #30363d;border-radius:8px;padding:0 6px;margin:1px 2px;color:#d2a8ff;}
+.cap-filter{display:block;width:calc(100% - 24px);margin:6px 12px 0;background:#0d1117;color:#c9d1d9;border:1px solid #30363d;border-radius:4px;padding:3px 8px;font-family:inherit;font-size:12px;}
+.hist-row{display:grid;grid-template-columns:80px 90px 1fr 1fr;gap:8px;padding:3px 0;border-bottom:1px solid #21262d;white-space:nowrap;}
+.hist-row .t{color:#484f58;}
+.blk-row{display:flex;justify-content:space-between;align-items:center;gap:12px;padding:8px 0;border-bottom:1px solid #21262d;}
+.blk-row .t{color:#484f58;font-size:11px;} .blk-report{color:#8b949e;font-size:11px;}
+.wl-section{margin:14px 0 4px;color:#8b949e;font-size:12px;text-transform:uppercase;letter-spacing:.5px;border-bottom:1px solid #30363d;padding-bottom:4px;}
+.wl-section:first-child{margin-top:0;}
+#privacy-modal{cursor:default;}
+.priv-table{width:100%;table-layout:fixed;border-collapse:collapse;font-size:12.5px;}
+.priv-table th,.priv-table td{padding:6px 8px;text-align:left;vertical-align:top;overflow-wrap:anywhere;cursor:default;}
+.priv-table th{color:#8b949e;border-bottom:1px solid #30363d;font-weight:600;}
+.priv-table td{border-bottom:1px solid #21262d;}
+.priv-table td:first-child{font-family:ui-monospace,monospace;color:#c9d1d9;}
+.priv-table col.c1{width:32%}.priv-table col.c2{width:38%}.priv-table col.c3{width:30%}
+.priv-safe{color:#3fb950;}
+.aud-row{padding:8px 10px;border-left:3px solid #30363d;margin-bottom:6px;background:#0d1117;border-radius:0 4px 4px 0;}
+.aud-row .aud-h{font-size:13px;} .aud-row .aud-h .t{color:#484f58;font-size:11px;text-transform:uppercase;margin-left:6px;}
+.aud-row .aud-d{color:#8b949e;font-size:11px;margin-top:3px;word-break:break-all;}
+.aud-note{background:#3a2e10;color:#e3b341;border:1px solid #9e7a16;border-radius:6px;padding:8px 12px;margin-bottom:10px;font-size:11px;}
+.aud-risk{border-left-color:#f85149;} .aud-warn{border-left-color:#e3b341;}
+.aud-ok{border-left-color:#3fb950;} .aud-info{border-left-color:#58a6ff;}
+.details-content, .details-content * { cursor: default; }
+.ports,.vt-bad[title]{border-bottom:1px dotted #484f58;}
+.provider-chip{background:#12261a;color:#3fb950;border:1px solid #238636;border-radius:8px;padding:1px 7px;font-size:10px;}
+.prov-note{color:#8b949e;font-size:10px;border:1px solid #30363d;border-radius:8px;padding:1px 6px;margin-left:6px;}
+#filter{background:#0d1117;color:#c9d1d9;border:1px solid #30363d;border-radius:4px;padding:3px 8px;font-family:inherit;font-size:12px;width:240px;}
+.admin-warn{background:#3a2e10;color:#e3b341;border:1px solid #9e7a16;border-radius:6px;margin:8px;padding:8px 12px;font-size:12px;}
+.modal{position:fixed;inset:0;background:rgba(0,0,0,.6);z-index:1000;display:flex;align-items:center;justify-content:center;}
+.modal-box{background:#0d1117;border:1px solid #30363d;border-radius:8px;width:90%;max-width:520px;}
+.modal-head{display:flex;justify-content:space-between;padding:10px 16px;border-bottom:1px solid #30363d;color:#58a6ff;}
+.modal-body{padding:14px 16px;font-size:12px;}
+.modal-body label{display:block;color:#8b949e;margin-bottom:4px;}
+.modal-body label.live-toggle{display:flex;align-items:center;justify-content:flex-start;gap:6px;color:#c9d1d9;}
+.modal-body label.live-toggle input{margin:0;width:auto;flex:0 0 auto;}
+.modal-body input{width:100%;background:#0d1117;color:#c9d1d9;border:1px solid #30363d;
+    border-radius:4px;padding:6px 8px;font-family:inherit;margin-bottom:12px;}
+.modal-body input[type=checkbox]{width:auto;flex:0 0 auto;margin:0;padding:0;}
+</style>
+</head>
+<body>
+
+<div class="header">
+    <h1><img src="/static/icon.svg" alt="" class="logo"> {{ .T.title }}</h1>
+    <div class="controls">
+        <span id="cap-status" class="status-pill">{{ .T.detecting }}</span>
+        <label style="color:#8b949e;font-size:12px;">{{ .T.iface_label }}
+            <select id="iface-select"><option value="1">…</option></select>
+        </label>
+        <span class="lang">
+            <a href="?lang=es" class="{{ if eq .Lang "es" }}active{{ end }}" title="Español" aria-label="Español"><svg viewBox="0 0 9 6"><rect width="9" height="6" fill="#c60b1e"/><rect y="1.5" width="9" height="3" fill="#ffc400"/></svg></a>
+            <a href="?lang=en" class="{{ if eq .Lang "en" }}active{{ end }}" title="English" aria-label="English"><svg viewBox="0 0 60 30"><clipPath id="ukc"><rect width="60" height="30"/></clipPath><g clip-path="url(#ukc)"><rect width="60" height="30" fill="#012169"/><path d="M0,0 L60,30 M60,0 L0,30" stroke="#fff" stroke-width="6"/><path d="M0,0 L60,30 M60,0 L0,30" stroke="#C8102E" stroke-width="4"/><rect x="25" width="10" height="30" fill="#fff"/><rect y="10" width="60" height="10" fill="#fff"/><rect x="27" width="6" height="30" fill="#C8102E"/><rect y="12" width="60" height="6" fill="#C8102E"/></g></svg></a>
+        </span>
+        <label class="live-toggle" style="color:#8b949e;font-size:12px;"><input type="checkbox" id="hide-self" checked onchange="loadConnections()"> {{ .T.hide_self }}</label>
+        <button class="btn" onclick="openAudit()">{{ .T.audit_title }}</button>
+        <button class="btn" onclick="openHistory()">{{ .T.history }}</button>
+        <button class="btn" onclick="openBlocked()">{{ .T.blocked }}</button>
+        <button class="btn" onclick="openWhitelist()">{{ .T.wl_title }}</button>
+        <button class="btn" onclick="openSettings()">{{ .T.settings }}</button>
+        <button class="btn" onclick="openPrivacy()">{{ .T.priv_btn }}</button>
+        <button class="btn" onclick="loadConnections()">{{ .T.refresh }}</button>
+    </div>
+</div>
+
+{{ if not .Admin }}<div class="admin-warn">⚠ {{ .T.admin_warn }}</div>{{ end }}
+
+<div class="live-panel">
+    <div class="live-head">
+        <div class="l"><span>{{ .T.live_activity }}</span><span id="live-count">0</span></div>
+        <div class="l">
+            <input id="filter" placeholder="🔍 {{ .T.filter_ph }}" oninput="filterRows()">
+            <label class="live-toggle"><input type="checkbox" id="auto-refresh" checked> {{ .T.autorefresh }}</label>
+            <button class="btn" onclick="clearFeed()">{{ .T.clear }}</button>
+        </div>
+    </div>
+    <div id="live-feed" class="live-feed" data-empty="{{ .T.feed_waiting }}"></div>
+</div>
+
+<div id="pinned-panel" class="pinned-panel collapsed" style="display:none">
+    <div class="pinned-head" onclick="togglePinned()">
+        <span><span id="pinned-chevron">▾</span> 📌 {{ .T.pinned_title }} <span id="pinned-count">0</span></span>
+        <button class="btn btn-mini" onclick="event.stopPropagation(); clearPinned()">{{ .T.pinned_clear }}</button>
+    </div>
+    <div id="pinned-list" class="pinned-list"></div>
+</div>
+
+<table>
+<thead>
+<tr>
+    <th onclick="sortBy(0,'num')">{{ .T.col_risk }} <span class="risk-info" title="{{ .T.score_disclaimer }}" onclick="event.stopPropagation()">ⓘ</span></th>
+    <th onclick="sortBy(1,'num')">{{ .T.col_port }}</th>
+    <th onclick="sortBy(2,'num')">{{ .T.col_pid }}</th>
+    <th onclick="sortBy(3,'str')">{{ .T.col_state }}</th>
+    <th onclick="sortBy(4,'str')">{{ .T.col_process }}</th>
+    <th onclick="sortBy(5,'str')">{{ .T.col_parent }}</th>
+    <th onclick="sortBy(6,'str')">{{ .T.col_proto }}</th>
+    <th onclick="sortBy(7,'num')">{{ .T.col_vt }}</th>
+    <th onclick="sortBy(8,'str')">{{ .T.col_sig }}</th>
+    <th onclick="sortBy(9,'str')">{{ .T.col_path }}</th>
+    <th></th>
+</tr>
+</thead>
+<tbody id="conn-tbody">
+<tr><td colspan="11" class="loading-cell">{{ .T.loading }}</td></tr>
+</tbody>
+</table>
+
+<div id="settings-modal" class="modal" style="display:none" onclick="if(event.target===this)closeSettings()">
+    <div class="modal-box">
+        <div class="modal-head"><span>{{ .T.settings }}</span><button class="btn" onclick="closeSettings()">✕</button></div>
+        <div class="modal-body">
+            <label>VirusTotal API key <span id="vt-status"></span></label>
+            <input type="password" id="vt-key" placeholder="VirusTotal API key">
+            <label>AbuseIPDB API key <span id="abuse-status"></span></label>
+            <input type="password" id="abuse-key" placeholder="AbuseIPDB API key">
+            <label>{{ .T.refresh_int }}</label>
+            <input type="number" id="refresh-interval" min="0" max="3600" value="0" style="width:90px">
+            <div style="color:#484f58;font-size:11px;margin:-6px 0 12px;">{{ .T.refresh_int_hint }}</div>
+            <label class="live-toggle" style="margin-bottom:8px;"><input type="checkbox" id="notify-desktop"> {{ .T.notify_desktop }}</label>
+            <label class="live-toggle" style="margin-bottom:8px;"><input type="checkbox" id="notify-sound"> {{ .T.notify_sound }}</label>
+            <label class="live-toggle" style="margin-bottom:4px;"><input type="checkbox" id="persist-whitelist"> {{ .T.persist_wl }}</label>
+            <label class="live-toggle" style="margin-bottom:4px;"><input type="checkbox" id="persist-blocks"> {{ .T.persist_blocks }}</label>
+            <div style="color:#484f58;font-size:11px;margin:0 0 12px;">{{ .T.persist_hint }}</div>
+            <label class="live-toggle" style="margin-bottom:4px;"><input type="checkbox" id="auth-enabled" onchange="authToggled()"> 🔒 {{ .T.auth_label }}</label>
+            <div id="auth-pw-row" style="display:none;margin-bottom:4px;">
+                <div class="pw-wrap">
+                    <input type="password" id="auth-password" autocomplete="new-password" placeholder="{{ .T.auth_pw_ph }}" style="width:100%;padding-right:34px">
+                    <span class="pw-eye" onclick="togglePw()" title="{{ .T.auth_show }}">👁</span>
+                </div>
+                <input type="password" id="auth-password-confirm" autocomplete="new-password" placeholder="{{ .T.auth_pw_confirm }}" style="width:100%;margin-top:6px">
+            </div>
+            <div style="color:#484f58;font-size:11px;margin:0 0 12px;">{{ .T.auth_hint }} <a id="logout-link" href="/logout" style="display:none;color:#58a6ff;margin-left:6px;">{{ .T.logout }}</a></div>
+            <div id="listen-row" style="display:none">
+                <label>{{ .T.listen_label }}</label>
+                <input type="text" id="listen-addr" placeholder="127.0.0.1:5000" style="width:100%">
+                <div style="color:#484f58;font-size:11px;margin:-2px 0 8px;">{{ .T.listen_hint }}</div>
+                <button class="btn btn-mini" onclick="restartNow()">{{ .T.restart_now }}</button>
+                <span id="restart-msg" class="t" style="margin-left:8px;color:#8b949e;font-size:11px;"></span>
+                <div style="border-bottom:1px solid #21262d;margin:12px 0;"></div>
+            </div>
+            <button class="btn" onclick="saveSettings()">{{ .T.save }}</button>
+            <span id="settings-msg"></span>
+        </div>
+    </div>
+</div>
+
+<div id="history-modal" class="modal" style="display:none" onclick="if(event.target===this)closeHistory()">
+    <div class="modal-box" style="max-width:1000px;max-height:80vh;display:flex;flex-direction:column">
+        <div class="modal-head"><span>{{ .T.history }}</span>
+            <span class="hist-tools">
+                <input type="text" id="hist-proc" class="hist-sel" placeholder="{{ .T.hist_proc_ph }}" style="width:120px">
+                <select id="hist-kind" class="hist-sel"><option value="">{{ .T.hist_kind_all }}</option></select>
+                <select id="hist-age" class="hist-sel">
+                    <option value="0">{{ .T.hist_age_any }}</option>
+                    <option value="3600">{{ .T.hist_age_1h }}</option>
+                    <option value="86400">{{ .T.hist_age_1d }}</option>
+                    <option value="604800">{{ .T.hist_age_7d }}</option>
+                </select>
+                <button class="btn btn-stop" onclick="deleteHistory()">🗑 {{ .T.hist_delete }}</button>
+                <a class="btn" href="/export.csv">⬇ CSV</a> <a class="btn" href="/export.json">⬇ JSON</a>
+                <button class="btn" onclick="closeHistory()">✕</button>
+            </span>
+        </div>
+        <div id="history-body" class="modal-body" style="overflow-y:auto">…</div>
+    </div>
+</div>
+
+<div id="blocked-modal" class="modal" style="display:none" onclick="if(event.target===this)closeBlocked()">
+    <div class="modal-box" style="max-width:900px;max-height:80vh;display:flex;flex-direction:column">
+        <div class="modal-head"><span>{{ .T.blocked }}</span><button class="btn" onclick="closeBlocked()">✕</button></div>
+        <div id="blocked-body" class="modal-body" style="overflow-y:auto">…</div>
+    </div>
+</div>
+
+<div id="audit-modal" class="modal" style="display:none" onclick="if(event.target===this)closeAudit()">
+    <div class="modal-box" style="max-width:1000px;max-height:85vh;display:flex;flex-direction:column">
+        <div class="modal-head"><span>{{ .T.audit_title }} <span id="audit-sum"></span></span>
+            <span>
+                <button class="btn" onclick="openAudit()">{{ .T.audit_rerun }}</button>
+                <a class="btn" href="/audit.txt">⬇ TXT</a>
+                <a class="btn" href="/audit.json">⬇ JSON</a>
+                <button class="btn" onclick="closeAudit()">✕</button>
+            </span>
+        </div>
+        <div id="audit-body" class="modal-body" style="overflow-y:auto">…</div>
+    </div>
+</div>
+
+<div id="block-modal" class="modal" style="display:none" onclick="if(event.target===this)closeBlock()">
+    <div class="modal-box" style="max-width:520px">
+        <div class="modal-head"><span>{{ .T.block_ip }}</span><button class="btn" onclick="closeBlock()">✕</button></div>
+        <div class="modal-body">
+            <div class="ipsel-title">{{ .T.select_ips }}</div>
+            <div id="block-ips" class="ipsel-box"></div>
+            <div style="margin-top:12px;display:flex;gap:8px;">
+                <button class="btn btn-stop" onclick="blockModalSelected()">{{ .T.confirm }}</button>
+                <button class="btn" onclick="closeBlock()">{{ .T.cancel }}</button>
+            </div>
+        </div>
+    </div>
+</div>
+
+<div id="privacy-modal" class="modal" style="display:none" onclick="if(event.target===this)closePrivacy()">
+    <div class="modal-box" style="max-width:850px">
+        <div class="modal-head"><span>{{ .T.priv_title }}</span><button class="btn" onclick="closePrivacy()">✕</button></div>
+        <div class="modal-body">
+            <p style="color:#8b949e;font-size:13px;margin:0 0 14px;">{{ .T.priv_intro }}</p>
+            <table class="priv-table">
+                <colgroup><col class="c1"><col class="c2"><col class="c3"></colgroup>
+                <thead><tr><th>{{ .T.priv_col_service }}</th><th>{{ .T.priv_col_sends }}</th><th>{{ .T.priv_col_when }}</th></tr></thead>
+                <tbody>
+                    <tr><td>ip-api.com</td><td>{{ .T.priv_sends_ip }}</td><td>{{ .T.priv_when_always }}</td></tr>
+                    <tr><td>VirusTotal</td><td>{{ .T.priv_sends_haship }}</td><td>{{ .T.priv_when_vt }}</td></tr>
+                    <tr><td>AbuseIPDB</td><td>{{ .T.priv_sends_ip }}</td><td>{{ .T.priv_when_abuse }}</td></tr>
+                    <tr><td>Shodan InternetDB</td><td>{{ .T.priv_sends_ip }}</td><td>{{ .T.priv_when_always }}</td></tr>
+                    <tr><td>abuse.ch (Feodo, ThreatFox)</td><td class="priv-safe">{{ .T.priv_sends_nothing }}</td><td>{{ .T.priv_when_always }}</td></tr>
+                    <tr><td>Spamhaus DROP</td><td class="priv-safe">{{ .T.priv_sends_nothing }}</td><td>{{ .T.priv_when_always }}</td></tr>
+                    <tr><td>Tor Project</td><td class="priv-safe">{{ .T.priv_sends_nothing }}</td><td>{{ .T.priv_when_always }}</td></tr>
+                </tbody>
+            </table>
+            <p style="color:#8b949e;font-size:12px;margin:14px 0 0;">{{ .T.priv_note }}</p>
+            <p style="color:#8b949e;font-size:12px;margin:8px 0 0;">{{ .T.priv_cache }}</p>
+            <p style="color:#3fb950;font-size:12px;margin:8px 0 0;">✓ {{ .T.priv_audit }}</p>
+            <p style="color:#3fb950;font-size:12px;margin:8px 0 0;">✓ {{ .T.priv_local }}</p>
+        </div>
+    </div>
+</div>
+
+<div id="whitelist-modal" class="modal" style="display:none" onclick="if(event.target===this)closeWhitelist()">
+    <div class="modal-box" style="max-width:900px;max-height:80vh;display:flex;flex-direction:column">
+        <div class="modal-head"><span>{{ .T.wl_title }}</span><button class="btn" onclick="closeWhitelist()">✕</button></div>
+        <div id="whitelist-body" class="modal-body" style="overflow-y:auto">…</div>
+    </div>
+</div>
+
+<script>
+const T = {{ json .T }};
+let refreshSecs = {{ .RefreshSecs }}; // table auto-refresh seconds (server-persisted)
+
+function loadConnections() {
+    const self = document.getElementById('hide-self').checked ? '0' : '1';
+    fetch('/api/connections?self=' + self)
+        .then(r => r.text())
+        .then(html => { document.getElementById('conn-tbody').innerHTML = html; filterRows(); syncPinnedToggles(); })
+        .catch(() => {});
+}
+
+// ── Pinned (locked) connection snapshots ──────────────────────────────────
+const pinnedSigs = new Set();
+
+function toggleLock(input, i) {
+    const detail = document.getElementById('d' + i);
+    const row = detail ? detail.previousElementSibling : null;
+    if (!row) return;
+    const sig = row.dataset.sig;
+    if (input.checked) pinConnection(row, detail, sig);
+    else unpin(sig);
+}
+
+function pinConnection(row, detail, sig) {
+    pinnedSigs.add(sig);
+    if (row) row.classList.add('pinned-row');
+    if (!sig || document.querySelector('#pinned-list [data-sig="' + sig + '"]')) return; // already pinned
+    const content = detail.querySelector('.details-content').cloneNode(true);
+    content.querySelectorAll('.actions-block, .capture-panel').forEach(el => el.remove());
+    const threat = row.querySelector('.threat');
+    const badge = threat ? threat.outerHTML : '';
+    const when = new Date().toLocaleTimeString();
+    const card = document.createElement('div');
+    card.className = 'pinned-card';
+    card.setAttribute('data-sig', sig);
+    card.innerHTML =
+        '<div class="pinned-card-head">' +
+            '<span class="pc-info">' + badge + ' <strong>' + esc(row.dataset.proc || '') + '</strong>' +
+            ' <span class="t">PID ' + esc(row.dataset.pid || '—') + '</span>' +
+            ' <span class="t">' + esc(row.dataset.local || '') + (row.dataset.remote ? ' → ' + esc(row.dataset.remote) : '') + '</span>' +
+            ' <span class="t">· ' + esc(T.pinned_at) + ' ' + when + '</span></span>' +
+            '<button class="btn btn-stop" onclick="unpin(this.closest(\'.pinned-card\').dataset.sig)">✕</button>' +
+        '</div>';
+    card.appendChild(content);
+    document.getElementById('pinned-list').appendChild(card);
+    updatePinnedPanel();
+}
+
+function unpin(sig) {
+    pinnedSigs.delete(sig);
+    const card = document.querySelector('#pinned-list [data-sig="' + sig + '"]');
+    if (card) card.remove();
+    document.querySelectorAll('#conn-tbody tr.main-row').forEach(r => {
+        if (r.dataset.sig === sig) {
+            r.classList.remove('pinned-row');
+            const cb = r.nextElementSibling && r.nextElementSibling.querySelector('.lock-switch input');
+            if (cb) cb.checked = false;
+        }
+    });
+    updatePinnedPanel();
+}
+
+function clearPinned() {
+    pinnedSigs.clear();
+    document.getElementById('pinned-list').innerHTML = '';
+    document.querySelectorAll('.lock-switch input').forEach(cb => cb.checked = false);
+    document.querySelectorAll('#conn-tbody tr.pinned-row').forEach(r => r.classList.remove('pinned-row'));
+    updatePinnedPanel();
+}
+
+function updatePinnedPanel() {
+    const n = document.querySelectorAll('#pinned-list .pinned-card').length;
+    document.getElementById('pinned-count').textContent = n;
+    document.getElementById('pinned-panel').style.display = n ? 'block' : 'none';
+}
+function togglePinned() { document.getElementById('pinned-panel').classList.toggle('collapsed'); }
+
+// keep the lock toggle checked for connections still live after a refresh
+function syncPinnedToggles() {
+    if (!pinnedSigs.size) return;
+    document.querySelectorAll('#conn-tbody tr.main-row').forEach(r => {
+        if (pinnedSigs.has(r.dataset.sig)) {
+            r.classList.add('pinned-row');
+            const cb = r.nextElementSibling && r.nextElementSibling.querySelector('.lock-switch input');
+            if (cb) cb.checked = true;
+        }
+    });
+}
+
+function filterRows() {
+    const q = (document.getElementById('filter').value || '').toLowerCase();
+    document.querySelectorAll('#conn-tbody tr.main-row').forEach(m => {
+        const hay = (m.getAttribute('data-search') || '').toLowerCase();
+        const show = !q || hay.includes(q);
+        m.style.display = show ? '' : 'none';
+        const d = m.nextElementSibling;
+        if (d && d.classList.contains('details-row') && !show) d.style.display = 'none';
+    });
+}
+
+function toggleDetails(i) {
+    const row = document.getElementById('d' + i);
+    if (!row) return;
+    const show = row.style.display === 'none';
+    row.style.display = show ? 'table-row' : 'none';
+    const main = row.previousElementSibling;
+    if (main && main.classList.contains('main-row')) main.classList.toggle('open', show);
+}
+
+function postJSON(url, body, method = 'POST') {
+    return fetch(url, { method, headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) })
+        .then(r => r.json());
+}
+
+function killProc(pid, name) {
+    if (!confirm(`${T.kill_proc} — ${name} (${pid})?`)) return;
+    postJSON('/api/kill', { PID: pid }).then(res => {
+        alert(res.ok ? 'OK' : 'Error: ' + res.error);
+        if (res.ok) loadConnections();
+    });
+}
+
+function toggleWhitelist(exe, listed) {
+    postJSON('/api/whitelist', { Exe: exe }, listed ? 'DELETE' : 'POST').then(() => loadConnections());
+}
+
+function toggleIPWhitelist(ip, listed) {
+    postJSON('/api/ip_whitelist', { IP: ip }, listed ? 'DELETE' : 'POST').then(() => loadConnections());
+}
+
+function blockIp(ip) {
+    if (!confirm(`${T.block_ip} — ${ip}?`)) return;
+    postJSON('/api/block_ip', { IP: ip }).then(res => alert(res.ok ? 'OK' : 'Error: ' + res.error));
+}
+
+function openBlock(btn) {
+    const ips = (btn.dataset.ips || '').split(',').filter(Boolean);
+    document.getElementById('block-ips').innerHTML = ips.map(ip =>
+        `<label class="ipsel-item"><input type="checkbox" value="${esc(ip)}" checked> ${esc(ip)}</label>`).join('');
+    document.getElementById('block-modal').style.display = 'flex';
+}
+function closeBlock() { document.getElementById('block-modal').style.display = 'none'; }
+function blockModalSelected() {
+    const ips = [...document.querySelectorAll('#block-ips input:checked')].map(c => c.value);
+    if (!ips.length) return;
+    Promise.all(ips.map(ip => postJSON('/api/block_ip', { IP: ip }))).then(rs => {
+        const bad = rs.filter(r => !r.ok);
+        alert(bad.length ? ('Error: ' + bad.map(b => b.error).join(' · ')) : 'OK');
+        closeBlock();
+    });
+}
+
+function openSettings() {
+    document.getElementById('settings-modal').style.display = 'flex';
+    document.getElementById('vt-key').value = '';
+    document.getElementById('abuse-key').value = '';
+    document.getElementById('settings-msg').textContent = '';
+    fetch('/api/settings').then(r => r.json()).then(s => {
+        document.getElementById('refresh-interval').value = String(s.refresh_secs || 0);
+        document.getElementById('notify-desktop').checked = !!s.notify_desktop;
+        document.getElementById('notify-sound').checked = !!s.notify_sound;
+        document.getElementById('persist-whitelist').checked = !!s.persist_whitelist;
+        document.getElementById('persist-blocks').checked = !!s.persist_blocks;
+        document.getElementById('auth-enabled').checked = !!s.auth_enabled;
+        document.getElementById('auth-password').value = '';
+        document.getElementById('auth-password-confirm').value = '';
+        document.getElementById('auth-password').type = 'password';
+        document.getElementById('auth-password-confirm').type = 'password';
+        document.getElementById('logout-link').style.display = s.auth_enabled ? 'inline' : 'none';
+        document.getElementById('listen-addr').value = s.listen_addr || '';
+        document.getElementById('restart-msg').textContent = '';
+        authToggled(); // pw fields + listen address only when login is on
+        document.getElementById('vt-status').textContent =
+            s.vt_configured ? `(${s.vt_hint})` : '✗';
+        document.getElementById('abuse-status').textContent =
+            s.abuse_configured ? `(${s.abuse_hint})` : '✗';
+    });
+}
+function closeSettings() { document.getElementById('settings-modal').style.display = 'none'; }
+function togglePw() {
+    const a = document.getElementById('auth-password'), b = document.getElementById('auth-password-confirm');
+    const t = a.type === 'password' ? 'text' : 'password';
+    a.type = t; b.type = t;
+}
+// pw fields + listen address (network exposure) only make sense with login on
+function authToggled() {
+    const on = document.getElementById('auth-enabled').checked;
+    document.getElementById('auth-pw-row').style.display = on ? 'block' : 'none';
+    document.getElementById('listen-row').style.display = on ? 'block' : 'none';
+}
+function clampSecs() { return Math.max(0, Math.min(3600, parseInt(document.getElementById('refresh-interval').value || '0', 10) || 0)); }
+function settingsPayload() {
+    return {
+        VTKey: document.getElementById('vt-key').value,
+        AbuseKey: document.getElementById('abuse-key').value,
+        NotifyDesktop: document.getElementById('notify-desktop').checked,
+        NotifySound: document.getElementById('notify-sound').checked,
+        PersistWhitelist: document.getElementById('persist-whitelist').checked,
+        PersistBlocks: document.getElementById('persist-blocks').checked,
+        RefreshSecs: clampSecs(),
+        AuthEnabled: document.getElementById('auth-enabled').checked,
+        AuthPassword: document.getElementById('auth-password').value,
+        ListenAddr: document.getElementById('listen-addr').value,
+    };
+}
+function pwMismatch() {
+    const pw = document.getElementById('auth-password').value;
+    return document.getElementById('auth-enabled').checked && pw !== '' &&
+        pw !== document.getElementById('auth-password-confirm').value;
+}
+function saveSettings() {
+    if (pwMismatch()) { document.getElementById('settings-msg').textContent = '⚠ ' + T.auth_mismatch; return; }
+    refreshSecs = clampSecs();
+    applyRefreshInterval();
+    postJSON('/api/settings', settingsPayload()).then(s => {
+        if (s && s.auth_error) { document.getElementById('settings-msg').textContent = '⚠ ' + s.auth_error; return; }
+        document.getElementById('settings-msg').textContent = '✓'; loadConnections(); openSettings();
+    });
+}
+// derive the URL the dashboard will live at after a restart with the new address
+function targetURL() {
+    let addr = (document.getElementById('listen-addr').value || '').trim() || '127.0.0.1:5000';
+    let host, port;
+    const m6 = addr.match(/^\[(.+)\]:(\d+)$/);
+    if (m6) { host = m6[1]; port = m6[2]; }
+    else { const i = addr.lastIndexOf(':'); if (i >= 0) { host = addr.slice(0, i); port = addr.slice(i + 1); } else { host = addr; port = '5000'; } }
+    if (!host || host === '0.0.0.0' || host === '::') host = '127.0.0.1';
+    if (!port) port = '5000';
+    const loopback = host === 'localhost' || host === '::1' || /^127\./.test(host);
+    const h = host.includes(':') ? '[' + host + ']' : host;
+    return (loopback ? 'http' : 'https') + '://' + h + ':' + port;
+}
+function restartNow() {
+    if (pwMismatch()) { document.getElementById('restart-msg').textContent = '⚠ ' + T.auth_mismatch; return; }
+    if (!confirm(T.restart_confirm)) return;
+    const msg = document.getElementById('restart-msg'), target = targetURL();
+    msg.textContent = T.restart_doing;
+    refreshSecs = clampSecs(); applyRefreshInterval();
+    const go = () => {
+        msg.innerHTML = T.restart_doing + ' → <a href="' + target + '" style="color:#58a6ff">' + target + '</a>';
+        setTimeout(() => { location.href = target; }, 6500); // ~ port handoff time
+    };
+    postJSON('/api/settings', settingsPayload())
+        .then(() => postJSON('/api/restart', {}))
+        .then(go).catch(go);
+}
+
+// ── Live monitor ──────────────────────────────────────────────────────────
+let liveCount = 0, refreshTimer = null;
+
+function clearFeed() {
+    document.getElementById('live-feed').innerHTML = '';
+    liveCount = 0;
+    document.getElementById('live-count').textContent = '0';
+}
+
+function anyDetailOpen() {
+    return [...document.querySelectorAll('tr.details-row')].some(r => r.style.display === 'table-row');
+}
+function busy() {
+    return Object.keys(activeSources).length > 0 || anyDetailOpen();
+}
+let periodicTimer = null;
+function applyRefreshInterval() {
+    if (periodicTimer) { clearInterval(periodicTimer); periodicTimer = null; }
+    if (refreshSecs > 0) periodicTimer = setInterval(() => { if (!busy()) loadConnections(); }, refreshSecs * 1000);
+}
+
+function scheduleRefresh() {
+    if (!document.getElementById('auto-refresh').checked) return;
+    if (busy()) return; // never refresh while you're inspecting a row or capturing
+    if (refreshTimer) return;
+    refreshTimer = setTimeout(() => {
+        refreshTimer = null;
+        if (!busy()) loadConnections();
+    }, 1500);
+}
+
+function esc(s) {
+    return (s || '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+}
+
+function eventLabel(ev) {
+    const proc = ev.process || 'N/A', pid = ev.pid || '—';
+    let tags = ev.new_process ? ` [${T.tag_newproc}]` : '';
+    if (ev.anomaly) tags += ` [${T.tag_newbin}]`;
+    if (ev.beacon) return `⚠ ${T.ev_beacon} ~${ev.beacon}s — ${proc} (${pid}) → ${ev.remote}${tags}`;
+    switch (ev.kind) {
+        case 'closed':  return `✕ ${T.ev_closed} — ${proc} (${pid})${ev.remote ? ' → ' + ev.remote : ''}`;
+        case 'alert':   return `⚠ ${ev.detail || T.ev_suspicious} — ${proc} (${pid}) → ${ev.remote || ev.local}${tags}`;
+        case 'remote':  return `→ ${T.ev_new} — ${proc} (${pid}) → ${ev.remote}${tags}`;
+        default:        return `+ ${T.ev_new} — ${proc} (${pid}) ${ev.remote ? '→ ' + ev.remote : (ev.local || '')}${tags}`;
+    }
+}
+
+const monitorES = new EventSource('/events');
+monitorES.onmessage = (e) => {
+    const ev = JSON.parse(e.data);
+    if (ev.kind === 'hello') return;
+    const feed = document.getElementById('live-feed');
+    const div = document.createElement('div');
+    div.className = 'live-ev ev-' + ev.kind;
+    div.innerHTML = `<span class="t">[${ev.ts}]</span> ` + esc(eventLabel(ev));
+    feed.prepend(div);
+    while (feed.children.length > 200) feed.removeChild(feed.lastChild);
+    document.getElementById('live-count').textContent = ++liveCount;
+    scheduleRefresh();
+};
+
+// ── Interface selector + capture status ───────────────────────────────────
+let ifaceStatus = { text: T.detecting || '…', cls: 'status-pill', title: '' };
+const activeSources = {}, packetCounts = {};
+
+function refreshStatus() {
+    const pill = document.getElementById('cap-status');
+    const n = Object.keys(activeSources).length;
+    if (n > 0) {
+        const total = Object.values(packetCounts).reduce((a, b) => a + (b || 0), 0);
+        pill.textContent = `● ${T.ev_capturing} — ${n}, ${total} pkts`;
+        pill.className = 'status-pill status-cap'; pill.title = '';
+    } else {
+        pill.textContent = ifaceStatus.text; pill.className = ifaceStatus.cls; pill.title = ifaceStatus.title;
+    }
+}
+
+fetch('/api/interfaces').then(r => r.json()).then(info => {
+    const sel = document.getElementById('iface-select');
+    const ifs = info.interfaces || [];
+    if (!ifs.length) {
+        sel.innerHTML = '<option value="1">tshark ✗</option>';
+        ifaceStatus = { text: '● tshark ✗', cls: 'status-pill status-off', title: '' };
+        return refreshStatus();
+    }
+    sel.innerHTML = '';
+    ifs.forEach(i => {
+        const o = document.createElement('option');
+        o.value = i.index; o.textContent = `${i.index}. ${i.friendly}`;
+        if (i.index === info.recommended) o.selected = true;
+        sel.appendChild(o);
+    });
+    ifaceStatus = { text: `● ${info.adapter || 'auto'} (idx ${info.recommended})`,
+        cls: 'status-pill status-on', title: info.local_ip || '' };
+    refreshStatus();
+}).catch(() => {});
+
+// ── Live packet capture ───────────────────────────────────────────────────
+const capState = {}; // i -> per-capture stats/buffer
+const enc = encodeURIComponent;
+
+function human(n) {
+    const u = ['B','KB','MB','GB']; let f = n || 0, k = 0;
+    while (f >= 1024 && k < u.length-1) { f /= 1024; k++; }
+    return f.toFixed(f < 10 && k > 0 ? 1 : 0) + ' ' + u[k];
+}
+
+// While capturing the panel button is an active Stop; once stopped it becomes
+// disabled (restart is done with the row's Sniff button).
+function setCapBtn(i, capturing) {
+    const btn = document.getElementById('cap-btn-' + i);
+    if (!btn) return;
+    if (capturing) {
+        btn.disabled = false;
+        btn.textContent = '■ Stop';
+        btn.className = 'btn btn-stop';
+        btn.onclick = () => stopCapture(i);
+    } else {
+        btn.disabled = true;          // same text, just disabled state
+        btn.className = 'btn btn-stop';
+        btn.onclick = null;
+    }
+}
+
+function openCapture(i, localIp, remoteIp) {
+    document.getElementById('d' + i).style.display = 'table-row';
+    document.getElementById('cap-panel-' + i).style.display = 'block';
+    document.getElementById('cap-output-' + i).innerHTML = '';
+    document.getElementById('cap-doms-' + i).innerHTML = '';
+    const stats = document.getElementById('cap-stats-' + i);
+    stats.className = 'capture-stats cap-active'; stats.textContent = T.cap_starting;
+    packetCounts[i] = 0;
+    if (activeSources[i]) activeSources[i].close();
+    if (capState[i] && capState[i].timer) clearInterval(capState[i].timer);
+    capState[i] = { packets: [], n: 0, outB: 0, inB: 0, protos: {}, domains: new Set(),
+        localIp, start: Date.now(), timer: setInterval(() => flushCapture(i), 300) };
+
+    const iface = document.getElementById('iface-select').value;
+    const count = document.getElementById('cap-count-' + i).value;
+    const es = new EventSource(`/capture?local_ip=${enc(localIp)}&remote_ip=${enc(remoteIp)}&iface=${enc(iface)}&count=${enc(count)}`);
+    activeSources[i] = es; setCapBtn(i, true); refreshStatus();
+    es.onmessage = e => {
+        const pkt = JSON.parse(e.data);
+        if (pkt.done)  return endCapture(i, T.cap_done, false);
+        if (pkt.error) return endCapture(i, T.cap_error + ': ' + pkt.error, true);
+        ingest(i, pkt);
+    };
+    es.onerror = () => endCapture(i, T.cap_error, true);
+}
+
+function ingest(i, p) {
+    const s = capState[i]; if (!s) return;
+    s.n++; packetCounts[i] = s.n;
+    const len = parseInt(p.len) || 0;
+    if (p.ip_src === s.localIp) { s.outB += len; p._out = true; } else { s.inB += len; p._out = false; }
+    const proto = p.proto || (p.tcp_src || p.tcp_dst ? 'TCP' : (p.udp_src || p.udp_dst ? 'UDP' : '?'));
+    p._proto = proto; s.protos[proto] = (s.protos[proto] || 0) + 1;
+    const dom = p.tls_sni || p.http_host || p.dns;
+    if (dom) s.domains.add(dom);
+    s.packets.push(p);
+    if (s.packets.length > 3000) s.packets.shift();
+}
+
+function flushCapture(i) {
+    const s = capState[i]; if (!s) return;
+    const secs = Math.max(1, (Date.now() - s.start) / 1000);
+    const protos = Object.entries(s.protos).sort((a,b)=>b[1]-a[1])
+        .map(([k,v]) => `${esc(k)} ${v}`).join(' · ');
+    const stats = document.getElementById('cap-stats-' + i);
+    if (s.n > 0) stats.className = 'capture-stats';
+    stats.innerHTML = `● ${s.n} ${T.cap_pkts} · ↑${human(s.outB)} ↓${human(s.inB)} · ${(s.n/secs).toFixed(1)}/s`
+        + (protos ? ` · <span class="cap-protos">${protos}</span>` : '');
+    const dl = document.getElementById('cap-doms-' + i);
+    dl.innerHTML = s.domains.size
+        ? '🌐 ' + [...s.domains].slice(0,40).map(d=>`<span class="cap-dom">${esc(d)}</span>`).join(' ')
+        : '';
+    renderPackets(i);
+}
+
+function renderPackets(i) {
+    const s = capState[i]; if (!s) return;
+    const q = (document.getElementById('cap-filter-' + i).value || '').toLowerCase();
+    let rows = s.packets;
+    if (q) rows = rows.filter(p => [p.ip_src,p.ip_dst,p._proto,p.tls_sni,p.http_host,p.dns,p.info]
+        .filter(Boolean).join(' ').toLowerCase().includes(q));
+    const out = document.getElementById('cap-output-' + i);
+    out.innerHTML = rows.slice(-500).map(formatPacket).join('\n');
+    if (document.getElementById('cap-auto-' + i).checked) out.scrollTop = out.scrollHeight;
+}
+
+function endCapture(i, msg, isErr) {
+    const s = capState[i];
+    if (s && s.timer) clearInterval(s.timer);
+    if (activeSources[i]) { activeSources[i].close(); delete activeSources[i]; }
+    if (s) flushCapture(i);
+    setCapBtn(i, false);
+    const stats = document.getElementById('cap-stats-' + i);
+    if (stats) {
+        stats.className = 'capture-stats ' + (isErr ? 'cap-err' : 'cap-stopped');
+        stats.innerHTML = `${esc(msg)} — ${packetCounts[i] || 0} ${T.cap_pkts}`;
+    }
+    refreshStatus();
+}
+
+function stopCapture(i) {
+    if (activeSources[i]) endCapture(i, T.cap_stopped, false);
+}
+
+function downloadPcap(ev, i) {
+    ev.preventDefault();
+    const panel = document.getElementById('cap-panel-' + i);
+    const iface = document.getElementById('iface-select').value;
+    let count = document.getElementById('cap-count-' + i).value;
+    if (count === '0') count = '5000';
+    window.location = `/capture.pcap?local_ip=${enc(panel.dataset.local)}&remote_ip=${enc(panel.dataset.remote)}&iface=${enc(iface)}&count=${count}`;
+}
+
+function formatPacket(p) {
+    let o = '';
+    if (p.time) { const d = new Date(parseFloat(p.time) * 1000);
+        o += `<span class="pkt-time">[${d.toLocaleTimeString('es-ES', { hour12: false })}]</span> `; }
+    o += `<span class="pkt-dir">${p._out ? '↑' : '↓'}</span> `;
+    if (p._proto) o += `<span class="pkt-proto">${esc(p._proto)}</span> `;
+    if (p.len) o += `<span class="pkt-size">${p.len}B</span> `;
+    const sp = p.tcp_src || p.udp_src || '', dp = p.tcp_dst || p.udp_dst || '';
+    o += `<span class="pkt-flow">${esc(p.ip_src || '?')}${sp ? ':' + sp : ''} → ${esc(p.ip_dst || '?')}${dp ? ':' + dp : ''}</span>`;
+    if (p.tcp_flags) { const c = p.syn === '1' ? 'pkt-syn' : p.fin === '1' ? 'pkt-fin' : 'pkt-flags';
+        o += ` <span class="${c}">[${esc(p.tcp_flags)}]</span>`; }
+    if (p.tls_sni)   o += ` <span class="pkt-tls">TLS ${esc(p.tls_sni)}</span>`;
+    if (p.http_host) o += ` <span class="pkt-http">${esc(p.http_method || 'HTTP')} ${esc(p.http_host)}${esc(p.http_uri || '')}</span>`;
+    if (p.dns)       o += ` <span class="pkt-dns">DNS ${esc(p.dns)}</span>`;
+    return o;
+}
+
+// ── History ───────────────────────────────────────────────────────────────
+function openHistory() {
+    const m = document.getElementById('history-modal'), b = document.getElementById('history-body');
+    m.style.display = 'flex'; b.textContent = '…';
+    fetch('/api/events?limit=500').then(r => r.json()).then(evs => {
+        // refresh the kind filter with the kinds actually present
+        const sel = document.getElementById('hist-kind'), cur = sel.value;
+        const kinds = [...new Set((evs || []).map(e => e.kind).filter(Boolean))].sort();
+        sel.innerHTML = `<option value="">${esc(T.hist_kind_all)}</option>` +
+            kinds.map(k => `<option value="${esc(k)}">${esc(k)}</option>`).join('');
+        sel.value = kinds.includes(cur) ? cur : '';
+        if (!evs || !evs.length) { b.textContent = '—'; return; }
+        b.innerHTML = evs.map(e => `<div class="hist-row"><span class="t">${esc(e.ts||'')}</span>`+
+            `<span class="ev-${esc(e.kind||'')}">${esc(e.kind||'')}</span>`+
+            `<span>${esc(e.process||'')} (${e.pid||'—'})</span>`+
+            `<span>${esc(e.detail||e.remote||e.local||'')}</span></div>`).join('');
+    }).catch(() => { b.textContent = 'error'; });
+}
+function deleteHistory() {
+    const kind = document.getElementById('hist-kind').value;
+    const older = document.getElementById('hist-age').value;
+    const proc = document.getElementById('hist-proc').value.trim();
+    if (!confirm(T.hist_delete_confirm)) return;
+    const qs = new URLSearchParams();
+    if (kind) qs.set('kind', kind);
+    if (proc) qs.set('process', proc);
+    if (older && older !== '0') qs.set('older', older);
+    fetch('/api/events?' + qs.toString(), { method: 'DELETE' })
+        .then(r => r.json()).then(res => { openHistory(); })
+        .catch(() => openHistory());
+}
+function closeHistory() { document.getElementById('history-modal').style.display = 'none'; }
+
+// ── Blocked IPs ───────────────────────────────────────────────────────────
+function openBlocked() {
+    const m = document.getElementById('blocked-modal'), b = document.getElementById('blocked-body');
+    m.style.display = 'flex'; b.textContent = '…';
+    fetch('/api/blocked').then(r => r.json()).then(list => {
+        if (!list || !list.length) { b.textContent = T.no_blocked; return; }
+        b.innerHTML = list.map(x => `<div class="blk-row">
+            <div><strong>${esc(x.ip)}</strong> <span class="t">${esc(x.at)}</span><br>
+            <span class="blk-report">${esc(x.report)}</span></div>
+            <button class="btn" onclick="unblockIp('${esc(x.ip)}')">${esc(T.unblock)}</button>
+        </div>`).join('');
+    }).catch(() => { b.textContent = 'error'; });
+}
+function closeBlocked() { document.getElementById('blocked-modal').style.display = 'none'; }
+function unblockIp(ip) {
+    postJSON('/api/unblock', { IP: ip }).then(res => {
+        if (res.warn) alert('⚠ ' + res.warn);
+        else if (!res.ok) alert('Error: ' + res.error);
+        openBlocked();
+    });
+}
+
+// ── Machine audit ─────────────────────────────────────────────────────────
+function openAudit() {
+    const m = document.getElementById('audit-modal'), b = document.getElementById('audit-body');
+    m.style.display = 'flex'; b.textContent = T.audit_running;
+    document.getElementById('audit-sum').textContent = '';
+    fetch('/api/audit').then(r => r.json()).then(list => {
+        if (!list || !list.length) { b.textContent = '—'; return; }
+        const icon = { ok:'✅', warn:'⚠️', risk:'🔴', info:'ℹ️' };
+        const n = { ok:0, warn:0, risk:0, info:0 };
+        list.forEach(x => n[x.status]++);
+        document.getElementById('audit-sum').innerHTML =
+            `<span class="threat threat-high">🔴 ${n.risk}</span> ` +
+            `<span class="threat threat-med">⚠️ ${n.warn}</span> ` +
+            `<span class="threat threat-min">✅ ${n.ok}</span>`;
+        // order: risk, warn, info, ok
+        const ord = { risk:0, warn:1, info:2, ok:3 };
+        list.sort((a,b2) => ord[a.status] - ord[b2.status]);
+        b.innerHTML = `<div class="aud-note">${esc(T.audit_warn)}</div>` + list.map(x => `<div class="aud-row aud-${esc(x.status)}">
+            <div class="aud-h">${icon[x.status]||''} <b>${esc(x.name)}</b> <span class="t">${esc(x.category)}</span></div>
+            <div class="aud-d">${esc(x.detail)}</div>
+        </div>`).join('');
+    }).catch(() => { b.textContent = 'error'; });
+}
+function closeAudit() { document.getElementById('audit-modal').style.display = 'none'; }
+
+// ── Whitelist management ──────────────────────────────────────────────────
+function openWhitelist() {
+    const m = document.getElementById('whitelist-modal'), b = document.getElementById('whitelist-body');
+    m.style.display = 'flex'; b.textContent = '…';
+    Promise.all([
+        fetch('/api/whitelist').then(r => r.json()).catch(() => []),
+        fetch('/api/ip_whitelist').then(r => r.json()).catch(() => []),
+    ]).then(([exes, ips]) => {
+        const exeRows = (exes && exes.length)
+            ? exes.map(x => `<div class="blk-row">
+                <div><span class="badge-wl">✓</span> ${esc(x.exe)} <span class="t">${esc(x.added || '')}</span></div>
+                <button class="btn" data-exe="${esc(x.exe)}" onclick="removeWl(this.dataset.exe)">${esc(T.wl_remove)}</button>
+              </div>`).join('')
+            : `<div class="t" style="padding:6px 0">${esc(T.no_whitelist)}</div>`;
+        const ipRows = (ips && ips.length)
+            ? ips.map(x => `<div class="blk-row">
+                <div><span class="badge-wl">✓</span> ${esc(x.ip)} <span class="t">${esc(x.added || '')}</span></div>
+                <button class="btn" data-ip="${esc(x.ip)}" onclick="removeIpWl(this.dataset.ip)">${esc(T.wl_remove)}</button>
+              </div>`).join('')
+            : `<div class="t" style="padding:6px 0">${esc(T.no_ip_wl)}</div>`;
+        b.innerHTML = `<h4 class="wl-section">${esc(T.wl_exes)}</h4>${exeRows}`
+                    + `<h4 class="wl-section">${esc(T.wl_ips)}</h4>${ipRows}`;
+    }).catch(() => { b.textContent = 'error'; });
+}
+function closeWhitelist() { document.getElementById('whitelist-modal').style.display = 'none'; }
+function openPrivacy() { document.getElementById('privacy-modal').style.display = 'flex'; }
+function closePrivacy() { document.getElementById('privacy-modal').style.display = 'none'; }
+function removeWl(exe) {
+    postJSON('/api/whitelist', { Exe: exe }, 'DELETE').then(() => { openWhitelist(); loadConnections(); });
+}
+function removeIpWl(ip) {
+    postJSON('/api/ip_whitelist', { IP: ip }, 'DELETE').then(() => { openWhitelist(); loadConnections(); });
+}
+
+// ── Sortable columns ──────────────────────────────────────────────────────
+let sortState = { col: 0, dir: -1 };
+function sortBy(col, type) {
+    const tb = document.getElementById('conn-tbody');
+    const mains = [...tb.querySelectorAll('tr.main-row')];
+    sortState.dir = (sortState.col === col) ? -sortState.dir : 1;
+    sortState.col = col;
+    const val = (tr) => {
+        const cell = tr.children[col];
+        const ds = cell && cell.getAttribute('data-sort');
+        const raw = ds !== null && ds !== undefined ? ds : (cell ? cell.textContent.trim() : '');
+        return type === 'num' ? (parseFloat(raw) || 0) : raw.toLowerCase();
+    };
+    const pairs = mains.map(m => ({ m, d: m.nextElementSibling }));
+    pairs.sort((a, b) => {
+        const x = val(a.m), y = val(b.m);
+        return (x < y ? -1 : x > y ? 1 : 0) * sortState.dir;
+    });
+    pairs.forEach(p => { tb.appendChild(p.m); if (p.d) tb.appendChild(p.d); });
+}
+
+loadConnections();
+applyRefreshInterval();
+</script>
+</body>
+</html>

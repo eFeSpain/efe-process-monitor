@@ -1,0 +1,48 @@
+name: CI
+
+on:
+  push:
+    branches: ["**"]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+
+      - name: gofmt (must be clean)
+        run: |
+          unformatted="$(gofmt -l .)"
+          if [ -n "$unformatted" ]; then
+            echo "These files are not gofmt-clean:"; echo "$unformatted"
+            exit 1
+          fi
+
+      - name: go vet
+        run: go vet ./...
+
+      - name: go test
+        run: go test ./...
+
+  build:
+    # Guarantees the binary stays cgo-free and compiles on every target OS.
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        target: [windows/amd64, linux/amd64, darwin/amd64, linux/arm64, darwin/arm64]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+      - name: Build ${{ matrix.target }}
+        run: |
+          os=${{ matrix.target }}; arch=${os#*/}; os=${os%/*}
+          CGO_ENABLED=0 GOOS=$os GOARCH=$arch go build -o /dev/null .
