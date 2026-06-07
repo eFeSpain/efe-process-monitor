@@ -1,0 +1,128 @@
+{{ if not .Conns }}
+<tr><td colspan="11" class="loading-cell">{{ .T.no_connections }}</td></tr>
+{{ end }}
+{{ $T := .T }}
+{{ range $i, $c := .Conns }}
+{{ $hasRemote := $c.Enrich }}
+{{ $d := $c.Details }}
+{{ $okd := and $d (eq $d.Err "") }}
+<tr class="main-row{{ if $c.Suspicious }} suspicious{{ end }}" data-search="{{ $c.Process }} {{ $c.Exe }} {{ $c.RemoteIP }} {{ $c.Port }} {{ $c.Known }} {{ $c.PID }}" data-sig="{{ $c.PID }}|{{ $c.LocalIP }}:{{ $c.Port }}|{{ $c.RemoteIP }}:{{ $c.RPort }}|{{ $c.Status }}" data-proc="{{ $c.Process }}" data-pid="{{ $c.PID }}" data-local="{{ $c.LocalIP }}:{{ $c.Port }}" data-remote="{{ if $c.RemoteIP }}{{ $c.RemoteIP }}:{{ $c.RPort }}{{ end }}" onclick="toggleDetails({{ $i }})">
+    <td data-sort="{{ $c.Threat }}"><span class="threat threat-{{ threatClass $c.Threat }}{{ if $c.Partial }} threat-partial{{ end }}" title="{{ $c.Breakdown }}">{{ $c.Threat }}{{ if $c.Partial }}<span class="partial-mark">~</span>{{ end }}</span></td>
+    <td data-sort="{{ $c.Port }}">{{ $c.Port }}{{ if $c.RPort }} ↔ {{ $c.RPort }}{{ end }}</td>
+    <td data-sort="{{ $c.PID }}">{{ if $c.PID }}{{ $c.PID }}{{ else }}—{{ end }}</td>
+    <td class="{{ if eq $c.Status "ESTABLISHED" }}{{ if $hasRemote }}remote-yes{{ else }}established{{ end }}{{ else }}listen{{ end }}">{{ $c.Status }}</td>
+    <td><strong>{{ $c.Process }}</strong>{{ if $c.Whitelist }} <span class="badge-wl" title="whitelist">✓</span>{{ end }}</td>
+    <td>{{ if $okd }}{{ $d.ParentName }}{{ else }}—{{ end }}</td>
+    <td>{{ if $c.SuspPort }}<span class="vt-bad" title="{{ $T.malware_port_t }}">⚠ {{ $c.Known }}</span>{{ else }}{{ $c.Known }}{{ end }}</td>
+    <td data-sort="{{ $c.VT }}">
+        {{ if or (eq $c.VT "N/A") (eq $c.VT "RATE_LIMITED") (eq $c.VT "NOT_IN_VT") (eq $c.VT "no_hash") (eq $c.VT "PENDING") }}<span class="vt-na">{{ $c.VT }}</span>
+        {{ else }}<span class="{{ if eq $c.VT "0" }}vt-ok{{ else }}vt-bad{{ end }}">{{ $c.VT }}/{{ $c.Undetected }}</span>{{ end }}
+        {{ if $c.Cached }}<span class="vt-ok" title="cache"> ✓</span>{{ end }}
+    </td>
+    <td title="{{ $c.Sig.Signer }}">
+        {{ if $c.Sig.Trusted }}<span class="sig-ok">✓ {{ trunc 20 $c.Sig.Signer }}</span>
+        {{ else if eq $c.Sig.Status "NotSigned" }}<span class="sig-bad">{{ $T.sig_unsigned }}</span>
+        {{ else }}<span class="sig-na">—</span>{{ end }}
+    </td>
+    <td title="{{ $c.Exe }}">{{ if $c.Suspicious }}⚠ {{ end }}{{ trunc 50 $c.Exe }}</td>
+    <td>{{ if and (eq $c.Status "ESTABLISHED") $hasRemote }}<button class="btn btn-sniff" onclick="event.stopPropagation(); openCapture({{ $i }}, '{{ $c.LocalIP }}', '{{ $c.RemoteIP }}')">⬡ Sniff</button>{{ end }}</td>
+</tr>
+
+<tr id="d{{ $i }}" class="details-row" style="display:none"><td colspan="11">
+    <div class="details-content">
+    {{ if $okd }}
+    <div class="detail-block">
+        <h4>{{ $T.detail_process }}</h4>
+        <div class="detail-line"><span class="detail-label">PID</span><span>{{ $c.PID }} → PPID {{ $d.PPID }} ({{ $d.ParentName }})</span></div>
+        <div class="detail-line"><span class="detail-label">{{ $T.detail_start }}</span><span>{{ $d.CreateTime }}</span></div>
+        <div class="detail-line"><span class="detail-label">I/O</span><span>{{ if $d.IOok }}↓ {{ humanBytes $d.IORead }} &nbsp; ↑ {{ humanBytes $d.IOWrite }}{{ else }}N/A{{ end }}</span></div>
+        <div class="detail-line"><span class="detail-label">{{ $T.detail_conns_n }}</span><span>{{ $d.TotalConns }}</span></div>
+        <div style="margin-top:6px;color:#8b949e;font-size:11px;">CMD:</div>
+        <div class="cmdline-block">{{ $d.Cmdline }}</div>
+    </div>
+    {{ end }}
+
+    {{ if $hasRemote }}{{ $e := $c.Enrich }}
+    <div class="detail-block">
+        <h4>{{ $T.detail_ip }} — {{ $c.RemoteIP }}{{ if $c.IPWhitelist }} <span class="badge-wl" title="whitelist">✓</span>{{ end }}{{ if $e.Provider }} <span class="provider-chip">✓ {{ $e.Provider }}</span>{{ end }}</h4>
+        <div class="detail-line"><span class="detail-label">DNS</span><span>{{ $e.DNS }}</span></div>
+        <div class="detail-line"><span class="detail-label">Geo</span><span>{{ $e.City }}, {{ $e.Country }}</span></div>
+        <div class="detail-line"><span class="detail-label">ISP</span><span>{{ $e.ISP }}</span></div>
+        <div class="detail-line"><span class="detail-label">ASN</span><span>{{ $e.ASN }}</span></div>
+        <div class="detail-line"><span class="detail-label">VT IP</span><span>
+            {{ if $e.VTMalicious }}{{ if gt (deref $e.VTMalicious) 0 }}<span class="vt-bad">⚠ {{ deref $e.VTMalicious }}</span>{{ else }}<span class="vt-ok">✓</span>{{ end }}{{ else }}<span class="vt-na">N/A</span>{{ end }}</span></div>
+        <div class="detail-line"><span class="detail-label">AbuseIPDB</span><span>
+            {{ if $e.AbuseScore }}
+                {{ if and (ge (deref $e.AbuseScore) 50) (eq $e.Provider "") }}<span class="vt-bad">⚠ {{ deref $e.AbuseScore }}%</span>
+                {{ else }}<span class="vt-na">{{ deref $e.AbuseScore }}%</span>{{ end }}
+                {{ if and (ge (deref $e.AbuseScore) 50) $e.Provider }}<span class="prov-note" title="{{ $T.isolated_t }}">{{ $T.isolated }}</span>{{ end }}
+            {{ else }}<span class="vt-na">N/A</span>{{ end }}</span></div>
+        {{ if $e.C2 }}<div class="detail-line"><span class="detail-label">C2</span><span class="vt-bad">⚠ Feodo C2</span></div>{{ end }}
+        {{ if $e.ThreatFox }}<div class="detail-line"><span class="detail-label">ThreatFox</span><span class="vt-bad">⚠ {{ $e.ThreatFox }}</span></div>{{ end }}
+        {{ if $e.Spamhaus }}<div class="detail-line"><span class="detail-label">Spamhaus</span><span class="vt-bad">⚠ {{ $T.spamhaus_drop }}</span></div>{{ end }}
+        {{ if $e.Tor }}<div class="detail-line"><span class="detail-label">Tor</span><span class="vt-bad">⚠ Tor exit</span></div>{{ end }}
+        {{ if $e.Ports }}<div class="detail-line"><span class="detail-label">Shodan</span><span><span class="ports" title="{{ joinInts ", " $e.Ports }}">ports: {{ len $e.Ports }}</span>{{ if $e.Vulns }} &nbsp; <span class="vt-bad" title="{{ join ", " $e.Vulns }}">CVEs: {{ len $e.Vulns }}</span>{{ end }}</span></div>{{ end }}
+    </div>
+    {{ end }}
+
+    {{ if $c.LAN }}
+    <div class="detail-block">
+        <h4>{{ $T.lan_host }} — {{ $c.RemoteIP }}</h4>
+        {{ if $c.LAN.NetBIOS }}<div class="detail-line"><span class="detail-label">{{ $T.lan_name }}</span><span>{{ $c.LAN.NetBIOS }}</span></div>{{ end }}
+        {{ if $c.LAN.DNS }}<div class="detail-line"><span class="detail-label">DNS</span><span>{{ $c.LAN.DNS }}</span></div>{{ end }}
+        {{ if $c.LAN.MAC }}<div class="detail-line"><span class="detail-label">MAC</span><span>{{ $c.LAN.MAC }}</span></div>{{ end }}
+        {{ if $c.LAN.Vendor }}<div class="detail-line"><span class="detail-label">{{ $T.lan_vendor }}</span><span>{{ $c.LAN.Vendor }}</span></div>{{ end }}
+        {{ if and (not $c.LAN.NetBIOS) (not $c.LAN.DNS) (not $c.LAN.MAC) }}<div class="detail-line"><span class="vt-na">{{ $T.lan_none }}</span></div>{{ end }}
+    </div>
+    {{ end }}
+
+    {{ if and $okd $d.Conns }}
+    <div class="detail-block">
+        <h4>{{ $T.detail_conns }}</h4>
+        <div class="conn-list">
+        {{ range $d.Conns }}<div class="conn-entry">{{ .LocalIP }}:{{ .LocalPort }} &nbsp;→&nbsp; {{ .RemoteIP }}:{{ .RemotePort }}</div>{{ end }}
+        </div>
+    </div>
+    {{ end }}
+
+    <div class="detail-block actions-block">
+        <h4>{{ $T.detail_actions }}</h4>
+        <div class="action-btns">
+            <label class="lock-switch" title="{{ $T.lock_hint }}" onclick="event.stopPropagation()">
+                <input type="checkbox" onchange="toggleLock(this, {{ $i }})"><span class="lock-track"><span class="lock-thumb"></span></span>
+                <span class="lock-text">🔒 {{ $T.lock }}</span>
+            </label>
+            {{ if $c.PID }}<button class="btn btn-stop" onclick="killProc({{ $c.PID }}, '{{ $c.Process }}')">{{ $T.kill_proc }}</button>{{ end }}
+            {{ if gt (len $c.RemoteIPs) 1 }}<button class="btn btn-stop" data-ips="{{ join "," $c.RemoteIPs }}" onclick="openBlock(this)">{{ $T.block_ip }}</button>
+            {{ else if $c.RemoteIPs }}<button class="btn btn-stop" onclick="blockIp('{{ index $c.RemoteIPs 0 }}')">{{ $T.block_ip }}</button>
+            {{ else if $c.RemoteIP }}<button class="btn btn-stop" disabled>{{ $T.block_ip }}</button>{{ end }}
+            {{ if and (ne $c.Exe "N/A") (ne $c.Exe "ACCESS_DENIED") }}<button class="btn" onclick="toggleWhitelist('{{ $c.Exe }}', {{ $c.Whitelist }})">★ Whitelist</button>{{ end }}
+            {{ if $hasRemote }}<button class="btn" onclick="toggleIPWhitelist('{{ $c.RemoteIP }}', {{ $c.IPWhitelist }})">{{ $T.wl_ip_btn }}</button>{{ end }}
+        </div>
+    </div>
+
+    {{ if and (eq $c.Status "ESTABLISHED") $hasRemote }}
+    <div id="cap-panel-{{ $i }}" class="capture-panel" style="display:none"
+         data-local="{{ $c.LocalIP }}" data-remote="{{ $c.RemoteIP }}">
+        <div class="capture-header">
+            <span>⬡ {{ $c.LocalIP }} ↔ {{ $c.RemoteIP }}</span>
+            <span class="cap-ctrls">
+                <select id="cap-count-{{ $i }}" class="cap-count" title="{{ $T.cap_count_t }}">
+                    <option value="300">300</option>
+                    <option value="1000">1000</option>
+                    <option value="0">∞</option>
+                </select>
+                <a class="btn" href="#" onclick="downloadPcap(event, {{ $i }})" title="{{ $T.cap_pcap_t }}">⬇ pcap</a>
+                <label class="live-toggle"><input type="checkbox" id="cap-auto-{{ $i }}" checked> scroll</label>
+                <button class="btn btn-stop" id="cap-btn-{{ $i }}" onclick="stopCapture({{ $i }})">■ Stop</button>
+            </span>
+        </div>
+        <div id="cap-stats-{{ $i }}" class="capture-stats">…</div>
+        <div id="cap-doms-{{ $i }}" class="capture-doms"></div>
+        <input id="cap-filter-{{ $i }}" class="cap-filter" placeholder="{{ $T.cap_filter_ph }}" oninput="renderPackets({{ $i }})">
+        <pre id="cap-output-{{ $i }}" class="capture-output"></pre>
+    </div>
+    {{ end }}
+    </div>
+</td></tr>
+{{ end }}

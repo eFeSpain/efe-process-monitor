@@ -1,0 +1,23 @@
+# Secrets / runtime
+.env
+*.db
+/icon.png
+/efemon-cert.pem
+/efemon-key.pem
+
+# Build output
+/efemon
+*.exe
+*.exe~
+*~
+efemon_linux
+efemon_darwin
+
+# OS / editor
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/
+
+# Screenshots are tracked in docs/ — but ignore temp capture dirs
+*.tmp
