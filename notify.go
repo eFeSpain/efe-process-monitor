@@ -64,8 +64,13 @@ func notify(title, message, key string) {
 
 func sendNotification(title, message string) {
 	if runtime.GOOS == "linux" {
-		args := []string{"-u", "critical"}
-		if ic := notifyIcon(); ic != "" { // real app icon, same one extracted for Windows toasts
+		// Map notifySound to urgency: low suppresses DE sounds, normal keeps default behaviour.
+		urgency := "normal"
+		if !notifySound {
+			urgency = "low"
+		}
+		args := []string{"-u", urgency}
+		if ic := notifyIcon(); ic != "" {
 			args = append(args, "-i", ic)
 		}
 		args = append(args, title, message)

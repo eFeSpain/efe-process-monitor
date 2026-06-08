@@ -145,6 +145,11 @@ var translations = map[string]map[string]string{
 		"audit_rerun":         "↻ Re-analizar",
 		"audit_warn":          "⚠️ Heurístico — no es 100% fiable. Un rootkit de kernel avanzado puede ocultarse de las herramientas en modo usuario; la ausencia de hallazgos NO garantiza un equipo limpio.",
 		"admin_warn":          "Ejecuta como administrador para ver todos los procesos (nombre, firma, exe).",
+		"notray_warn":         "Icono de bandeja no disponible en este entorno. En GNOME instala la extensión «AppIndicator and KStatusNotifierItem Support» y reinicia.",
+		"notray_stop":         "■ Detener servicio",
+		"stop_confirm":        "¿Detener el monitor? El panel dejará de ser accesible.",
+		"stop_doing":          "Deteniendo…",
+		"stop_done":           "Monitor detenido. Puedes cerrar esta pestaña.",
 	},
 	"en": {
 		"title":               "eFe Process Monitor",
@@ -283,6 +288,11 @@ var translations = map[string]map[string]string{
 		"audit_rerun":         "↻ Re-scan",
 		"audit_warn":          "⚠️ Heuristic — not 100% reliable. An advanced kernel rootkit can hide from user-mode tools; no findings does NOT guarantee a clean machine.",
 		"admin_warn":          "Run as administrator to see all processes (name, signature, exe).",
+		"notray_warn":         "System tray icon not available in this desktop environment. On GNOME install the «AppIndicator and KStatusNotifierItem Support» extension and restart.",
+		"notray_stop":         "■ Stop service",
+		"stop_confirm":        "Stop the monitor? The dashboard will become inaccessible.",
+		"stop_doing":          "Stopping…",
+		"stop_done":           "Monitor stopped. You can close this tab.",
 	},
 }
 

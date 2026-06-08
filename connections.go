@@ -113,8 +113,11 @@ func getProcDetails(pid int32, pidConns map[int32][]ProcConn) *ProcDetails {
 var ownPID = int32(os.Getpid())
 
 var suspiciousPaths = []string{
+	// Windows
 	`\appdata\local\temp`, `\users\public`, `\programdata`,
 	`\windows\temp`, `\downloads`, `\recycle`,
+	// Linux — executables in temp/shared-memory locations are a strong malware signal
+	`/tmp/`, `/var/tmp/`, `/dev/shm/`, `/downloads`,
 }
 
 // portLabel resolves a protocol label for the connection. Known malware/C2 ports

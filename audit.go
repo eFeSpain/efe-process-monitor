@@ -70,6 +70,26 @@ var auditStrings = map[string]map[string]string{
 		"rk_drivers": "Drivers sin firma", "drivers_ok": "Todos los drivers están firmados.",
 		"rk_proc_proc": "PID %d responde a señal pero no aparece en /proc",
 		"rk_proc_only": "PID %d visible solo en %s", "src_api": "la API",
+		// Nuevos checks Linux
+		"hl_authkeys":    "Claves SSH autorizadas (~/.ssh/authorized_keys)",
+		"authkeys_ok":    "Sin claves SSH autorizadas.",
+		"hl_sudo":        "Entradas NOPASSWD en sudoers",
+		"sudo_ok":        "Sin entradas NOPASSWD en sudoers.",
+		"hl_suid":        "Binarios SUID/SGID en rutas peligrosas (/tmp, /home…)",
+		"suid_ok":        "Sin binarios SUID/SGID en rutas peligrosas.",
+		"hl_mac":         "Control de acceso obligatorio (AppArmor / SELinux)",
+		"mac_aa_ok":      "AppArmor activo (%d perfiles cargados).",
+		"mac_se_ok":      "SELinux activo en modo enforcing.",
+		"mac_se_perm":    "SELinux en modo permissive (registra pero NO bloquea).",
+		"mac_off":        "Ni AppArmor ni SELinux están activos.",
+		"mac_na":         "AppArmor/SELinux no detectado en este sistema.",
+		"hl_path_ww":     "Directorios del PATH escribibles por cualquier usuario",
+		"path_ww_ok":     "Ningún directorio del PATH es world-writable.",
+		"rk_env_preload": "LD_PRELOAD en /etc/environment",
+		"env_preload_bad": "LD_PRELOAD detectado en /etc/environment (inyección de biblioteca): %s",
+		"rk_modules":     "Módulos del kernel fuera de árbol (out-of-tree / unsigned)",
+		"modules_ok":     "Sin módulos fuera de árbol detectados.",
+		"modules_na":     "No se pudo leer /sys/module.",
 	},
 	"en": {
 		"found_prefix": "%d found: ", "more": " … (+%d more)",
@@ -116,6 +136,26 @@ var auditStrings = map[string]map[string]string{
 		"rk_drivers": "Unsigned drivers", "drivers_ok": "All drivers are signed.",
 		"rk_proc_proc": "PID %d answers a signal but is absent from /proc",
 		"rk_proc_only": "PID %d visible only in %s", "src_api": "the API",
+		// New Linux checks
+		"hl_authkeys":    "Authorized SSH keys (~/.ssh/authorized_keys)",
+		"authkeys_ok":    "No authorized SSH keys.",
+		"hl_sudo":        "NOPASSWD entries in sudoers",
+		"sudo_ok":        "No NOPASSWD entries in sudoers.",
+		"hl_suid":        "SUID/SGID binaries in dangerous paths (/tmp, /home…)",
+		"suid_ok":        "No SUID/SGID binaries found in dangerous paths.",
+		"hl_mac":         "Mandatory access control (AppArmor / SELinux)",
+		"mac_aa_ok":      "AppArmor active (%d profiles loaded).",
+		"mac_se_ok":      "SELinux active in enforcing mode.",
+		"mac_se_perm":    "SELinux in permissive mode (logs but does NOT block).",
+		"mac_off":        "Neither AppArmor nor SELinux is active.",
+		"mac_na":         "AppArmor/SELinux not detected on this system.",
+		"hl_path_ww":     "World-writable directories in PATH",
+		"path_ww_ok":     "No world-writable directories in PATH.",
+		"rk_env_preload": "LD_PRELOAD in /etc/environment",
+		"env_preload_bad": "LD_PRELOAD detected in /etc/environment (library injection technique): %s",
+		"rk_modules":     "Out-of-tree / unsigned kernel modules",
+		"modules_ok":     "No out-of-tree modules detected.",
+		"modules_na":     "Could not read /sys/module.",
 	},
 }
 
@@ -322,8 +362,22 @@ func auditPersistenceLinux(lang string) []AuditCheck {
 
 	var rc []string
 	home, _ := os.UserHomeDir()
-	for _, f := range []string{"/etc/rc.local", filepath.Join(home, ".bashrc"),
-		filepath.Join(home, ".profile"), filepath.Join(home, ".bash_profile")} {
+	rcFiles := []string{
+		"/etc/rc.local",
+		"/etc/bash.bashrc",
+		filepath.Join(home, ".bashrc"),
+		filepath.Join(home, ".bash_profile"),
+		filepath.Join(home, ".profile"),
+		filepath.Join(home, ".zshrc"),
+		filepath.Join(home, ".zprofile"),
+		filepath.Join(home, ".config/fish/config.fish"),
+	}
+	if ents, err := os.ReadDir("/etc/profile.d"); err == nil {
+		for _, e := range ents {
+			rcFiles = append(rcFiles, filepath.Join("/etc/profile.d", e.Name()))
+		}
+	}
+	for _, f := range rcFiles {
 		if b, err := os.ReadFile(f); err == nil {
 			for _, ln := range strings.Split(string(b), "\n") {
 				l := strings.ToLower(strings.TrimSpace(ln))
@@ -332,7 +386,8 @@ func auditPersistenceLinux(lang string) []AuditCheck {
 				}
 				if strings.Contains(l, "curl ") || strings.Contains(l, "wget ") ||
 					strings.Contains(l, "base64") || strings.Contains(l, "/dev/tcp/") ||
-					strings.Contains(l, "nc ") || strings.Contains(l, "ncat") {
+					strings.Contains(l, "nc ") || strings.Contains(l, "ncat") ||
+					strings.Contains(l, "ld_preload") || strings.Contains(l, "ld_library_path") {
 					rc = append(rc, filepath.Base(f)+": "+strings.TrimSpace(ln))
 				}
 			}
@@ -455,8 +510,126 @@ func auditHardeningLinux(lang string) []AuditCheck {
 		out = append(out, finding(lang, cat, atr(lang, "hl_uid0"), "risk", uid0, atr(lang, "uid0_ok")))
 	}
 
+	out = append(out, auditSSHAuthorizedKeys(lang, cat))
+	out = append(out, auditSudoers(lang, cat))
+	out = append(out, auditSUID(lang, cat))
+	out = append(out, auditMAC(lang, cat))
+	out = append(out, auditPathWritable(lang, cat))
 	out = append(out, auditHostsFile(lang, "/etc/hosts"))
 	return out
+}
+
+// auditSSHAuthorizedKeys lists entries in ~/.ssh/authorized_keys so the operator
+// can spot unexpected backdoor keys.
+func auditSSHAuthorizedKeys(lang, cat string) AuditCheck {
+	home, _ := os.UserHomeDir()
+	b, err := os.ReadFile(filepath.Join(home, ".ssh", "authorized_keys"))
+	if err != nil {
+		return AuditCheck{cat, atr(lang, "hl_authkeys"), "ok", atr(lang, "authkeys_ok")}
+	}
+	var keys []string
+	for _, ln := range strings.Split(string(b), "\n") {
+		ln = strings.TrimSpace(ln)
+		if ln == "" || strings.HasPrefix(ln, "#") {
+			continue
+		}
+		// Format: <type> <base64> <comment>  — show comment if present, else key type
+		label := ln
+		if f := strings.Fields(ln); len(f) >= 3 {
+			label = f[0] + " … " + f[2]
+		} else if len(f) >= 1 {
+			label = f[0]
+		}
+		keys = append(keys, label)
+	}
+	return finding(lang, cat, atr(lang, "hl_authkeys"), "warn", keys, atr(lang, "authkeys_ok"))
+}
+
+// auditSudoers reports NOPASSWD entries in /etc/sudoers and /etc/sudoers.d/*.
+func auditSudoers(lang, cat string) AuditCheck {
+	files := []string{"/etc/sudoers"}
+	if ents, err := os.ReadDir("/etc/sudoers.d"); err == nil {
+		for _, e := range ents {
+			files = append(files, filepath.Join("/etc/sudoers.d", e.Name()))
+		}
+	}
+	var hits []string
+	for _, f := range files {
+		b, err := os.ReadFile(f)
+		if err != nil {
+			continue
+		}
+		for _, ln := range strings.Split(string(b), "\n") {
+			l := strings.TrimSpace(ln)
+			if strings.HasPrefix(l, "#") || l == "" {
+				continue
+			}
+			if strings.Contains(strings.ToUpper(l), "NOPASSWD") {
+				hits = append(hits, filepath.Base(f)+": "+l)
+			}
+		}
+	}
+	return finding(lang, cat, atr(lang, "hl_sudo"), "warn", hits, atr(lang, "sudo_ok"))
+}
+
+// auditSUID finds SUID/SGID binaries in paths where they should never appear.
+func auditSUID(lang, cat string) AuditCheck {
+	var found []string
+	for _, dir := range []string{"/tmp", "/var/tmp", "/dev/shm", "/home", "/var/www", "/srv"} {
+		if _, err := os.Stat(dir); err != nil {
+			continue
+		}
+		// -xdev: stay on same filesystem (don't cross into /proc, network mounts, etc.)
+		out := runCmd(8*time.Second, "find", dir, "-xdev", "-perm", "/6000", "-type", "f")
+		for _, ln := range strings.Split(strings.TrimSpace(out), "\n") {
+			if ln != "" {
+				found = append(found, ln)
+			}
+		}
+	}
+	return finding(lang, cat, atr(lang, "hl_suid"), "risk", found, atr(lang, "suid_ok"))
+}
+
+// auditMAC checks whether AppArmor or SELinux is active.
+func auditMAC(lang, cat string) AuditCheck {
+	// AppArmor: profiles file lists one profile per line when active
+	if b, err := os.ReadFile("/sys/kernel/security/apparmor/profiles"); err == nil {
+		n := 0
+		for _, ln := range strings.Split(strings.TrimSpace(string(b)), "\n") {
+			if strings.TrimSpace(ln) != "" {
+				n++
+			}
+		}
+		return AuditCheck{cat, atr(lang, "hl_mac"), "ok", fmt.Sprintf(atr(lang, "mac_aa_ok"), n)}
+	}
+	// SELinux: enforce = 1 → enforcing, 0 → permissive
+	if b, err := os.ReadFile("/sys/fs/selinux/enforce"); err == nil {
+		if strings.TrimSpace(string(b)) == "1" {
+			return AuditCheck{cat, atr(lang, "hl_mac"), "ok", atr(lang, "mac_se_ok")}
+		}
+		return AuditCheck{cat, atr(lang, "hl_mac"), "warn", atr(lang, "mac_se_perm")}
+	}
+	// Neither detected
+	return AuditCheck{cat, atr(lang, "hl_mac"), "info", atr(lang, "mac_na")}
+}
+
+// auditPathWritable reports world-writable directories in $PATH; an attacker
+// who can write there can shadow any command.
+func auditPathWritable(lang, cat string) AuditCheck {
+	var writables []string
+	for _, dir := range strings.Split(os.Getenv("PATH"), ":") {
+		if dir == "" {
+			continue
+		}
+		info, err := os.Stat(dir)
+		if err != nil {
+			continue
+		}
+		if info.Mode()&0o002 != 0 {
+			writables = append(writables, dir)
+		}
+	}
+	return finding(lang, cat, atr(lang, "hl_path_ww"), "risk", writables, atr(lang, "path_ww_ok"))
 }
 
 func auditHostsFile(lang, path string) AuditCheck {
@@ -508,11 +681,56 @@ func auditRootkit(lang string) []AuditCheck {
 			}
 		}
 		out = append(out, finding(lang, cat, atr(lang, "rk_promisc"), "warn", promiscIfaces(), atr(lang, "promisc_ok")))
+		out = append(out, auditEnvPreload(lang, cat))
+		out = append(out, auditKernelModules(lang, cat))
 	}
 	if runtime.GOOS == "windows" {
 		out = append(out, auditWinDrivers(lang, cat))
 	}
 	return out
+}
+
+// auditEnvPreload detects LD_PRELOAD set in /etc/environment, which is a common
+// technique to inject a malicious shared library into every process on login.
+func auditEnvPreload(lang, cat string) AuditCheck {
+	b, err := os.ReadFile("/etc/environment")
+	if err != nil {
+		return AuditCheck{cat, atr(lang, "rk_env_preload"), "ok", atr(lang, "preload_ok")}
+	}
+	var hits []string
+	for _, ln := range strings.Split(string(b), "\n") {
+		l := strings.TrimSpace(ln)
+		if !strings.HasPrefix(l, "#") && strings.HasPrefix(strings.ToUpper(l), "LD_PRELOAD") {
+			hits = append(hits, l)
+		}
+	}
+	if len(hits) > 0 {
+		return AuditCheck{cat, atr(lang, "rk_env_preload"), "risk",
+			fmt.Sprintf(atr(lang, "env_preload_bad"), strings.Join(hits, " | "))}
+	}
+	return AuditCheck{cat, atr(lang, "rk_env_preload"), "ok", atr(lang, "preload_ok")}
+}
+
+// auditKernelModules lists out-of-tree or unsigned kernel modules via
+// /sys/module/<name>/taint. 'O' = out-of-tree, 'E' = unsigned out-of-tree.
+// Proprietary drivers (nvidia, vmware) legitimately show 'O'.
+func auditKernelModules(lang, cat string) AuditCheck {
+	ents, err := os.ReadDir("/sys/module")
+	if err != nil {
+		return AuditCheck{cat, atr(lang, "rk_modules"), "info", atr(lang, "modules_na")}
+	}
+	var suspicious []string
+	for _, e := range ents {
+		b, err := os.ReadFile(filepath.Join("/sys/module", e.Name(), "taint"))
+		if err != nil {
+			continue
+		}
+		t := strings.TrimSpace(string(b))
+		if strings.ContainsAny(t, "OE") {
+			suspicious = append(suspicious, e.Name()+" ("+t+")")
+		}
+	}
+	return finding(lang, cat, atr(lang, "rk_modules"), "warn", suspicious, atr(lang, "modules_ok"))
 }
 
 func auditHiddenPorts(lang, cat string) AuditCheck {

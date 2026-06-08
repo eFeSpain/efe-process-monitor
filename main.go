@@ -29,6 +29,7 @@ var staticFS embed.FS
 
 var tmpl *template.Template
 var elevated bool
+var noTrayMode bool
 
 // appDir is the directory of the executable; the DB and .env live there so the
 // app behaves the same regardless of the working directory it's launched from.
@@ -158,6 +159,7 @@ func main() {
 	http.HandleFunc("/api/block_ip", handleBlockIP)
 	http.HandleFunc("/api/blocked", handleBlocked)
 	http.HandleFunc("/api/unblock", handleUnblock)
+	http.HandleFunc("/api/shutdown", handleShutdown)
 	http.HandleFunc("/api/audit", handleAudit)
 	http.HandleFunc("/audit.json", handleAuditJSON)
 	http.HandleFunc("/audit.txt", handleAuditTxt)
@@ -198,7 +200,7 @@ func handleIndex(w http.ResponseWriter, r *http.Request) {
 	if l := r.URL.Query().Get("lang"); l != "" {
 		http.SetCookie(w, &http.Cookie{Name: "lang", Value: lang, Path: "/"})
 	}
-	render(w, "report.html", map[string]any{"T": strings_(lang), "Lang": lang, "Admin": elevated, "RefreshSecs": refreshSecs})
+	render(w, "report.html", map[string]any{"T": strings_(lang), "Lang": lang, "Admin": elevated, "RefreshSecs": refreshSecs, "NoTray": noTrayMode})
 }
 
 func handleConnections(w http.ResponseWriter, r *http.Request) {
@@ -305,6 +307,19 @@ func handleRestart(w http.ResponseWriter, r *http.Request) {
 		time.Sleep(400 * time.Millisecond) // let the response flush
 		log.Println("restarting via UI…")
 		relaunchSelf()
+		os.Exit(0)
+	}()
+}
+
+func handleShutdown(w http.ResponseWriter, r *http.Request) {
+	if r.Method != "POST" {
+		http.Error(w, "POST only", http.StatusMethodNotAllowed)
+		return
+	}
+	writeJSON(w, map[string]any{"ok": true})
+	go func() {
+		time.Sleep(400 * time.Millisecond)
+		log.Println("shutdown via UI…")
 		os.Exit(0)
 	}()
 }

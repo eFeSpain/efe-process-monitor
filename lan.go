@@ -57,7 +57,17 @@ func lanLookup(ip string) *LANInfo {
 var macRe = regexp.MustCompile(`([0-9a-fA-F]{2}[:-]){5}[0-9a-fA-F]{2}`)
 
 // arpMAC returns the MAC address for ip from the system ARP table.
+// On Linux, iproute2's `ip neighbor` is tried first; `arp` is the fallback
+// for older kernels and other platforms.
 func arpMAC(ip string) string {
+	if runtime.GOOS == "linux" && hasCmd("ip") {
+		out := runCmd(5*time.Second, "ip", "neighbor", "show", ip)
+		for _, ln := range strings.Split(out, "\n") {
+			if m := macRe.FindString(ln); m != "" {
+				return strings.ToLower(strings.ReplaceAll(m, "-", ":"))
+			}
+		}
+	}
 	for _, args := range [][]string{{"-a", ip}, {"-a"}} {
 		out := runCmd(5*time.Second, "arp", args...)
 		for _, ln := range strings.Split(out, "\n") {

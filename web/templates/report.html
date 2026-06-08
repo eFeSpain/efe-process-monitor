@@ -137,6 +137,7 @@ select{background:#0d1117;color:#c9d1d9;border:1px solid #30363d;padding:3px 6px
 .aud-row .aud-d{color:#8b949e;font-size:11px;margin-top:3px;word-break:break-all;}
 .aud-note{background:#3a2e10;color:#e3b341;border:1px solid #9e7a16;border-radius:6px;padding:8px 12px;margin-bottom:10px;font-size:11px;}
 .aud-risk{border-left-color:#f85149;} .aud-warn{border-left-color:#e3b341;}
+.notray-warn{background:#3a2e10;color:#e3b341;border:1px solid #9e7a16;border-radius:6px;margin:8px;padding:8px 16px;font-size:12px;display:flex;align-items:center;gap:14px;flex-wrap:wrap;}
 .aud-ok{border-left-color:#3fb950;} .aud-info{border-left-color:#58a6ff;}
 .details-content, .details-content * { cursor: default; }
 .ports,.vt-bad[title]{border-bottom:1px dotted #484f58;}
@@ -181,6 +182,7 @@ select{background:#0d1117;color:#c9d1d9;border:1px solid #30363d;padding:3px 6px
 </div>
 
 {{ if not .Admin }}<div class="admin-warn">⚠ {{ .T.admin_warn }}</div>{{ end }}
+{{ if .NoTray }}<div class="notray-warn"><span>⚠ {{ .T.notray_warn }}</span><button class="btn btn-stop" style="padding:3px 12px;font-size:12px;white-space:nowrap;" onclick="stopService()">{{ .T.notray_stop }}</button><span id="stop-msg" style="font-size:11px;color:#8b949e;"></span></div>{{ end }}
 
 <div class="live-panel">
     <div class="live-head">
@@ -597,6 +599,17 @@ function restartNow() {
     postJSON('/api/settings', settingsPayload())
         .then(() => postJSON('/api/restart', {}))
         .then(go).catch(go);
+}
+
+function stopService() {
+    if (!confirm(T.stop_confirm)) return;
+    const msg = document.getElementById('stop-msg');
+    msg.textContent = T.stop_doing;
+    postJSON('/api/shutdown', {}).catch(() => {});
+    setTimeout(() => {
+        document.body.style.cssText = 'margin:0;background:#0d1117;display:flex;align-items:center;justify-content:center;height:100vh;';
+        document.body.innerHTML = '<p style="color:#8b949e;font-family:monospace;font-size:15px;">' + T.stop_done + '</p>';
+    }, 800);
 }
 
 // ── Live monitor ──────────────────────────────────────────────────────────
