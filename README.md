@@ -72,7 +72,7 @@ attacking others.
 **Other**
 - Optional **password login**, and optional network exposure over **HTTPS** (off
   by default — see *Access*).
-- Bilingual UI (English / Spanish), system-tray icon on Windows and Linux (SNI desktops), single binary.
+- Bilingual UI (English / Spanish), system-tray icon on Windows and Linux (SNI desktops), single binary. macOS builds are untested — use at your own risk.
 
 ## Screenshots
 
@@ -116,7 +116,7 @@ GOOS=darwin CGO_ENABLED=0 go build -o efemon .   # cross-compile for macOS
   [AppIndicator and KStatusNotifierItem Support](https://extensions.gnome.org/extension/615/appindicator-support/)
   extension; without it (or on any other unsupported desktop), no tray icon
   appears — a **Stop** button is shown in the web dashboard instead.
-- On **macOS** it runs in the foreground (`Ctrl+C` to stop).
+- **macOS** has never been tested — the binary may compile and run but behaviour is unknown. No support is provided.
 
 ### API keys (optional)
 

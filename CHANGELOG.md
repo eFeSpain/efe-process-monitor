@@ -67,7 +67,7 @@ Initial public release.
 
 ### Features
 - **Single self-contained binary** — no installer, no runtime dependencies,
-  cgo-free. Runs on Windows, Linux and macOS (amd64 + arm64).
+  cgo-free. Runs on Windows and Linux (amd64 + arm64). macOS binaries are provided but have never been tested.
 - **Web dashboard** served at `127.0.0.1:5000`, listing every active TCP/UDP
   connection with its owning process: PID, parent, command line, start time
   and all open sockets.

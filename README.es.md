@@ -78,7 +78,7 @@ no para atacar a otros.
 **Otros**
 - **Login con contraseña** opcional, y exposición a la red por **HTTPS** opcional
   (desactivada por defecto — ver *Acceso*).
-- Interfaz bilingüe (inglés / español), icono en la bandeja del sistema en Windows y Linux (escritorios SNI), binario único.
+- Interfaz bilingüe (inglés / español), icono en la bandeja del sistema en Windows y Linux (escritorios SNI), binario único. macOS sin probar — úsalo bajo tu cuenta y riesgo.
 
 ## Capturas
 
@@ -122,7 +122,7 @@ GOOS=darwin CGO_ENABLED=0 go build -o efemon .   # compilar para macOS
   [AppIndicator and KStatusNotifierItem Support](https://extensions.gnome.org/extension/615/appindicator-support/);
   sin ella (o en escritorios no compatibles), no aparece icono — en su lugar
   se muestra un botón **Detener** en el panel web.
-- En **macOS** corre en primer plano (`Ctrl+C` para parar).
+- **macOS** no ha sido probado nunca — el binario puede compilar y arrancar pero el comportamiento es desconocido. No se ofrece soporte.
 
 ### Claves de API (opcional)
 
