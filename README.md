@@ -16,8 +16,7 @@ sources say about the binary and the remote IP.
 
 </div>
 
-> **Status: beta.** It works and is used day to day, but it's early — expect rough
-> edges, and the UI, stored data or options may still change between versions.
+> **Status: stable.** Works and is used day to day. Interfaces and stored data may evolve between versions.
 
 <div align="center">
 <img src="docs/screenshot-main.png" alt="Main dashboard" width="880">

@@ -16,8 +16,7 @@ sobre el binario y la IP remota.
 
 </div>
 
-> **Estado: beta.** Funciona y se usa a diario, pero es pronto — habrá asperezas,
-> y la interfaz, los datos guardados o las opciones pueden cambiar entre versiones.
+> **Estado: estable.** Funciona y se usa a diario. La interfaz y los datos guardados pueden evolucionar entre versiones.
 
 <div align="center">
 <img src="docs/screenshot-main.png" alt="Panel principal" width="880">
