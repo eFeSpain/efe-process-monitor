@@ -37,6 +37,11 @@ Versions follow [Semantic Versioning](https://semver.org/).
   with the `O` (out-of-tree) or `E` (unsigned) flag. Proprietary drivers such
   as Nvidia legitimately appear here; the check provides context, not a verdict.
 
+### Fixed — Documentation
+- **README described Linux tray as unsupported**: both README.md and README.es.md
+  now document the SNI tray behaviour, the GNOME extension requirement, and the
+  web-UI fallback stop button.
+
 ### Fixed — Linux compatibility
 - **Suspicious path detection was broken on Linux**: `suspiciousPaths` only
   contained Windows backslash paths; none of them ever matched a Linux path.

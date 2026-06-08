@@ -72,7 +72,7 @@ attacking others.
 **Other**
 - Optional **password login**, and optional network exposure over **HTTPS** (off
   by default — see *Access*).
-- Bilingual UI (English / Spanish), system-tray icon on Windows, single binary.
+- Bilingual UI (English / Spanish), system-tray icon on Windows and Linux (SNI desktops), single binary.
 
 ## Screenshots
 
@@ -110,8 +110,13 @@ GOOS=darwin CGO_ENABLED=0 go build -o efemon .   # cross-compile for macOS
 - **Packet capture** is optional and needs [tshark/Wireshark](https://www.wireshark.org/) on `PATH`.
 - Only **one instance** runs at a time; launching a second just opens the dashboard.
 - On **Windows** it lives in the **system tray** — right-click to open or quit;
-  closing the browser tab does not stop it. On Linux/macOS it runs in the
-  foreground (`Ctrl+C` to stop).
+  closing the browser tab does not stop it.
+- On **Linux** it also uses the system tray on SNI-compatible desktops (KDE,
+  XFCE, MATE, Cinnamon…). On GNOME you need the
+  [AppIndicator and KStatusNotifierItem Support](https://extensions.gnome.org/extension/615/appindicator-support/)
+  extension; without it (or on any other unsupported desktop), no tray icon
+  appears — a **Stop** button is shown in the web dashboard instead.
+- On **macOS** it runs in the foreground (`Ctrl+C` to stop).
 
 ### API keys (optional)
 

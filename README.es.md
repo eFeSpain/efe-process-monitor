@@ -78,8 +78,7 @@ no para atacar a otros.
 **Otros**
 - **Login con contraseña** opcional, y exposición a la red por **HTTPS** opcional
   (desactivada por defecto — ver *Acceso*).
-- Interfaz bilingüe (inglés / español), icono en la bandeja del sistema en Windows,
-  binario único.
+- Interfaz bilingüe (inglés / español), icono en la bandeja del sistema en Windows y Linux (escritorios SNI), binario único.
 
 ## Capturas
 
@@ -117,8 +116,13 @@ GOOS=darwin CGO_ENABLED=0 go build -o efemon .   # compilar para macOS
 - La **captura de paquetes** es opcional y necesita [tshark/Wireshark](https://www.wireshark.org/) en el `PATH`.
 - Solo corre **una instancia** a la vez; lanzar una segunda abre el panel existente.
 - En **Windows** vive en la **bandeja del sistema** — clic derecho para abrir o
-  salir; cerrar la pestaña del navegador no lo detiene. En Linux/macOS corre en
-  primer plano (`Ctrl+C` para parar).
+  salir; cerrar la pestaña del navegador no lo detiene.
+- En **Linux** también usa la bandeja del sistema en escritorios con soporte SNI
+  (KDE, XFCE, MATE, Cinnamon…). En GNOME necesitas la extensión
+  [AppIndicator and KStatusNotifierItem Support](https://extensions.gnome.org/extension/615/appindicator-support/);
+  sin ella (o en escritorios no compatibles), no aparece icono — en su lugar
+  se muestra un botón **Detener** en el panel web.
+- En **macOS** corre en primer plano (`Ctrl+C` para parar).
 
 ### Claves de API (opcional)
 
