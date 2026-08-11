@@ -40,6 +40,7 @@ td { padding:6px 12px; border-bottom:1px solid #21262d; white-space:nowrap; vert
 .detail-label { color:#8b949e; min-width:90px; }
 .listen { color:#8b949e; } .established { color:#3fb950; } .remote-yes { color:#58a6ff; }
 .udp { color:#a371f7; } /* datagram socket with no peer (bound only) */
+.chain { color:#8b949e; font-size:11px; word-break:break-all; } /* process ancestry */
 .threat { display:inline-block; min-width:30px; text-align:center; padding:1px 7px; border-radius:10px; font-weight:bold; }
 .threat-high{background:#3d1c1c;color:#f85149;} .threat-med{background:#3a2e10;color:#e3b341;}
 .threat-low{background:#21262d;color:#d29922;} .threat-min{background:#12261a;color:#3fb950;}
@@ -282,6 +283,7 @@ select{background:#0d1117;color:#c9d1d9;border:1px solid #30363d;padding:3px 6px
                 </select>
                 <button class="btn btn-stop" onclick="deleteHistory()">🗑 {{ .T.hist_delete }}</button>
                 <a class="btn" href="/export.csv">⬇ CSV</a> <a class="btn" href="/export.json">⬇ JSON</a>
+                <a class="btn" href="/logs.txt" target="_blank" title="{{ .T.log_hint }}">📄 {{ .T.log_btn }}</a>
                 <button class="btn" onclick="closeHistory()">✕</button>
             </span>
         </div>

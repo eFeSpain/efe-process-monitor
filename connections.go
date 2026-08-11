@@ -48,6 +48,10 @@ type ProcDetails struct {
 	Conns      []ProcConn
 	TotalConns int
 	Err        string
+
+	Ancestry    []Ancestor // parent chain, nearest first
+	AncestryStr string     // "proc ← parent ← grandparent", for display
+	BadSpawn    string     // non-empty when the chain matches a known-bad pattern
 }
 
 // Conn is one analyzed connection row shown in the UI.
@@ -65,7 +69,8 @@ type Conn struct {
 	VT          string
 	Undetected  string
 	Cached      bool
-	Suspicious  bool
+	Suspicious  bool // runs from a staging directory (temp, public, /dev/shm)
+	Untrusted   bool // runs from a downloads directory: weak signal
 	SuspPort    bool
 	Blockable   bool
 	Capturable  bool // has a public remote peer, so tshark has something to filter on
@@ -90,13 +95,20 @@ func getProcDetails(pid int32, pidConns map[int32][]ProcConn) *ProcDetails {
 		d.Err = "process not found"
 		return d
 	}
-	if ppid, err := p.Ppid(); err == nil {
+	name := ""
+	if n, err := p.Name(); err == nil {
+		name = n
+	}
+	// Full chain, not just the immediate parent: cmd.exe under explorer.exe is a
+	// user at a terminal, the same cmd.exe under winword.exe is a macro payload.
+	d.Ancestry = ancestryOf(pid)
+	d.AncestryStr = ancestryLabel(name, d.Ancestry)
+	d.BadSpawn = suspiciousAncestry(name, d.Ancestry)
+	if len(d.Ancestry) > 0 {
+		d.PPID = d.Ancestry[0].PID
+		d.ParentName = d.Ancestry[0].Name
+	} else if ppid, err := p.Ppid(); err == nil {
 		d.PPID = ppid
-		if par, err := process.NewProcess(ppid); err == nil {
-			if n, err := par.Name(); err == nil {
-				d.ParentName = n
-			}
-		}
 	}
 	if cl, err := p.Cmdline(); err == nil && cl != "" {
 		d.Cmdline = cl
@@ -115,21 +127,43 @@ func getProcDetails(pid int32, pidConns map[int32][]ProcConn) *ProcDetails {
 // ownPID is this process, so we can hide the monitor's own API traffic.
 var ownPID = int32(os.Getpid())
 
-var suspiciousPaths = []string{
+// Path signals come in two tiers, because lumping them together was the single
+// biggest false-positive source in the score.
+//
+// stagingPaths are locations a normal installed program does not run from. A
+// binary executing there is genuinely odd and earns wSuspiciousPath.
+var stagingPaths = []string{
 	// Windows
 	`\appdata\local\temp`, `\users\public`, `\programdata`,
-	`\windows\temp`, `\downloads`, `\recycle`,
+	`\windows\temp`, `\recycle`,
 	// Linux — executables in temp/shared-memory locations are a strong malware signal
-	`/tmp/`, `/var/tmp/`, `/dev/shm/`, `/downloads`,
+	`/tmp/`, `/var/tmp/`, `/dev/shm/`,
 }
+
+// untrustedPaths are merely *unvetted*. Running something straight out of the
+// downloads folder is what installers, portable tools and game launchers do all
+// day, so this is worth a nudge (wUntrustedPath) and nothing more. It used to sit
+// in the list above and contribute the same weight as /dev/shm, which meant a
+// perfectly ordinary machine showed a wall of amber rows.
+var untrustedPaths = []string{`\downloads`, `/downloads`}
 
 // portLabel resolves a protocol label for the connection. Known malware/C2 ports
 // win (and flag it); otherwise a standard service name; else "—".
+// portLabel resolves the protocol label and whether it should score. A legacy
+// RAT port still gets its label (useful context) but returns false, so it adds
+// nothing to the threat score.
 func portLabel(lport, rport uint32) (string, bool) {
 	for _, p := range [2]uint32{lport, rport} {
 		if p != 0 {
-			if name, ok := suspiciousPorts[p]; ok {
+			if name, ok := scoringMalwarePorts[p]; ok {
 				return name, true
+			}
+		}
+	}
+	for _, p := range [2]uint32{lport, rport} {
+		if p != 0 {
+			if name, ok := legacyMalwarePorts[p]; ok {
+				return name, false // labelled, not scored
 			}
 		}
 	}
@@ -144,12 +178,31 @@ func portLabel(lport, rport uint32) (string, bool) {
 	return "—", false
 }
 
+func pathKnown(p string) bool {
+	return p != "" && p != "N/A" && p != "ACCESS_DENIED"
+}
+
+// isSuspiciousPath reports a staging-directory hit (high weight).
 func isSuspiciousPath(p string) bool {
-	if p == "" || p == "N/A" || p == "ACCESS_DENIED" {
+	if !pathKnown(p) {
 		return false
 	}
 	lp := strings.ToLower(p)
-	for _, s := range suspiciousPaths {
+	for _, s := range stagingPaths {
+		if strings.Contains(lp, s) {
+			return true
+		}
+	}
+	return false
+}
+
+// isUntrustedPath reports a downloads-directory hit (low weight).
+func isUntrustedPath(p string) bool {
+	if !pathKnown(p) {
+		return false
+	}
+	lp := strings.ToLower(p)
+	for _, s := range untrustedPaths {
 		if strings.Contains(lp, s) {
 			return true
 		}
@@ -517,6 +570,40 @@ func cnFromSubject(s string) string {
 
 // ── Threat score ─────────────────────────────────────────────────────────────
 
+// Score weights, named so a tuning change is reviewable in a diff instead of
+// being a bare number buried in an expression. Every change here should be made
+// against the corpus in score_corpus_test.go, which pins the expected band for a
+// set of labelled scenarios.
+//
+// The guiding rule is precision over recall. A signal only earns a large weight
+// if it is hard to trigger accidentally:
+//
+//   - High precision, external: a hit on a curated C2/IOC feed (Feodo,
+//     ThreatFox) means someone observed that address serving malware.
+//   - High precision, local: a spawn chain that should never occur, e.g. Word
+//     launching PowerShell.
+//   - Low precision: "the binary lives in a directory malware also likes", or
+//     "the port was a RAT default in 2003". These have to stay small, because
+//     they fire constantly on healthy machines.
+const (
+	wVTPerDetection  = 6.0 // × detections, capped at vtDetectionCap
+	wVTIPPerHit      = 4.0 // × malicious verdicts on the remote IP
+	vtDetectionCap   = 10
+	wAbusePerPercent = 0.4  // × AbuseIPDB confidence
+	wAbuseAttenuated = 0.1  // same, when the IP belongs to a known big provider
+	wFeodoC2         = 60.0 // curated C2 tracker
+	wThreatFox       = 55.0 // curated IOC feed
+	wSpamhausDROP    = 30.0 // criminal / hijacked netblock
+	wBadSpawn        = 40.0 // ancestry pattern that should never happen
+	wUnsigned        = 15.0 // no code signature at all
+	wBadSignature    = 10.0 // a signature that exists but does not validate
+	wTorExit         = 15.0
+	wShodanCVEs      = 10.0
+	wSuspiciousPath  = 25.0 // temp / shared-memory / public dirs: malware staging
+	wUntrustedPath   = 8.0  // Downloads: weakly suspicious, extremely common
+	wMalwarePort     = 12.0 // a port still used by live tooling (Metasploit)
+)
+
 func threatScore(c *Conn) int {
 	if c.Whitelist {
 		c.Breakdown = "binario en whitelist → 0"
@@ -534,55 +621,63 @@ func threatScore(c *Conn) int {
 	}
 
 	if n, err := strconv.Atoi(c.VT); err == nil && n > 0 {
-		if n > 10 {
-			n = 10
+		if n > vtDetectionCap {
+			n = vtDetectionCap
 		}
-		add(float64(n)*6, fmt.Sprintf("VT %s detecciones", c.VT))
+		add(float64(n)*wVTPerDetection, fmt.Sprintf("VT %s detecciones", c.VT))
 	}
-	if c.Suspicious {
-		add(25, "ruta sospechosa")
+	switch {
+	case c.Suspicious:
+		add(wSuspiciousPath, "ruta de staging (temp/público)")
+	case c.Untrusted:
+		add(wUntrustedPath, "ruta poco fiable (descargas)")
 	}
 	if c.SuspPort {
-		add(30, "puerto de malware ("+c.Known+")")
+		add(wMalwarePort, "puerto de malware ("+c.Known+")")
+	}
+	// A spawn chain that should never happen is one of the few high-precision
+	// signals computable without any external service.
+	if c.Details != nil && c.Details.BadSpawn != "" {
+		add(wBadSpawn, "cadena anómala ("+c.Details.BadSpawn+")")
 	}
 	switch c.Sig.Status {
 	case "NotSigned":
-		add(15, "binario sin firma")
+		add(wUnsigned, "binario sin firma")
 	// PENDING means "not resolved yet", so it must score 0 — it is reflected in
 	// coverageIncomplete instead, which marks the row as partial data.
 	case "Valid", "N/A", "Unknown", "", "Packaged", "Unmanaged", sigPendingStatus:
 	default:
-		add(10, "firma "+c.Sig.Status)
+		add(wBadSignature, "firma "+c.Sig.Status)
 	}
 	if e := c.Enrich; e != nil {
 		if e.VTMalicious != nil && *e.VTMalicious > 0 {
 			n := *e.VTMalicious
-			if n > 10 {
-				n = 10
+			if n > vtDetectionCap {
+				n = vtDetectionCap
 			}
-			add(float64(n)*4, fmt.Sprintf("VT-IP %d", *e.VTMalicious))
+			add(float64(n)*wVTIPPerHit, fmt.Sprintf("VT-IP %d", *e.VTMalicious))
 		}
 		if e.AbuseScore != nil && *e.AbuseScore > 0 {
-			w, note := 0.4, ""
+			w, note := wAbusePerPercent, ""
 			if e.Provider != "" {
-				w, note = 0.1, " atenuado: "+e.Provider
+				w, note = wAbuseAttenuated, " atenuado: "+e.Provider
 			}
 			add(float64(*e.AbuseScore)*w, fmt.Sprintf("AbuseIPDB %d%%%s", *e.AbuseScore, note))
 		}
 		if e.C2 {
-			add(60, "C2 Feodo")
+			add(wFeodoC2, "C2 Feodo")
 		}
 		if e.ThreatFox != "" {
-			add(55, "ThreatFox: "+e.ThreatFox)
+			add(wThreatFox, "ThreatFox: "+e.ThreatFox)
 		}
 		if e.Spamhaus {
-			add(30, "Spamhaus DROP")
+			add(wSpamhausDROP, "Spamhaus DROP")
 		}
 		if e.Tor {
-			add(15, "Tor exit")
+			add(wTorExit, "Tor exit")
 		}
 		if len(e.Vulns) > 0 {
-			add(10, fmt.Sprintf("%d CVEs (Shodan)", len(e.Vulns)))
+			add(wShodanCVEs, fmt.Sprintf("%d CVEs (Shodan)", len(e.Vulns)))
 		}
 	}
 	if score > 100 {
@@ -785,6 +880,7 @@ func analyzeConnections(hideSelf bool) []Conn {
 			VT:          orNA(vt[1]),
 			Undetected:  vt[2],
 			Suspicious:  isSuspiciousPath(r.exe),
+			Untrusted:   isUntrustedPath(r.exe),
 			SuspPort:    suspPort,
 			Blockable:   isBlockable(r.c.Raddr.IP),
 			Sig:         sigMap[r.exe],

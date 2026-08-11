@@ -6,6 +6,51 @@ Versions follow [Semantic Versioning](https://semver.org/).
 
 ---
 
+## [Unreleased] — logging, process ancestry, score calibration
+
+### Added
+- **The application log now survives the shipped binary.** Release builds link
+  with `-H=windowsgui`, so the process has no usable stderr and every log line —
+  the whole operator audit trail (`KILL`, `BLOCK`, `UNBLOCK`, settings changed,
+  history cleared) plus the security events (`[gate] blocked`, `[csrf] blocked`) —
+  was written to a handle that goes nowhere. `logging.go` tees the standard logger
+  to `efemon.log` next to the executable, rotating at 5 MiB and keeping 3
+  archives, and `/logs.txt` shows it in the dashboard. Verified against a real
+  `-H=windowsgui` build, not just a console one.
+- **Full process ancestry** with spawn-chain detection. Showing only the immediate
+  parent hid the signal: `cmd.exe` under `explorer.exe` is a user at a terminal,
+  the identical `cmd.exe` under `winword.exe` is a macro payload — same process,
+  same path, same signature. `ancestryOf` walks the chain (depth-capped and
+  cycle-safe) and `suspiciousAncestry` flags patterns that should never occur:
+  document or browser → script host / LOLBin, web server → shell (webshell). It is
+  one of the few high-precision signals available with no external service, and
+  scores accordingly.
+- **A score calibration corpus** (`score_corpus_test.go`): labelled, realistic
+  rows pinned to score *bands* (benign / notable / suspicious / malicious), plus
+  ordering invariants that must hold through any re-tune. The headline feature had
+  no way to tell a tuning fix from a regression.
+
+### Changed
+- **Re-tuned the two locally-computed score signals, which were the main
+  false-positive source.** Both were as loud as a curated C2 feed hit:
+  - Path signals are now two tiers. Staging directories (temp, `\Users\Public`,
+    `/dev/shm`) keep the full weight; the downloads folder drops to a nudge —
+    running an installer from there is what installers do, and it used to make a
+    healthy machine show a wall of amber rows.
+  - Malware ports are split into ones still used by live tooling (Metasploit
+    4444/4445, reduced weight) and extinct 1990s RATs, which now **label without
+    scoring**. 1337 and 12345 are ordinary development ports today.
+- Score weights are named constants instead of numbers inline, so a tuning change
+  is reviewable in a diff.
+- `/favicon.ico` is a public path: every browser probes for it, and each probe was
+  logging a `[gate] blocked` line into the same audit log used to spot real
+  blocked attempts.
+- Ancestry labels drop trailing unresolved links — without elevation the walk runs
+  out of permission and a label ending in `? ← ? ← ?` says nothing. An unknown
+  *between* two known names is kept, because there the gap is the information.
+
+---
+
 ## [Unreleased] — security & correctness review
 
 ### Security

@@ -38,6 +38,11 @@ attacking others.
 **Connections & processes**
 - Every TCP/UDP connection with its owning process: parent, command line, start
   time, I/O counters and the process's other open sockets.
+- **Full process ancestry** (`powershell.exe ← winword.exe ← explorer.exe`), with
+  spawn-chain detection: a document or browser launching a script host, or a web
+  server launching a shell, is flagged and scored. That distinction is what
+  separates a user opening a terminal from a macro running a payload — the process,
+  its path and its signature are identical in both cases.
 
 **Reputation & threat intel**
 - Binary: SHA-256 lookup on **VirusTotal**, and code signature — **Authenticode**
@@ -67,6 +72,10 @@ attacking others.
 - **LAN host info**: NetBIOS / DNS / MAC, with offline **OUI vendor** lookup.
 - Forensic **history** in SQLite, exportable to CSV/JSON, with filtered deletion
   (by process, type or age).
+- **Application log** (`efemon.log`, rotated at 5 MiB): every operator action
+  (kill, block, unblock, settings, history cleared) and every rejected access,
+  readable from the dashboard. The release build has no console, so this file is
+  the only place that record exists.
 
 **Other**
 - Optional **password login**, and optional network exposure over **HTTPS** (off

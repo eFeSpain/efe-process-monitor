@@ -117,6 +117,7 @@ func main() {
 	// it means launching the binary from inside some other project makes us read
 	// *and rewrite* that project's .env — writing AUTH_HASH and API keys into it.
 	appDir = exeDir()
+	initLogging() // before anything that logs, so the banner lands in the file too
 	envPath = filepath.Join(appDir, ".env")
 	candidates := []string{envPath}
 	if os.Getenv("EFEMON_DEV") == "1" {
@@ -178,6 +179,7 @@ func main() {
 	http.HandleFunc("/api/blocked", handleBlocked)
 	http.HandleFunc("/api/unblock", handleUnblock)
 	http.HandleFunc("/api/shutdown", handleShutdown)
+	http.HandleFunc("/logs.txt", handleLogs)
 	http.HandleFunc("/api/audit", handleAudit)
 	http.HandleFunc("/audit.json", handleAuditJSON)
 	http.HandleFunc("/audit.txt", handleAuditTxt)
@@ -589,6 +591,18 @@ func handleBlockIP(w http.ResponseWriter, r *http.Request) {
 
 func handleBlocked(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, listBlocked())
+}
+
+// handleLogs serves the tail of the log. It's the only way to read the operator
+// audit trail on a GUI build, where there is no console to look at.
+func handleLogs(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Content-Type", "text/plain; charset=utf-8")
+	b, err := tailLog(512 << 10) // last 512 KiB is plenty for a session
+	if err != nil {
+		http.Error(w, "log no disponible: "+err.Error(), http.StatusNotFound)
+		return
+	}
+	w.Write(b)
 }
 
 func handleAudit(w http.ResponseWriter, r *http.Request) {

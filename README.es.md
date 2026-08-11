@@ -39,6 +39,11 @@ no para atacar a otros.
 **Conexiones y procesos**
 - Cada conexión TCP/UDP con su proceso: padre, línea de comandos, hora de inicio,
   contadores de E/S y el resto de sockets abiertos del proceso.
+- **Cadena de ancestros completa** (`powershell.exe ← winword.exe ← explorer.exe`),
+  con detección de cadenas anómalas: un documento o un navegador lanzando un
+  intérprete, o un servidor web lanzando una shell, se marca y puntúa. Esa
+  distinción es la que separa a un usuario abriendo una terminal de una macro
+  ejecutando un payload — el proceso, su ruta y su firma son idénticos en ambos casos.
 
 **Reputación e inteligencia**
 - Binario: hash SHA-256 en **VirusTotal**, y firma de código — **Authenticode** en
@@ -73,6 +78,10 @@ no para atacar a otros.
   (OUI)**.
 - **Histórico** forense en SQLite, exportable a CSV/JSON, con borrado por filtros
   (por proceso, tipo o antigüedad).
+- **Log de la aplicación** (`efemon.log`, rota a 5 MiB): toda acción del operador
+  (matar, bloquear, desbloquear, ajustes, borrado de histórico) y todo acceso
+  rechazado, consultable desde el panel. La versión publicada no tiene consola, así
+  que este fichero es el único sitio donde queda ese registro.
 
 **Otros**
 - **Login con contraseña** opcional, y exposición a la red por **HTTPS** opcional

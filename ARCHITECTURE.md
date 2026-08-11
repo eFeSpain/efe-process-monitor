@@ -41,6 +41,17 @@ GOOS=darwin go build -o efemon .  # macOS
   by "Restart now".
 - `efemon-token` (0600, next to the binary) holds this run's local access token — the gate that
   applies when no password is set. See `auth.go`.
+- `efemon.log` (+ `.1`…`.3`, next to the binary) is the application log. **Release builds link with
+  `-H=windowsgui` and therefore have no usable stderr**, so `logging.go` tees the standard logger to
+  a rotating file; without it the whole operator audit trail is discarded on the shipped binary.
+  Served to the UI by `/logs.txt`.
+- **ancestry.go** — `ancestryOf` walks the parent chain (depth-capped, cycle-safe);
+  `suspiciousAncestry` matches spawn patterns that should never occur (document/browser → script
+  host, web server → shell) and feeds `wBadSpawn` into the score. Deliberately narrow: a broad rule
+  here would swamp the score with false positives.
+- Score weights are named constants at the top of the threat-score section in `connections.go`, and
+  `score_corpus_test.go` pins labelled scenarios to score *bands* — change a weight there and the
+  corpus tells you whether ordinary traffic moved into "suspicious" or an intrusion moved out.
   **Every setting is server-persisted in `.env`**
   (loaded at startup) — nothing UI-facing lives only in the browser.
 

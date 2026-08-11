@@ -359,7 +359,11 @@ func sameOrigin(origin, host string) bool {
 }
 
 func isPublicPath(p string) bool {
-	return p == "/login" || strings.HasPrefix(p, "/static/")
+	// /favicon.ico is public so the gate doesn't log a "blocked" line every time a
+	// browser probes for it — that noise lands in the same audit log we rely on to
+	// spot real blocked attempts. It serves nothing sensitive (the real icon is
+	// referenced from /static/).
+	return p == "/login" || p == "/favicon.ico" || strings.HasPrefix(p, "/static/")
 }
 
 // securityMiddleware wraps every request: Host allow-list, CSRF Origin check on

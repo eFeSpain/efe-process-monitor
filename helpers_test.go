@@ -39,26 +39,48 @@ func TestIsLoopback(t *testing.T) {
 	}
 }
 
+// Path signals are two-tiered on purpose: a staging directory (temp, public,
+// /dev/shm) is genuinely odd, whereas the downloads folder is where every
+// installer and portable tool legitimately lives. Treating them alike was the
+// score's biggest false-positive source, so the split is pinned here.
 func TestIsSuspiciousPath(t *testing.T) {
-	susp := []string{
+	staging := []string{
 		`C:\Users\x\AppData\Local\Temp\evil.exe`,
 		`C:\Users\Public\bad.exe`,
-		`C:\Users\x\Downloads\dropper.exe`,
 		`C:\Windows\Temp\x.exe`,
+		`/tmp/payload`,
+		`/dev/shm/x`,
 	}
-	for _, p := range susp {
+	for _, p := range staging {
 		if !isSuspiciousPath(p) {
 			t.Errorf("isSuspiciousPath(%q)=false, want true", p)
 		}
+		if isUntrustedPath(p) {
+			t.Errorf("isUntrustedPath(%q)=true; staging paths belong to the other tier", p)
+		}
 	}
+
+	downloads := []string{
+		`C:\Users\x\Downloads\installer.exe`,
+		`/home/x/downloads/tool`,
+	}
+	for _, p := range downloads {
+		if isSuspiciousPath(p) {
+			t.Errorf("isSuspiciousPath(%q)=true; downloads is the low-weight tier now", p)
+		}
+		if !isUntrustedPath(p) {
+			t.Errorf("isUntrustedPath(%q)=false, want true", p)
+		}
+	}
+
 	clean := []string{
 		`C:\Windows\System32\svchost.exe`,
 		`C:\Program Files\App\app.exe`,
 		"", "N/A", "ACCESS_DENIED",
 	}
 	for _, p := range clean {
-		if isSuspiciousPath(p) {
-			t.Errorf("isSuspiciousPath(%q)=true, want false", p)
+		if isSuspiciousPath(p) || isUntrustedPath(p) {
+			t.Errorf("%q should match neither path tier", p)
 		}
 	}
 }

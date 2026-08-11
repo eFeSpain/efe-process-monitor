@@ -35,6 +35,8 @@
     <div class="detail-block">
         <h4>{{ $T.detail_process }}</h4>
         <div class="detail-line"><span class="detail-label">PID</span><span>{{ $c.PID }} → PPID {{ $d.PPID }} ({{ $d.ParentName }})</span></div>
+        {{ if $d.AncestryStr }}<div class="detail-line"><span class="detail-label">{{ $T.detail_chain }}</span><span class="{{ if $d.BadSpawn }}vt-bad{{ else }}chain{{ end }}">{{ $d.AncestryStr }}</span></div>{{ end }}
+        {{ if $d.BadSpawn }}<div class="detail-line"><span class="detail-label">⚠</span><span class="vt-bad" title="{{ $T.badspawn_hint }}">{{ $T.badspawn }}: {{ $d.BadSpawn }}</span></div>{{ end }}
         <div class="detail-line"><span class="detail-label">{{ $T.detail_start }}</span><span>{{ $d.CreateTime }}</span></div>
         <div class="detail-line"><span class="detail-label">I/O</span><span>{{ if $d.IOok }}↓ {{ humanBytes $d.IORead }} &nbsp; ↑ {{ humanBytes $d.IOWrite }}{{ else }}N/A{{ end }}</span></div>
         <div class="detail-line"><span class="detail-label">{{ $T.detail_conns_n }}</span><span>{{ $d.TotalConns }}</span></div>

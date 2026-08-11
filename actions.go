@@ -157,4 +157,9 @@ func startupBanner() {
 		log.Println("[+] Login           disabled — local token gate active (only the browser this app opens can act)")
 		log.Printf("[+] Token           %s", filepath.Join(appDir, tokenFile))
 	}
+	if logPath != "" {
+		log.Printf("[+] Log             %s (rota a %d MiB, %d archivos)", logPath, logMaxBytes>>20, logKeep)
+	} else {
+		log.Println("[-] Log             solo consola — no se pudo escribir el fichero de log")
+	}
 }
