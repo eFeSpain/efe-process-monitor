@@ -1,7 +1,6 @@
 package main
 
 import (
-	"path/filepath"
 	"strings"
 
 	"github.com/shirou/gopsutil/v4/process"
@@ -108,8 +107,18 @@ var serverProcs = map[string]bool{
 }
 
 // procBase normalizes a process name for comparison: lowercase basename.
+//
+// It splits on both separators explicitly instead of using filepath.Base, which
+// is GOOS-dependent: on Linux a backslash is an ordinary filename character, so
+// filepath.Base(`C:\...\WINWORD.EXE`) returns the whole string and the rule never
+// matches. The comparison has to behave the same everywhere — these names are
+// data, and the tool is cross-compiled from one host to all of them.
 func procBase(name string) string {
-	return strings.ToLower(filepath.Base(strings.TrimSpace(name)))
+	s := strings.TrimSpace(name)
+	if i := strings.LastIndexAny(s, `/\`); i >= 0 {
+		s = s[i+1:]
+	}
+	return strings.ToLower(s)
 }
 
 // suspiciousAncestry reports a reason when the chain matches a spawn pattern that
