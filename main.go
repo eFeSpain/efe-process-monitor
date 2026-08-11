@@ -15,6 +15,7 @@ import (
 	"path/filepath"
 	"regexp"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/joho/godotenv"
@@ -43,11 +44,18 @@ func exeDir() string {
 }
 
 var funcMap = template.FuncMap{
+	// trunc cuts by runes, not bytes: slicing a string at a byte offset can land
+	// mid-character, and accented paths ("C:\Users\José\…") then render as a
+	// replacement diamond.
 	"trunc": func(n int, s string) string {
-		if len(s) > n {
-			return s[:n] + "…"
+		if n < 0 {
+			return s
 		}
-		return s
+		r := []rune(s)
+		if len(r) <= n {
+			return s
+		}
+		return string(r[:n]) + "…"
 	},
 	"threatClass": func(t int) string {
 		switch {
@@ -61,16 +69,9 @@ var funcMap = template.FuncMap{
 			return "min"
 		}
 	},
-	"join": func(sep string, items []string) string {
-		out := ""
-		for i, s := range items {
-			if i > 0 {
-				out += sep
-			}
-			out += s
-		}
-		return out
-	},
+	// Note the argument order: templates read better as `join ", " $items`, which
+	// is the reverse of strings.Join's own signature.
+	"join": func(sep string, items []string) string { return strings.Join(items, sep) },
 	"json": func(v any) template.JS {
 		b, _ := json.Marshal(v)
 		return template.JS(b)
@@ -82,14 +83,11 @@ var funcMap = template.FuncMap{
 		return *p
 	},
 	"joinInts": func(sep string, items []int) string {
-		out := ""
+		parts := make([]string, len(items))
 		for i, n := range items {
-			if i > 0 {
-				out += sep
-			}
-			out += strconv.Itoa(n)
+			parts[i] = strconv.Itoa(n)
 		}
-		return out
+		return strings.Join(parts, sep)
 	},
 	"humanBytes": func(n uint64) string {
 		f := float64(n)
@@ -104,11 +102,20 @@ var funcMap = template.FuncMap{
 }
 
 func main() {
-	// DB lives next to the executable; for .env prefer next-to-exe, then cwd, then
-	// parent (handy in dev where .env sits in the project root).
+	// DB and .env live next to the executable, so the app behaves the same
+	// wherever it's launched from.
+	//
+	// The cwd/parent fallback is gated behind EFEMON_DEV=1: it's convenient when
+	// the .env sits in the project root during development, but on a normal run
+	// it means launching the binary from inside some other project makes us read
+	// *and rewrite* that project's .env — writing AUTH_HASH and API keys into it.
 	appDir = exeDir()
 	envPath = filepath.Join(appDir, ".env")
-	for _, p := range []string{filepath.Join(appDir, ".env"), ".env", "../.env"} {
+	candidates := []string{envPath}
+	if os.Getenv("EFEMON_DEV") == "1" {
+		candidates = append(candidates, ".env", "../.env")
+	}
+	for _, p := range candidates {
 		if _, err := os.Stat(p); err == nil {
 			envPath = p
 			break
@@ -120,15 +127,18 @@ func main() {
 	vtKey = os.Getenv("VT_API_KEY")
 	abuseKey = os.Getenv("ABUSEIPDB_API_KEY")
 	keysMu.Unlock()
-	notifyDesktop = os.Getenv("NOTIFY_DESKTOP") != "false"       // default on
-	notifySound = os.Getenv("NOTIFY_SOUND") != "false"           // default on
-	persistWhitelist = os.Getenv("PERSIST_WHITELIST") != "false" // default on
-	persistBlocks = os.Getenv("PERSIST_BLOCKS") != "false"       // default on
+	notifyDesktop.Store(os.Getenv("NOTIFY_DESKTOP") != "false")       // default on
+	notifySound.Store(os.Getenv("NOTIFY_SOUND") != "false")           // default on
+	persistWhitelist.Store(os.Getenv("PERSIST_WHITELIST") != "false") // default on
+	persistBlocks.Store(os.Getenv("PERSIST_BLOCKS") != "false")       // default on
 	if n, err := strconv.Atoi(os.Getenv("REFRESH_SECS")); err == nil {
-		refreshSecs = n
+		refreshSecs.Store(int64(n))
+	}
+	if n, err := strconv.Atoi(os.Getenv("EVENT_RETENTION_DAYS")); err == nil && n >= 0 {
+		eventRetentionDays = n // 0 = keep forever
 	}
 	loadAuth(os.Getenv("AUTH_HASH"))
-	listenAddr = os.Getenv("LISTEN_ADDR")
+	listenAddr.Store(os.Getenv("LISTEN_ADDR"))
 
 	initDB()
 	loadState() // seed session whitelist/blocked from the DB
@@ -136,7 +146,8 @@ func main() {
 	tmpl = template.Must(template.New("").Funcs(funcMap).ParseFS(tmplFS, "web/templates/*.html"))
 	go primeIntel()
 	go monitorLoop()
-	go vtWorker() // resolves VT hashes in the background at 4/min
+	go vtWorker()  // resolves VT hashes in the background at 4/min
+	go sigWorker() // resolves code signatures off the request path
 
 	staticSub, _ := fs.Sub(staticFS, "web/static")
 	http.Handle("/static/", http.StripPrefix("/static/", http.FileServer(http.FS(staticSub))))
@@ -177,16 +188,22 @@ func main() {
 		}
 	}
 	if err != nil {
+		// Hand off to the instance that owns the port, carrying its token so the
+		// browser is authorized by the local gate.
 		log.Printf("[!] Ya hay una instancia en %s — abriendo y saliendo.", url)
-		openBrowser(url)
+		openBrowser(tokenURL(url, readLocalToken()))
 		os.Exit(0)
 	}
 	if listenTLS {
 		ln = tlsListener(ln) // serve HTTPS when exposed beyond loopback
 	}
 
+	// Mint the local access token only once we own the port, so a losing second
+	// instance can't overwrite the running instance's token file.
+	initLocalToken()
+
 	startupBanner()
-	go func() { time.Sleep(1500 * time.Millisecond); openBrowser(url) }()
+	go func() { time.Sleep(1500 * time.Millisecond); openDashboard(url) }()
 	log.Printf("[+] eFe Process Monitor → %s", url)
 	runApp(ln, url) // serves; on Windows also shows the tray icon + menu
 }
@@ -198,9 +215,14 @@ func handleIndex(w http.ResponseWriter, r *http.Request) {
 	}
 	lang := langFrom(r)
 	if l := r.URL.Query().Get("lang"); l != "" {
-		http.SetCookie(w, &http.Cookie{Name: "lang", Value: lang, Path: "/"})
+		// MaxAge, otherwise the choice is a session cookie and the UI silently
+		// reverts to Spanish next time the browser is restarted, unlike every
+		// other setting.
+		http.SetCookie(w, &http.Cookie{Name: "lang", Value: lang, Path: "/",
+			MaxAge: int((365 * 24 * time.Hour).Seconds()), SameSite: http.SameSiteStrictMode})
 	}
-	render(w, "report.html", map[string]any{"T": strings_(lang), "Lang": lang, "Admin": elevated, "RefreshSecs": refreshSecs, "NoTray": noTrayMode})
+	render(w, "report.html", map[string]any{"T": strings_(lang), "Lang": lang, "Admin": elevated,
+		"RefreshSecs": refreshSecs.Load(), "NoTray": noTrayMode})
 }
 
 func handleConnections(w http.ResponseWriter, r *http.Request) {
@@ -254,17 +276,30 @@ func handleSettings(w http.ResponseWriter, r *http.Request) {
 			RefreshSecs      *int
 			AuthEnabled      *bool
 			AuthPassword     *string
+			CurrentPassword  *string
 			ListenAddr       *string
 		}
 		json.NewDecoder(r.Body).Decode(&body)
 		updateSettings(body.VTKey, body.AbuseKey)
 		if body.AuthEnabled != nil {
+			T := strings_(langFrom(r))
+			disabling := !*body.AuthEnabled
+			replacing := body.AuthPassword != nil && *body.AuthPassword != ""
+			// Changing or removing an *existing* password requires proving you
+			// know it, so a hijacked session can't quietly take the gate down.
+			locked := authEnabled() && (disabling || replacing) &&
+				(body.CurrentPassword == nil || !checkPassword(*body.CurrentPassword))
 			switch {
-			case !*body.AuthEnabled:
+			case locked:
+				authErr = T["auth_current_bad"]
+			case disabling:
 				setAuthPassword("") // disable login
-			case body.AuthPassword != nil && *body.AuthPassword != "":
+				// Disabling wipes every session, which would lock this very tab
+				// out behind the local-token gate. Hand it a fresh session.
+				http.SetCookie(w, sessionCookieFor(localSessionTTL))
+			case replacing:
 				if err := setAuthPassword(*body.AuthPassword); err != nil {
-					authErr = strings_(langFrom(r))["auth_too_short"]
+					authErr = T["auth_too_short"]
 				} else {
 					http.SetCookie(w, sessionCookie()) // keep the operator logged in
 				}
@@ -325,6 +360,9 @@ func handleShutdown(w http.ResponseWriter, r *http.Request) {
 }
 
 func handleWhitelist(w http.ResponseWriter, r *http.Request) {
+	if !requireMethod(w, r, http.MethodGet, http.MethodPost, http.MethodDelete) {
+		return
+	}
 	if r.Method == "GET" {
 		writeJSON(w, listWhitelist())
 		return
@@ -341,6 +379,9 @@ func handleWhitelist(w http.ResponseWriter, r *http.Request) {
 }
 
 func handleIPWhitelist(w http.ResponseWriter, r *http.Request) {
+	if !requireMethod(w, r, http.MethodGet, http.MethodPost, http.MethodDelete) {
+		return
+	}
 	if r.Method == "GET" {
 		writeJSON(w, listIPWhitelist())
 		return
@@ -361,6 +402,9 @@ func handleIPWhitelist(w http.ResponseWriter, r *http.Request) {
 }
 
 func handleKill(w http.ResponseWriter, r *http.Request) {
+	if !requireMethod(w, r, http.MethodPost) {
+		return
+	}
 	var body struct{ PID int }
 	if json.NewDecoder(r.Body).Decode(&body) != nil || body.PID <= 0 {
 		http.Error(w, `{"ok":false,"error":"invalid pid"}`, 400)
@@ -424,14 +468,23 @@ func handleCapture(w http.ResponseWriter, r *http.Request) {
 		}, stop)
 		close(pkts)
 	}()
-	for p := range pkts {
-		b, _ := json.Marshal(p)
-		fmt.Fprintf(w, "data: %s\n\n", b)
-		flusher.Flush()
+	// Cancellation has to be watched *while* waiting for the next packet, not
+	// only after one arrives: with count=0 (∞) on an idle flow, closing the tab
+	// used to leave this handler parked on the channel and tshark running
+	// indefinitely, because the check was never reached.
+	streaming := true
+	for streaming {
 		select {
+		case p, ok := <-pkts:
+			if !ok {
+				streaming = false
+				break
+			}
+			b, _ := json.Marshal(p)
+			fmt.Fprintf(w, "data: %s\n\n", b)
+			flusher.Flush()
 		case <-r.Context().Done():
 			return
-		default:
 		}
 	}
 	if errMsg != "" {
@@ -454,7 +507,7 @@ func handleCapturePcap(w http.ResponseWriter, r *http.Request) {
 	if n, err := strconv.Atoi(r.URL.Query().Get("count")); err == nil && n > 0 && n <= 100000 {
 		count = n
 	}
-	cmd := buildPcapCmd(localIP, remoteIP, iface, count, 60) // autostop 60s
+	cmd := buildPcapCmd(r.Context(), localIP, remoteIP, iface, count, 60) // autostop 60s
 	out, err := cmd.StdoutPipe()
 	if err != nil {
 		http.Error(w, "capture failed", 500)
@@ -504,6 +557,9 @@ func handleExportCSV(w http.ResponseWriter, r *http.Request) {
 }
 
 func handleBlockIP(w http.ResponseWriter, r *http.Request) {
+	if !requireMethod(w, r, http.MethodPost) {
+		return
+	}
 	var body struct{ IP string }
 	json.NewDecoder(r.Body).Decode(&body)
 	if !isBlockable(body.IP) {
@@ -524,7 +580,10 @@ func handleBlocked(w http.ResponseWriter, r *http.Request) {
 }
 
 func handleAudit(w http.ResponseWriter, r *http.Request) {
-	writeJSON(w, auditCached(langFrom(r), true))
+	// Only re-scan when the operator asks (the "re-scan" button); opening the
+	// panel serves the cached result. Passing true unconditionally made the TTL
+	// dead code and turned every open into a full machine scan.
+	writeJSON(w, auditCached(langFrom(r), r.URL.Query().Get("refresh") == "1"))
 }
 
 func handleAuditJSON(w http.ResponseWriter, r *http.Request) {
@@ -543,6 +602,9 @@ func handleAuditTxt(w http.ResponseWriter, r *http.Request) {
 }
 
 func handleUnblock(w http.ResponseWriter, r *http.Request) {
+	if !requireMethod(w, r, http.MethodPost) {
+		return
+	}
 	var body struct{ IP string }
 	json.NewDecoder(r.Body).Decode(&body)
 	if net.ParseIP(body.IP) == nil {
@@ -575,12 +637,27 @@ func render(w http.ResponseWriter, name string, data any) {
 	}
 }
 
+// requireMethod rejects anything but the allowed methods. State-changing
+// endpoints must declare one: the CSRF Origin check only runs on non-GET
+// requests, so an endpoint that quietly accepts GET is outside that guard.
+func requireMethod(w http.ResponseWriter, r *http.Request, allowed ...string) bool {
+	for _, m := range allowed {
+		if r.Method == m {
+			return true
+		}
+	}
+	w.Header().Set("Allow", strings.Join(allowed, ", "))
+	http.Error(w, `{"ok":false,"error":"method not allowed"}`, http.StatusMethodNotAllowed)
+	return false
+}
+
 func writeJSON(w http.ResponseWriter, v any) {
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(v)
 }
 
-// outboundIP is kept for the upcoming tshark interface auto-detection port.
+// outboundIP reports the local address the OS would use to reach the internet.
+// detectCapture uses it to pick the tshark interface that matches.
 func outboundIP() string {
 	c, err := net.Dial("udp", "8.8.8.8:80")
 	if err != nil {
@@ -589,5 +666,3 @@ func outboundIP() string {
 	defer c.Close()
 	return c.LocalAddr().(*net.UDPAddr).IP.String()
 }
-
-var _ = strconv.Itoa

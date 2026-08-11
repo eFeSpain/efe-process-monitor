@@ -8,17 +8,24 @@ import (
 	"runtime"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 )
 
 const notifyThrottle = 60 * time.Second
 
 var (
-	notifyMu      sync.Mutex
-	lastNotify    = map[string]time.Time{}
-	notifyDesktop = true // toggled from Settings (persisted as NOTIFY_DESKTOP)
-	notifySound   = true // play the toast sound? (persisted as NOTIFY_SOUND)
+	notifyMu   sync.Mutex
+	lastNotify = map[string]time.Time{}
+	// Read from the monitor goroutine, written by the settings handler → atomic.
+	notifyDesktop atomic.Bool // toggled from Settings (persisted as NOTIFY_DESKTOP)
+	notifySound   atomic.Bool // play the toast sound? (persisted as NOTIFY_SOUND)
 )
+
+func init() { // both default on
+	notifyDesktop.Store(true)
+	notifySound.Store(true)
+}
 
 var (
 	iconOnce sync.Once
@@ -46,7 +53,7 @@ func notifyIcon() string {
 
 // notify shows a best-effort desktop notification, throttled per key.
 func notify(title, message, key string) {
-	if !notifyDesktop {
+	if !notifyDesktop.Load() {
 		return
 	}
 	if key == "" {
@@ -57,6 +64,14 @@ func notify(title, message, key string) {
 		notifyMu.Unlock()
 		return
 	}
+	// Drop keys whose throttle window has passed: they can never suppress
+	// anything again, and keeping them grew the map for every distinct
+	// exe+IP pair seen over the process's lifetime.
+	for k, at := range lastNotify {
+		if time.Since(at) >= notifyThrottle {
+			delete(lastNotify, k)
+		}
+	}
 	lastNotify[key] = time.Now()
 	notifyMu.Unlock()
 	go sendNotification(title, message)
@@ -66,7 +81,7 @@ func sendNotification(title, message string) {
 	if runtime.GOOS == "linux" {
 		// Map notifySound to urgency: low suppresses DE sounds, normal keeps default behaviour.
 		urgency := "normal"
-		if !notifySound {
+		if !notifySound.Load() {
 			urgency = "low"
 		}
 		args := []string{"-u", urgency}
@@ -89,7 +104,7 @@ func sendNotification(title, message string) {
 	// with that AppID so it shows "eFe Process Monitor", not "Windows PowerShell".
 	esc := func(s string) string { return strings.ReplaceAll(s, "'", "''") }
 	silent := "" // mute the toast's system sound unless sound is enabled
-	if !notifySound {
+	if !notifySound.Load() {
 		silent = "$a=$x.CreateElement('audio');$a.SetAttribute('silent','true');" +
 			"$x.GetElementsByTagName('toast').Item(0).AppendChild($a)|Out-Null;"
 	}

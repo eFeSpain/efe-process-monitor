@@ -39,6 +39,7 @@ td { padding:6px 12px; border-bottom:1px solid #21262d; white-space:nowrap; vert
 .detail-line { display:flex; gap:10px; padding:2px 0; }
 .detail-label { color:#8b949e; min-width:90px; }
 .listen { color:#8b949e; } .established { color:#3fb950; } .remote-yes { color:#58a6ff; }
+.udp { color:#a371f7; } /* datagram socket with no peer (bound only) */
 .threat { display:inline-block; min-width:30px; text-align:center; padding:1px 7px; border-radius:10px; font-weight:bold; }
 .threat-high{background:#3d1c1c;color:#f85149;} .threat-med{background:#3a2e10;color:#e3b341;}
 .threat-low{background:#21262d;color:#d29922;} .threat-min{background:#12261a;color:#3fb950;}
@@ -242,6 +243,9 @@ select{background:#0d1117;color:#c9d1d9;border:1px solid #30363d;padding:3px 6px
             <label class="live-toggle" style="margin-bottom:4px;"><input type="checkbox" id="persist-blocks"> {{ .T.persist_blocks }}</label>
             <div style="color:#484f58;font-size:11px;margin:0 0 12px;">{{ .T.persist_hint }}</div>
             <label class="live-toggle" style="margin-bottom:4px;"><input type="checkbox" id="auth-enabled" onchange="authToggled()"> 🔒 {{ .T.auth_label }}</label>
+            <div id="auth-current-row" style="display:none;margin-bottom:4px;">
+                <input type="password" id="auth-current" autocomplete="current-password" placeholder="{{ .T.auth_current_ph }}" style="width:100%">
+            </div>
             <div id="auth-pw-row" style="display:none;margin-bottom:4px;">
                 <div class="pw-wrap">
                     <input type="password" id="auth-password" autocomplete="new-password" placeholder="{{ .T.auth_pw_ph }}" style="width:100%;padding-right:34px">
@@ -296,7 +300,7 @@ select{background:#0d1117;color:#c9d1d9;border:1px solid #30363d;padding:3px 6px
     <div class="modal-box" style="max-width:1000px;max-height:85vh;display:flex;flex-direction:column">
         <div class="modal-head"><span>{{ .T.audit_title }} <span id="audit-sum"></span></span>
             <span>
-                <button class="btn" onclick="openAudit()">{{ .T.audit_rerun }}</button>
+                <button class="btn" onclick="openAudit(true)">{{ .T.audit_rerun }}</button>
                 <a class="btn" href="/audit.txt">⬇ TXT</a>
                 <a class="btn" href="/audit.json">⬇ JSON</a>
                 <button class="btn" onclick="closeAudit()">✕</button>
@@ -329,7 +333,7 @@ select{background:#0d1117;color:#c9d1d9;border:1px solid #30363d;padding:3px 6px
                 <colgroup><col class="c1"><col class="c2"><col class="c3"></colgroup>
                 <thead><tr><th>{{ .T.priv_col_service }}</th><th>{{ .T.priv_col_sends }}</th><th>{{ .T.priv_col_when }}</th></tr></thead>
                 <tbody>
-                    <tr><td>ip-api.com</td><td>{{ .T.priv_sends_ip }}</td><td>{{ .T.priv_when_always }}</td></tr>
+                    <tr><td>ipwho.is</td><td>{{ .T.priv_sends_ip }}</td><td>{{ .T.priv_when_always }}</td></tr>
                     <tr><td>VirusTotal</td><td>{{ .T.priv_sends_haship }}</td><td>{{ .T.priv_when_vt }}</td></tr>
                     <tr><td>AbuseIPDB</td><td>{{ .T.priv_sends_ip }}</td><td>{{ .T.priv_when_abuse }}</td></tr>
                     <tr><td>Shodan InternetDB</td><td>{{ .T.priv_sends_ip }}</td><td>{{ .T.priv_when_always }}</td></tr>
@@ -518,6 +522,8 @@ function openSettings() {
         document.getElementById('persist-whitelist').checked = !!s.persist_whitelist;
         document.getElementById('persist-blocks').checked = !!s.persist_blocks;
         document.getElementById('auth-enabled').checked = !!s.auth_enabled;
+        authWasEnabled = !!s.auth_enabled;
+        document.getElementById('auth-current').value = '';
         document.getElementById('auth-password').value = '';
         document.getElementById('auth-password-confirm').value = '';
         document.getElementById('auth-password').type = 'password';
@@ -538,11 +544,17 @@ function togglePw() {
     const t = a.type === 'password' ? 'text' : 'password';
     a.type = t; b.type = t;
 }
+// Whether a password is already set server-side. Changing or removing an
+// existing one requires proving you know it, so the "current password" field is
+// driven by this, not by the checkbox.
+let authWasEnabled = false;
+
 // pw fields + listen address (network exposure) only make sense with login on
 function authToggled() {
     const on = document.getElementById('auth-enabled').checked;
     document.getElementById('auth-pw-row').style.display = on ? 'block' : 'none';
     document.getElementById('listen-row').style.display = on ? 'block' : 'none';
+    document.getElementById('auth-current-row').style.display = authWasEnabled ? 'block' : 'none';
 }
 function clampSecs() { return Math.max(0, Math.min(3600, parseInt(document.getElementById('refresh-interval').value || '0', 10) || 0)); }
 function settingsPayload() {
@@ -556,6 +568,7 @@ function settingsPayload() {
         RefreshSecs: clampSecs(),
         AuthEnabled: document.getElementById('auth-enabled').checked,
         AuthPassword: document.getElementById('auth-password').value,
+        CurrentPassword: document.getElementById('auth-current').value,
         ListenAddr: document.getElementById('listen-addr').value,
     };
 }
@@ -643,8 +656,13 @@ function scheduleRefresh() {
     }, 1500);
 }
 
+// Escapes for HTML *and* for both quote styles. The single quote matters: some
+// of the strings below land inside single-quoted attributes, and leaving ' raw
+// there is an injection waiting for the first value that isn't a validated IP.
 function esc(s) {
-    return (s || '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+    return String(s == null ? '' : s)
+        .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+        .replace(/"/g, '&quot;').replace(/'/g, '&#39;');
 }
 
 function eventLabel(ev) {
@@ -667,7 +685,7 @@ monitorES.onmessage = (e) => {
     const feed = document.getElementById('live-feed');
     const div = document.createElement('div');
     div.className = 'live-ev ev-' + ev.kind;
-    div.innerHTML = `<span class="t">[${ev.ts}]</span> ` + esc(eventLabel(ev));
+    div.innerHTML = `<span class="t">[${esc(ev.ts)}]</span> ` + esc(eventLabel(ev));
     feed.prepend(div);
     while (feed.children.length > 200) feed.removeChild(feed.lastChild);
     document.getElementById('live-count').textContent = ++liveCount;
@@ -836,8 +854,8 @@ function formatPacket(p) {
         o += `<span class="pkt-time">[${d.toLocaleTimeString('es-ES', { hour12: false })}]</span> `; }
     o += `<span class="pkt-dir">${p._out ? '↑' : '↓'}</span> `;
     if (p._proto) o += `<span class="pkt-proto">${esc(p._proto)}</span> `;
-    if (p.len) o += `<span class="pkt-size">${p.len}B</span> `;
-    const sp = p.tcp_src || p.udp_src || '', dp = p.tcp_dst || p.udp_dst || '';
+    if (p.len) o += `<span class="pkt-size">${esc(p.len)}B</span> `;
+    const sp = esc(p.tcp_src || p.udp_src || ''), dp = esc(p.tcp_dst || p.udp_dst || '');
     o += `<span class="pkt-flow">${esc(p.ip_src || '?')}${sp ? ':' + sp : ''} → ${esc(p.ip_dst || '?')}${dp ? ':' + dp : ''}</span>`;
     if (p.tcp_flags) { const c = p.syn === '1' ? 'pkt-syn' : p.fin === '1' ? 'pkt-fin' : 'pkt-flags';
         o += ` <span class="${c}">[${esc(p.tcp_flags)}]</span>`; }
@@ -886,10 +904,12 @@ function openBlocked() {
     m.style.display = 'flex'; b.textContent = '…';
     fetch('/api/blocked').then(r => r.json()).then(list => {
         if (!list || !list.length) { b.textContent = T.no_blocked; return; }
+        // The IP goes through data-* + dataset, never interpolated into the
+        // handler string — same pattern as removeWl below.
         b.innerHTML = list.map(x => `<div class="blk-row">
             <div><strong>${esc(x.ip)}</strong> <span class="t">${esc(x.at)}</span><br>
             <span class="blk-report">${esc(x.report)}</span></div>
-            <button class="btn" onclick="unblockIp('${esc(x.ip)}')">${esc(T.unblock)}</button>
+            <button class="btn" data-ip="${esc(x.ip)}" onclick="unblockIp(this.dataset.ip)">${esc(T.unblock)}</button>
         </div>`).join('');
     }).catch(() => { b.textContent = 'error'; });
 }
@@ -903,11 +923,12 @@ function unblockIp(ip) {
 }
 
 // ── Machine audit ─────────────────────────────────────────────────────────
-function openAudit() {
+// force=true is the explicit "re-scan" button; opening the panel uses the cache.
+function openAudit(force) {
     const m = document.getElementById('audit-modal'), b = document.getElementById('audit-body');
     m.style.display = 'flex'; b.textContent = T.audit_running;
     document.getElementById('audit-sum').textContent = '';
-    fetch('/api/audit').then(r => r.json()).then(list => {
+    fetch('/api/audit' + (force ? '?refresh=1' : '')).then(r => r.json()).then(list => {
         if (!list || !list.length) { b.textContent = '—'; return; }
         const icon = { ok:'✅', warn:'⚠️', risk:'🔴', info:'ℹ️' };
         const n = { ok:0, warn:0, risk:0, info:0 };

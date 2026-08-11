@@ -6,6 +6,102 @@ Versions follow [Semantic Versioning](https://semver.org/).
 
 ---
 
+## [Unreleased] — security & correctness review
+
+### Security
+- **Fixed a DNS-rebinding bypass.** The loopback check tested
+  `strings.HasPrefix(host, "127.")`, so an attacker-owned name like
+  `127.0.0.1.evil.com` passed both the Host allow-list and the same-origin CSRF
+  check, giving a malicious page full access to the API. The check now parses the
+  Host as an IP and requires `IsLoopback()`; `localhost` is the only name allowed.
+- **Closed the unauthenticated local API.** The Host/Origin checks only constrain
+  browsers; any local program could POST to the port and, because the tool runs
+  elevated, obtain kill / firewall / settings / shutdown. There is now always one
+  gate: a password if set, otherwise a per-run local access token written to
+  `efemon-token` (0600) and handed to the browser through the URL the app opens.
+- **Geolocation moved to HTTPS** (`ipwho.is`). The old `http://ip-api.com` call
+  leaked the addresses under investigation and, worse, was rewritable in transit:
+  injecting `"org":"Cloudflare"` made `detectProvider` attenuate the AbuseIPDB
+  weight from 0.4 to 0.1, lowering the score of a malicious IP.
+- **`.env` writes are atomic** (temp file + rename) and serialized. A crash during
+  the previous truncate-then-write could drop `AUTH_HASH`, silently disabling the
+  login. Two concurrent settings POSTs could also lose keys.
+- **Threat-feed downloads are size-capped** (`io.LimitReader`, plus a cap on
+  decompressed ZIP output), and their HTTP status is checked — a 503 HTML page was
+  previously parsed as feed content and cached as the Tor exit list for 24h.
+- Changing or disabling an existing password now requires the current one.
+- Login backoff is **per client IP**; it was global, so anyone reaching the port
+  could lock the real operator out.
+- HTTP server now sets `ReadHeaderTimeout` and `IdleTimeout` (slowloris).
+- `esc()` in the UI escapes single quotes, and the one single-quoted handler was
+  moved to the `data-*` + `dataset` pattern used elsewhere.
+- The `.env` lookup no longer walks the working directory and its parent unless
+  `EFEMON_DEV=1`; launching the binary inside another project would otherwise read
+  *and rewrite* that project's `.env`.
+- `efemon.db` is created mode 0600 (it holds the forensic history).
+
+### Fixed
+- **UDP is visible again.** gopsutil never reports `LISTEN`/`ESTABLISHED` for
+  datagram sockets (`NONE` on Linux, empty on Windows), so filtering on those two
+  labels dropped *every* UDP socket from the table, the live monitor and the
+  history — QUIC/HTTP3 on 443, DNS and UDP-based C2 included.
+- **No more phantom rootkit findings.** The same root cause made the audit's
+  cross-view compare an API set with no UDP against `ss -tuln`, which lists UDP,
+  so every open UDP port was reported as a hidden listening port.
+- **Fixed a crash in packet capture.** `streamCapture` returned on stop without
+  waiting for its scanner goroutine, which could then hit a send on the
+  already-closed packet channel — a panic in a goroutine that takes the process
+  down. It also read the stderr buffer before `Wait()` (a data race).
+- Capture no longer leaks tshark: cancellation is watched while waiting for the
+  next packet (with `∞` on an idle flow, closing the tab used to leave it
+  running), and the pcap download runs under the request context.
+- **Enrichment is cached even when geolocation fails.** It previously cached only
+  on success, so once the geo provider rate-limited us nothing was cached and
+  every refresh re-queried VirusTotal, AbuseIPDB, Shodan and reverse DNS for every
+  address on screen.
+- Feeds back off after a failure. `at` was only advanced on success, so an
+  unreachable feed was re-downloaded on *every* enrichment call, serialized behind
+  its mutex — turning a page render into minutes.
+- Audit checks report "could not check" instead of "ok" when the underlying
+  command fails or times out. `find … -perm /6000` over a large `/home` routinely
+  timed out and was reported as "no SUID binaries found".
+- Windows audit checks no longer depend on the system language: the firewall state
+  and the Administrators group are read via `Get-NetFirewallProfile` and the
+  well-known SID `S-1-5-32-544`, and NetBIOS name parsing no longer requires the
+  English word "UNIQUE". On a Spanish Windows several of these silently misreported.
+- `/api/audit` only re-scans when asked; it passed `refresh=true` unconditionally,
+  making the cache dead code and every panel open a full machine scan. The scan no
+  longer holds a lock that blocked `/audit.json` and `/audit.txt`.
+- Data races on the runtime settings (`notifyDesktop`, `notifySound`,
+  `persistWhitelist`, `persistBlocks`, `refreshSecs`, `listenAddr`), read by
+  background goroutines and written by HTTP handlers. CI now runs `go test -race`.
+- Linux firewall rules are idempotent: `iptables -A` appended a duplicate on every
+  repeat block and a single `-D` removed only one, leaving the IP still blocked
+  after "unblock".
+- `trunc` in the templates cuts by rune, not byte — accented paths no longer
+  render a replacement diamond.
+- The language cookie has a `MaxAge`, so the choice survives a browser restart.
+
+### Changed
+- Code-signature lookups moved off the request path into a background worker
+  (like the VirusTotal hashes already were): PowerShell start-up on Windows, or
+  one sequential `dpkg -S` per binary at 5s each on Linux, used to run inside the
+  HTTP handler. Unresolved entries show `PENDING` and count as incomplete data for
+  the score, never as a bad signature.
+- Per-request enrichment is bounded (8 workers per pass) and deduplicated: process
+  identity is looked up once per PID instead of once per socket, and concurrent
+  lookups of the same IP share one result.
+- SQLite runs in WAL with a `busy_timeout`, and the `events` table has a retention
+  window (`EVENT_RETENTION_DAYS`, default 30) pruned at startup and daily.
+- Long-lived caches are bounded (sessions, notification throttle, beacon tracking,
+  known PIDs, file hashes, signatures, IP and LAN lookups); several previously grew
+  for the lifetime of the process.
+- Added tests: the templates are parsed *and executed* (they were runtime-only), and
+  the security middleware is covered end to end — token gate, rebinding hosts,
+  CSRF, password takeover, headers.
+
+---
+
 ## [0.2.0] — 2026-06-08
 
 ### Added — Linux support

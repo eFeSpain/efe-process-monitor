@@ -132,17 +132,33 @@ Without VirusTotal/AbuseIPDB keys, those two are simply skipped.
 
 ## Access
 
-By default the dashboard binds to **`127.0.0.1` only** and has **no password** —
-it exposes sensitive data and destructive actions, so it's meant as a local tool.
+By default the dashboard binds to **`127.0.0.1` only**. There is always exactly
+one gate in force:
 
-- If you do want to bind it to the network, **enable a password first** in
-  Settings. Network exposure is only allowed with a password set, and is then
-  served over **HTTPS** (a self-signed certificate is generated automatically).
+- **No password (default): a local access token.** Binding to loopback stops
+  remote machines, but not other programs on *this* one — and the tool is meant
+  to run elevated, so an unprivileged process reaching the port would inherit
+  kill / firewall / settings. At startup a random token is written to
+  `efemon-token` (mode 0600) next to the binary and passed to the browser in the
+  URL the app opens; the browser trades it for a session cookie and keeps working
+  from that. Always open the panel from the **tray icon** or by launching the
+  binary again — a bookmark hit from a cold browser shows a page telling you so.
+  On Unix a root-owned token file keeps non-elevated processes out; on Windows a
+  same-user process may still read it, so there it raises the bar rather than
+  closing the door.
+- **A password, if you set one** in Settings. It replaces the token gate.
+  Changing or removing it requires the current password.
+
+Binding to the network is only allowed with a password set, and is then served
+over **HTTPS** (a self-signed certificate is generated automatically).
+
+Requests are also checked for a loopback/IP-literal `Host` (anti DNS-rebinding)
+and a same-origin `Origin` on every state-changing request (anti CSRF).
 
 ## Privacy
 
 No telemetry; everything is stored locally (`efemon.db`). To enrich data the tool
-queries external services for the IPs/hashes **you inspect**: ip-api, VirusTotal,
+queries external services for the IPs/hashes **you inspect**: ipwho.is, VirusTotal,
 AbuseIPDB and Shodan receive those values; the abuse.ch / Spamhaus / Tor lists are
 plain public downloads that reveal nothing about you. Results are cached so each
 binary/IP is queried at most once (hourly for IPs). The machine audit runs fully

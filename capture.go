@@ -3,6 +3,7 @@ package main
 import (
 	"bufio"
 	"bytes"
+	"context"
 	"net"
 	"os/exec"
 	"regexp"
@@ -150,8 +151,12 @@ func buildCaptureCmd(localIP, remoteIP, iface string, count int) *exec.Cmd {
 
 // buildPcapCmd writes a real pcap to stdout (for download/Wireshark), bounded by
 // packet count and a duration so it can't hang on idle connections.
-func buildPcapCmd(localIP, remoteIP, iface string, count, seconds int) *exec.Cmd {
-	return command("tshark", "-i", iface, "-f", bpf(localIP, remoteIP),
+//
+// It takes a context so the request's cancellation kills tshark: without it, a
+// client that aborts the download left the process alive until its autostop
+// deadline, because cmd.Wait() can't return before the child does.
+func buildPcapCmd(ctx context.Context, localIP, remoteIP, iface string, count, seconds int) *exec.Cmd {
+	return commandContext(ctx, "tshark", "-i", iface, "-f", bpf(localIP, remoteIP),
 		"-w", "-", "-c", strconv.Itoa(count), "-a", "duration:"+strconv.Itoa(seconds))
 }
 
@@ -183,7 +188,6 @@ func streamCapture(localIP, remoteIP, iface string, count int, emit func(map[str
 	if err := cmd.Start(); err != nil {
 		return err.Error()
 	}
-	defer func() { _ = cmd.Process.Kill(); _ = cmd.Wait() }()
 
 	done := make(chan struct{})
 	go func() {
@@ -196,10 +200,25 @@ func streamCapture(localIP, remoteIP, iface string, count int, emit func(map[str
 		}
 		close(done)
 	}()
+
 	select {
 	case <-done:
 	case <-stop:
+		// Kill tshark so the scanner's read returns EOF, then WAIT for that
+		// goroutine to actually exit.
+		//
+		// Returning here while the scanner can still call emit() is a crash: the
+		// caller closes the packet channel as soon as we return, and emit's
+		// `select { case pkts <- p: case <-stop: }` would then have a
+		// send-on-closed-channel case available. select picks at random among
+		// ready cases, so roughly half the time that panics — in a goroutine
+		// net/http can't recover, taking the whole monitor down.
+		_ = cmd.Process.Kill()
+		<-done
 	}
+	// Wait reaps tshark and joins the goroutine os/exec uses to copy stderr into
+	// errBuf; reading the buffer before that is a data race on it.
+	_ = cmd.Wait()
 	return tsharkError(errBuf.String())
 }
 

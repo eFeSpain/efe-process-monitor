@@ -11,6 +11,7 @@ import (
 	"log"
 	"math/big"
 	"net"
+	"net/http"
 	"os"
 	"path/filepath"
 	"strings"
@@ -24,15 +25,33 @@ import (
 // LISTEN_KEY) or auto-generated self-signed next to the exe.
 
 var (
-	listenAddr    string // configured bind address (from .env), "" = default loopback
-	listenExposed bool   // bound to a non-loopback address
-	listenTLS     bool   // serving HTTPS
+	// listenAddr is the configured bind address ("" = default loopback). It's
+	// atomic because Settings can rewrite it while handlers read it back.
+	listenAddr atomicString
+	// listenExposed / listenTLS are decided once in resolveListen before the
+	// server starts, then only read — no synchronization needed.
+	listenExposed bool // bound to a non-loopback address
+	listenTLS     bool // serving HTTPS
 )
+
+// newServer builds the HTTP server used by every runApp variant.
+//
+// The zero-value http.Server has no timeouts at all, which is a slowloris hole
+// once the dashboard is exposed: a client can hold connections open mid-header
+// forever. WriteTimeout is deliberately left at 0 — /events and /capture are SSE
+// streams that must stay open for as long as the operator watches them.
+func newServer() *http.Server {
+	return &http.Server{
+		Handler:           rootHandler(),
+		ReadHeaderTimeout: 10 * time.Second,
+		IdleTimeout:       2 * time.Minute,
+	}
+}
 
 // resolveListen computes the bind address, enforcing "exposure requires login",
 // and returns the address to listen on plus the URL to open locally.
 func resolveListen() (addr, url string) {
-	addr = listenAddr
+	addr = listenAddr.Load()
 	if addr == "" {
 		addr = "127.0.0.1:5000"
 	}

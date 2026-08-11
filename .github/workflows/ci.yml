@@ -28,8 +28,22 @@ jobs:
       - name: go vet
         run: go vet ./...
 
-      - name: go test
-        run: go test ./...
+      # -race is the point of this step: the settings toggles are read by
+      # background goroutines and written by HTTP handlers, and a plain `go test`
+      # cannot see that class of bug.
+      - name: go test (race)
+        run: go test -race ./...
+
+      - name: staticcheck
+        uses: dominikh/staticcheck-action@v1
+        with:
+          version: latest
+          install-go: false
+
+      - name: gosec
+        uses: securego/gosec@master
+        with:
+          args: -exclude-generated -severity medium ./...
 
   build:
     # Guarantees the binary stays cgo-free and compiles on every target OS.

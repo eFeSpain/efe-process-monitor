@@ -9,6 +9,7 @@ import (
 	"io"
 	"net"
 	"net/http"
+	"net/url"
 	"os"
 	"strings"
 	"sync"
@@ -66,23 +67,99 @@ func getAbuseKey() string { keysMu.RLock(); defer keysMu.RUnlock(); return abuse
 // ── IP enrichment cache (TTL) ───────────────────────────────────────────────
 
 type ipCacheEntry struct {
-	at   time.Time
-	data *Enrichment
+	at      time.Time
+	data    *Enrichment
+	partial bool // geo lookup failed → shorter TTL, but still cached
 }
 
 var (
 	ipCacheMu sync.Mutex
 	ipCache   = map[string]ipCacheEntry{}
 	ipTTL     = time.Hour
+	// partialIPTTL is the (short) lifetime of an entry whose geo lookup failed.
+	// The result is still cached: not caching it meant that once the geo provider
+	// rate-limited us, *nothing* was cached, so every refresh re-queried
+	// VirusTotal, AbuseIPDB, Shodan and reverse DNS for every address on screen —
+	// burning exactly the quotas we were trying to protect.
+	partialIPTTL = 5 * time.Minute
+
+	// inflight coalesces concurrent lookups of the same IP. Without it the table
+	// render and the live monitor both enrich the same address at the same time.
+	inflightMu sync.Mutex
+	inflight   = map[string]*inflightIP{}
 )
 
-func enrichIP(ip string) *Enrichment {
+type inflightIP struct {
+	done chan struct{}
+	data *Enrichment
+}
+
+// maxIPCache bounds the cache; enrichment entries were previously never evicted,
+// only ignored once stale, so the map grew for the life of the process.
+const maxIPCache = 4096
+
+func cachedIP(ip string) (*Enrichment, bool) {
 	ipCacheMu.Lock()
-	if e, ok := ipCache[ip]; ok && time.Since(e.at) < ipTTL {
-		ipCacheMu.Unlock()
-		return e.data
+	defer ipCacheMu.Unlock()
+	e, ok := ipCache[ip]
+	if !ok {
+		return nil, false
 	}
-	ipCacheMu.Unlock()
+	ttl := ipTTL
+	if e.partial {
+		ttl = partialIPTTL
+	}
+	if time.Since(e.at) >= ttl {
+		delete(ipCache, ip)
+		return nil, false
+	}
+	return e.data, true
+}
+
+func storeIP(ip string, d *Enrichment, partial bool) {
+	ipCacheMu.Lock()
+	defer ipCacheMu.Unlock()
+	if len(ipCache) >= maxIPCache {
+		// Cheap bound: drop everything already expired, and if that wasn't
+		// enough, start fresh rather than grow without limit.
+		for k, e := range ipCache {
+			ttl := ipTTL
+			if e.partial {
+				ttl = partialIPTTL
+			}
+			if time.Since(e.at) >= ttl {
+				delete(ipCache, k)
+			}
+		}
+		if len(ipCache) >= maxIPCache {
+			ipCache = map[string]ipCacheEntry{}
+		}
+	}
+	ipCache[ip] = ipCacheEntry{at: time.Now(), data: d, partial: partial}
+}
+
+func enrichIP(ip string) *Enrichment {
+	if d, ok := cachedIP(ip); ok {
+		return d
+	}
+
+	// One lookup per IP at a time; everyone else waits for that result.
+	inflightMu.Lock()
+	if f, ok := inflight[ip]; ok {
+		inflightMu.Unlock()
+		<-f.done
+		return f.data
+	}
+	f := &inflightIP{done: make(chan struct{})}
+	inflight[ip] = f
+	inflightMu.Unlock()
+
+	defer func() {
+		inflightMu.Lock()
+		delete(inflight, ip)
+		inflightMu.Unlock()
+		close(f.done)
+	}()
 
 	d := &Enrichment{Country: "N/A", City: "N/A", ISP: "N/A", Org: "N/A", ASN: "N/A", DNS: "N/A"}
 	geoOK := geoLookup(ip, d)
@@ -99,19 +176,31 @@ func enrichIP(ip string) *Enrichment {
 	shodan(ip, d)
 	d.Provider = detectProvider(d)
 
-	if geoOK {
-		ipCacheMu.Lock()
-		ipCache[ip] = ipCacheEntry{time.Now(), d}
-		ipCacheMu.Unlock()
-	}
+	f.data = d
+	storeIP(ip, d, !geoOK)
 	return d
 }
 
+// geoLookup fills country/city/ISP/org/ASN from ipwho.is.
+//
+// This must be HTTPS. It used to call ip-api.com over plain HTTP, which not only
+// leaked the addresses being investigated but let anyone on the path *rewrite*
+// the answer — and the answer feeds the score: an injected "org":"Cloudflare"
+// makes detectProvider report a known provider, which drops the AbuseIPDB weight
+// from 0.4 to 0.1 and quietly attenuates a malicious IP. ip-api only serves TLS
+// to paying keys, so the provider changed rather than the scheme.
 func geoLookup(ip string, d *Enrichment) bool {
 	var g struct {
-		Status, Country, City, ISP, Org, As string
+		Success    bool   `json:"success"`
+		Country    string `json:"country"`
+		City       string `json:"city"`
+		Connection struct {
+			ASN int    `json:"asn"`
+			Org string `json:"org"`
+			ISP string `json:"isp"`
+		} `json:"connection"`
 	}
-	if err := getJSON("http://ip-api.com/json/"+ip, nil, &g); err != nil {
+	if err := getJSON("https://ipwho.is/"+url.PathEscape(ip), nil, &g); err != nil {
 		return false
 	}
 	if g.Country != "" {
@@ -120,16 +209,17 @@ func geoLookup(ip string, d *Enrichment) bool {
 	if g.City != "" {
 		d.City = g.City
 	}
-	if g.ISP != "" {
-		d.ISP = g.ISP
+	if g.Connection.ISP != "" {
+		d.ISP = g.Connection.ISP
 	}
-	if g.Org != "" {
-		d.Org = g.Org
+	if g.Connection.Org != "" {
+		d.Org = g.Connection.Org
 	}
-	if g.As != "" {
-		d.ASN = g.As
+	if g.Connection.ASN != 0 {
+		// Keep ip-api's "AS15169 Google LLC" shape: detectProvider matches on it.
+		d.ASN = fmt.Sprintf("AS%d %s", g.Connection.ASN, g.Connection.Org)
 	}
-	return g.Status == "success"
+	return g.Success
 }
 
 func vtIP(ip string) *int {
@@ -149,7 +239,7 @@ func vtIP(ip string) *int {
 			} `json:"attributes"`
 		} `json:"data"`
 	}
-	err := getJSON("https://www.virustotal.com/api/v3/ip_addresses/"+ip,
+	err := getJSON("https://www.virustotal.com/api/v3/ip_addresses/"+url.PathEscape(ip),
 		map[string]string{"x-apikey": key}, &resp)
 	if err != nil {
 		return nil
@@ -169,7 +259,7 @@ func abuseIPDB(ip string) *int {
 		} `json:"data"`
 	}
 	err := getJSON(
-		fmt.Sprintf("https://api.abuseipdb.com/api/v2/check?ipAddress=%s&maxAgeInDays=90", ip),
+		"https://api.abuseipdb.com/api/v2/check?maxAgeInDays=90&ipAddress="+url.QueryEscape(ip),
 		map[string]string{"Key": key, "Accept": "application/json"}, &resp)
 	if err != nil {
 		return nil
@@ -183,7 +273,7 @@ func shodan(ip string, d *Enrichment) {
 		Vulns []string `json:"vulns"`
 		Tags  []string `json:"tags"`
 	}
-	if err := getJSON("https://internetdb.shodan.io/"+ip, nil, &resp); err != nil {
+	if err := getJSON("https://internetdb.shodan.io/"+url.PathEscape(ip), nil, &resp); err != nil {
 		return
 	}
 	d.Ports, d.Vulns, d.Tags = resp.Ports, resp.Vulns, resp.Tags
@@ -191,18 +281,29 @@ func shodan(ip string, d *Enrichment) {
 
 // ── Daily-cached blocklists (Tor exits, Feodo C2) ───────────────────────────
 
+// Feed refresh cadence. failTTL is the key detail: on failure the "last
+// attempted" timestamp must still advance, otherwise every single enrichIP call
+// retries the download — serialized behind the feed's mutex, with an 8s timeout
+// each — and one unreachable feed turns a page render into minutes of waiting.
+const (
+	feedTTL     = 24 * time.Hour
+	feedFailTTL = 10 * time.Minute
+)
+
 type ipSet struct {
-	mu  sync.Mutex
-	at  time.Time
-	set map[string]bool
+	mu      sync.Mutex
+	at      time.Time // last successful refresh
+	triedAt time.Time // last attempt, successful or not
+	set     map[string]bool
 }
 
 func (s *ipSet) get(url string, skipComments bool) map[string]bool {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	if time.Since(s.at) < 24*time.Hour && s.set != nil {
-		return s.set
+	if s.set != nil && (time.Since(s.at) < feedTTL || time.Since(s.triedAt) < feedFailTTL) {
+		return s.set // fresh enough, or we tried recently and failed
 	}
+	s.triedAt = time.Now()
 	body, err := getText(url)
 	if err != nil {
 		if s.set == nil {
@@ -236,9 +337,10 @@ func feodoC2() map[string]bool {
 // ── ThreatFox C2/malware IOC feed (abuse.ch CSV, no key) ─────────────────────
 
 type tfFeed struct {
-	mu sync.Mutex
-	at time.Time
-	m  map[string]string // ip -> malware family/label
+	mu      sync.Mutex
+	at      time.Time         // last successful refresh
+	triedAt time.Time         // last attempt
+	m       map[string]string // ip -> malware family/label
 }
 
 var threatFox tfFeed
@@ -246,9 +348,10 @@ var threatFox tfFeed
 func (f *tfFeed) refresh(force bool) map[string]string {
 	f.mu.Lock()
 	defer f.mu.Unlock()
-	if !force && f.m != nil && time.Since(f.at) < 24*time.Hour {
+	if !force && f.m != nil && (time.Since(f.at) < feedTTL || time.Since(f.triedAt) < feedFailTTL) {
 		return f.m
 	}
+	f.triedAt = time.Now()
 	body, err := getZipCSV("https://threatfox.abuse.ch/export/csv/ip-port/full/")
 	if err != nil {
 		if f.m == nil {
@@ -294,9 +397,10 @@ func threatFoxLookup(ip string) string { return threatFox.refresh(false)[ip] }
 // ── Spamhaus DROP (criminal/hijacked netblocks, CIDR, no key) ────────────────
 
 type cidrFeed struct {
-	mu   sync.Mutex
-	at   time.Time
-	nets []*net.IPNet
+	mu      sync.Mutex
+	at      time.Time // last successful refresh
+	triedAt time.Time // last attempt
+	nets    []*net.IPNet
 }
 
 var spamhaus cidrFeed
@@ -304,9 +408,10 @@ var spamhaus cidrFeed
 func (f *cidrFeed) refresh(force bool) []*net.IPNet {
 	f.mu.Lock()
 	defer f.mu.Unlock()
-	if !force && f.nets != nil && time.Since(f.at) < 24*time.Hour {
+	if !force && f.nets != nil && (time.Since(f.at) < feedTTL || time.Since(f.triedAt) < feedFailTTL) {
 		return f.nets
 	}
+	f.triedAt = time.Now()
 	body, err := getText("https://www.spamhaus.org/drop/drop_v4.json")
 	if err != nil {
 		if f.nets == nil {
@@ -422,13 +527,26 @@ func getJSON(url string, headers map[string]string, out any) error {
 	return json.NewDecoder(resp.Body).Decode(out)
 }
 
+// Feed downloads are bounded: these bodies come from third parties over the
+// network, and an unbounded io.ReadAll on a hostile or broken upstream is an OOM
+// of the monitor. The uncompressed cap also defends against a zip bomb.
+const (
+	maxFeedBytes      = 64 << 20  // 64 MiB of compressed/raw download
+	maxFeedUncompress = 256 << 20 // 256 MiB total after decompression
+)
+
 func getText(url string) (string, error) {
 	resp, err := httpClient.Get(url)
 	if err != nil {
 		return "", err
 	}
 	defer resp.Body.Close()
-	b, err := io.ReadAll(resp.Body)
+	// Status must be checked: an upstream 503 HTML page would otherwise be parsed
+	// as feed content and cached as "the Tor exit list" for 24h.
+	if resp.StatusCode != 200 {
+		return "", fmt.Errorf("status %d", resp.StatusCode)
+	}
+	b, err := io.ReadAll(io.LimitReader(resp.Body, maxFeedBytes))
 	return string(b), err
 }
 
@@ -443,7 +561,7 @@ func getZipCSV(url string) (string, error) {
 	if resp.StatusCode != 200 {
 		return "", fmt.Errorf("status %d", resp.StatusCode)
 	}
-	raw, err := io.ReadAll(resp.Body)
+	raw, err := io.ReadAll(io.LimitReader(resp.Body, maxFeedBytes))
 	if err != nil {
 		return "", err
 	}
@@ -452,13 +570,18 @@ func getZipCSV(url string) (string, error) {
 		return "", err
 	}
 	var sb strings.Builder
+	remaining := int64(maxFeedUncompress)
 	for _, zf := range zr.File {
+		if remaining <= 0 {
+			return "", fmt.Errorf("zip demasiado grande al descomprimir (>%d bytes)", maxFeedUncompress)
+		}
 		rc, err := zf.Open()
 		if err != nil {
 			continue
 		}
-		b, _ := io.ReadAll(rc)
+		b, _ := io.ReadAll(io.LimitReader(rc, remaining))
 		rc.Close()
+		remaining -= int64(len(b))
 		sb.Write(b)
 	}
 	return sb.String(), nil

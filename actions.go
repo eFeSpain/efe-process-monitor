@@ -5,6 +5,7 @@ import (
 	"log"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"runtime"
 	"strings"
 )
@@ -43,10 +44,17 @@ func blockIP(ip string) error {
 			"name=eFePM block "+ip, "dir=out", "action=block", "remoteip="+ip).Run()
 	case "linux":
 		if hasCmd("iptables") { // works on most distros (incl. iptables-nft shim)
+			// -C first: -A appends unconditionally, so blocking the same IP twice
+			// used to leave two identical rules and a single unblock only removed
+			// one of them, leaving the IP silently still blocked.
+			if command("iptables", "-C", "OUTPUT", "-d", ip, "-j", "DROP").Run() == nil {
+				return nil // already blocked
+			}
 			return command("iptables", "-A", "OUTPUT", "-d", ip, "-j", "DROP").Run()
 		}
 		if hasCmd("nft") {
 			ensureNft()
+			// nft sets are inherently idempotent: adding a member twice is a no-op.
 			return command("nft", "add", "element", "inet", "efepm", "blocked", "{ "+ip+" }").Run()
 		}
 		return fmt.Errorf("ni iptables ni nft disponibles (¿root?)")
@@ -64,7 +72,19 @@ func unblockIP(ip string) error {
 			"name=eFePM block "+ip).Run()
 	case "linux":
 		if hasCmd("iptables") {
-			return command("iptables", "-D", "OUTPUT", "-d", ip, "-j", "DROP").Run()
+			// Delete every copy: rules added before the -C guard above existed (or
+			// by hand) can be duplicated, and leaving one behind means "unblocked"
+			// in the UI while the traffic is still dropped.
+			var err error
+			for i := 0; i < 16; i++ {
+				if e := command("iptables", "-D", "OUTPUT", "-d", ip, "-j", "DROP").Run(); e != nil {
+					if i == 0 {
+						err = e // nothing was removed at all — report it
+					}
+					break
+				}
+			}
+			return err
 		}
 		if hasCmd("nft") {
 			return command("nft", "delete", "element", "inet", "efepm", "blocked", "{ "+ip+" }").Run()
@@ -87,6 +107,12 @@ func relaunchSelf() {
 	cmd.Stdout, cmd.Stderr = os.Stdout, os.Stderr
 	_ = cmd.Start()
 }
+
+// openDashboard opens the dashboard in the browser, carrying the local access
+// token so that browser gets authorized. Every "open the panel" path (startup,
+// tray menu, second instance) must go through here, not openBrowser, or the
+// browser lands on the gate page instead of the dashboard.
+func openDashboard(url string) { openBrowser(tokenURL(url, localToken)) }
 
 // openBrowser opens the default browser at url (best effort).
 func openBrowser(url string) {
@@ -121,13 +147,14 @@ func startupBanner() {
 	}
 	log.Printf("[+] Live monitor    active (every %s)", monitorInterval)
 	if listenExposed {
-		log.Printf("[!] Access          EXPOSED on %s over HTTPS — reachable from the network (login required)", listenAddr)
+		log.Printf("[!] Access          EXPOSED on %s over HTTPS — reachable from the network (login required)", listenAddr.Load())
 	} else {
 		log.Println("[+] Access          localhost only (loopback Host enforced, CSRF-guarded)")
 	}
 	if authEnabled() {
 		log.Println("[+] Login           ENABLED (password required)")
 	} else {
-		log.Println("[-] Login           disabled — anyone who reaches this port can act. Enable it in Settings if you expose it.")
+		log.Println("[+] Login           disabled — local token gate active (only the browser this app opens can act)")
+		log.Printf("[+] Token           %s", filepath.Join(appDir, tokenFile))
 	}
 }

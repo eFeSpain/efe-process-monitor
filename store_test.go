@@ -20,7 +20,7 @@ func setupTestDB(t *testing.T) {
 
 func TestWhitelistRoundTrip(t *testing.T) {
 	setupTestDB(t)
-	persistWhitelist = true
+	persistWhitelist.Store(true)
 
 	addWhitelist(`C:\app\a.exe`)
 	if !whitelist()[`C:\app\a.exe`] {
@@ -43,7 +43,7 @@ func TestWhitelistRoundTrip(t *testing.T) {
 
 func TestIPWhitelistRoundTrip(t *testing.T) {
 	setupTestDB(t)
-	persistWhitelist = true
+	persistWhitelist.Store(true)
 
 	addIPWhitelist("8.8.8.8")
 	if !ipWhitelist()["8.8.8.8"] {
@@ -57,7 +57,7 @@ func TestIPWhitelistRoundTrip(t *testing.T) {
 
 func TestBlockedRoundTrip(t *testing.T) {
 	setupTestDB(t)
-	persistBlocks = true
+	persistBlocks.Store(true)
 
 	saveBlocked("1.2.3.4", "test report")
 	list := listBlocked()
@@ -75,7 +75,7 @@ func TestBlockedRoundTrip(t *testing.T) {
 // so reseeding from the DB (a restart) forgets it.
 func TestPersistToggleSessionOnly(t *testing.T) {
 	setupTestDB(t)
-	persistWhitelist = false
+	persistWhitelist.Store(false)
 
 	addIPWhitelist("9.9.9.9")
 	if !ipWhitelist()["9.9.9.9"] {
@@ -93,12 +93,12 @@ func TestPersistToggleSessionOnly(t *testing.T) {
 // TestFlushOnEnable: turning persistence on flushes the current session to DB.
 func TestFlushOnEnable(t *testing.T) {
 	setupTestDB(t)
-	persistWhitelist = false
+	persistWhitelist.Store(false)
 	addWhitelist(`C:\tmp\y.exe`)
 	if _, ok := dbAllWhitelist()[`C:\tmp\y.exe`]; ok {
 		t.Fatal("should not be in DB yet")
 	}
-	persistWhitelist = true
+	persistWhitelist.Store(true)
 	flushWhitelist()
 	if _, ok := dbAllWhitelist()[`C:\tmp\y.exe`]; !ok {
 		t.Error("flush did not persist current session to DB")

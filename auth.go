@@ -2,6 +2,7 @@ package main
 
 import (
 	"crypto/rand"
+	"crypto/subtle"
 	"encoding/base64"
 	"encoding/hex"
 	"errors"
@@ -11,6 +12,8 @@ import (
 	"net"
 	"net/http"
 	"net/url"
+	"os"
+	"path/filepath"
 	"strings"
 	"sync"
 	"time"
@@ -28,6 +31,13 @@ const (
 	sessionTTL     = 12 * time.Hour
 	minPasswordLen = 8
 	lockThreshold  = 5 // failed logins before lockout kicks in
+
+	// localSessionTTL is the lifetime of a session granted by the local token
+	// gate. It's long because that gate answers "which local program is this?",
+	// not "is this person still authorized?" — a short TTL would just mean
+	// re-opening from the tray every day for no security gain.
+	localSessionTTL = 30 * 24 * time.Hour
+	tokenFile       = "efemon-token"
 )
 
 var errPwTooShort = errors.New("password too short")
@@ -37,9 +47,38 @@ var (
 	authHash string // bcrypt hash of the access password ("" = login disabled)
 	sessions = map[string]time.Time{}
 
-	loginFails int       // consecutive failed logins (global; single-password gate)
-	lockUntil  time.Time // login locked until this time
+	// Brute-force backoff is tracked per client IP, not globally: a global
+	// counter lets anyone who can reach the port lock the real operator out.
+	loginFails = map[string]int{}
+	lockUntil  = map[string]time.Time{}
 )
+
+// maxLockEntries caps the backoff maps so a flood of distinct source IPs can't
+// grow them without bound while the dashboard is exposed.
+const maxLockEntries = 1024
+
+// clientIP is the source address used to key the login backoff.
+func clientIP(r *http.Request) string {
+	if h, _, err := net.SplitHostPort(r.RemoteAddr); err == nil {
+		return h
+	}
+	return r.RemoteAddr
+}
+
+// pruneLocks drops entries that are no longer locked. Caller holds authMu.
+func pruneLocks() {
+	now := time.Now()
+	for ip, until := range lockUntil {
+		if now.After(until) {
+			delete(lockUntil, ip)
+			delete(loginFails, ip)
+		}
+	}
+	if len(loginFails) > maxLockEntries { // pathological: start over rather than grow
+		loginFails = map[string]int{}
+		lockUntil = map[string]time.Time{}
+	}
+}
 
 // loadAuth restores the password hash from .env (base64-wrapped so the bcrypt
 // "$" characters never trip godotenv's variable expansion).
@@ -59,6 +98,76 @@ func authEnabled() bool {
 	authMu.RLock()
 	defer authMu.RUnlock()
 	return authHash != ""
+}
+
+// ── Local access token ───────────────────────────────────────────────────────
+//
+// With no password set, the Host/Origin checks above constrain *browsers* only:
+// any local program can open a socket to 127.0.0.1:5000 and send whatever
+// headers it likes. Since the tool is meant to run elevated, that would hand an
+// unprivileged process the kill / firewall / settings / shutdown endpoints —
+// a local privilege escalation.
+//
+// The gate: a random token minted at startup, written to a 0600 file next to
+// the executable, handed to the browser once through the URL we open, and then
+// exchanged for a session cookie. The browser keeps working from its cookie; a
+// program that cannot read the token file cannot get in.
+//
+// Scope of the protection, honestly: on Unix a root-owned 0600 file keeps a
+// non-elevated process out. On Windows a same-user process may still be able to
+// read it, so there it raises the bar rather than closing the door. What it does
+// close completely, on every platform, is the remote-website vector and access
+// by other users of the machine.
+//
+// It only applies when no password is set — a password is the stronger gate, and
+// network exposure already requires one, so this never runs on a public bind.
+var localToken string
+
+// initLocalToken mints the token for this run and persists it 0600 so a second
+// launch (the "already running → just open the dashboard" path) can find it.
+func initLocalToken() {
+	b := make([]byte, 32)
+	if _, err := rand.Read(b); err != nil {
+		log.Fatalf("no se pudo generar el token de acceso local: %v", err)
+	}
+	localToken = hex.EncodeToString(b)
+	p := filepath.Join(appDir, tokenFile)
+	if err := os.WriteFile(p, []byte(localToken), 0o600); err != nil {
+		// Not fatal: this run still works (we pass the token in the URL we open),
+		// only the second-instance handoff degrades.
+		log.Printf("[!] no se pudo escribir %s: %v", p, err)
+	}
+}
+
+// readLocalToken loads the token written by the instance that owns the port.
+func readLocalToken() string {
+	b, err := os.ReadFile(filepath.Join(appDir, tokenFile))
+	if err != nil {
+		return ""
+	}
+	return strings.TrimSpace(string(b))
+}
+
+// tokenURL appends the local token to the dashboard URL, so opening it in the
+// browser also authorizes that browser. Empty token → URL unchanged.
+func tokenURL(base, tok string) string {
+	if tok == "" {
+		return base
+	}
+	sep := "?"
+	if strings.Contains(base, "?") {
+		sep = "&"
+	}
+	return base + sep + "t=" + url.QueryEscape(tok)
+}
+
+// validLocalToken compares a presented token against this run's token in
+// constant time. A missing token never matches.
+func validLocalToken(tok string) bool {
+	if tok == "" || localToken == "" {
+		return false
+	}
+	return subtle.ConstantTimeCompare([]byte(tok), []byte(localToken)) == 1
 }
 
 // setAuthPassword sets, changes, or (with "") clears the access password. All
@@ -91,23 +200,24 @@ func checkPassword(pw string) bool {
 	return h != "" && bcrypt.CompareHashAndPassword([]byte(h), []byte(pw)) == nil
 }
 
-// loginLocked reports whether logins are temporarily blocked (brute-force
-// backoff) and how long remains.
-func loginLocked() (bool, time.Duration) {
+// loginLocked reports whether logins from ip are temporarily blocked
+// (brute-force backoff) and how long remains.
+func loginLocked(ip string) (bool, time.Duration) {
 	authMu.RLock()
 	defer authMu.RUnlock()
-	if time.Now().Before(lockUntil) {
-		return true, time.Until(lockUntil)
+	if until, ok := lockUntil[ip]; ok && time.Now().Before(until) {
+		return true, time.Until(until)
 	}
 	return false, 0
 }
 
-func recordLoginFail() {
+func recordLoginFail(ip string) {
 	authMu.Lock()
 	defer authMu.Unlock()
-	loginFails++
-	if loginFails >= lockThreshold {
-		over := loginFails - lockThreshold
+	pruneLocks()
+	loginFails[ip]++
+	if n := loginFails[ip]; n >= lockThreshold {
+		over := n - lockThreshold
 		if over > 5 {
 			over = 5 // cap the shift; 30s<<5 = 16m → clamped below
 		}
@@ -115,37 +225,58 @@ func recordLoginFail() {
 		if d > 15*time.Minute {
 			d = 15 * time.Minute
 		}
-		lockUntil = time.Now().Add(d)
+		lockUntil[ip] = time.Now().Add(d)
 	}
 }
 
-func resetLoginFails() {
+func resetLoginFails(ip string) {
 	authMu.Lock()
-	loginFails, lockUntil = 0, time.Time{}
+	delete(loginFails, ip)
+	delete(lockUntil, ip)
 	authMu.Unlock()
 }
 
 // sessionCookie builds the session cookie. Secure is set only when serving HTTPS
 // (exposed mode); on plain-HTTP loopback a Secure cookie would never be stored.
-func sessionCookie() *http.Cookie {
+func sessionCookie() *http.Cookie { return sessionCookieFor(sessionTTL) }
+
+// sessionCookieFor builds a session cookie valid for ttl.
+func sessionCookieFor(ttl time.Duration) *http.Cookie {
 	return &http.Cookie{
-		Name: "sid", Value: newSession(), Path: "/",
+		Name: "sid", Value: newSession(ttl), Path: "/",
 		HttpOnly: true, SameSite: http.SameSiteStrictMode,
-		Secure: listenTLS, MaxAge: int(sessionTTL.Seconds()),
+		Secure: listenTLS, MaxAge: int(ttl.Seconds()),
 	}
 }
 
-func newSession() string {
+func newSession(ttl time.Duration) string {
 	b := make([]byte, 32)
-	rand.Read(b)
+	if _, err := rand.Read(b); err != nil {
+		// Never happens on supported platforms, but an all-zero token would be
+		// guessable — refuse to mint one instead.
+		log.Printf("[!] crypto/rand falló al crear la sesión: %v", err)
+		return ""
+	}
 	tok := hex.EncodeToString(b)
 	authMu.Lock()
-	sessions[tok] = time.Now().Add(sessionTTL)
+	// Expired sessions were only dropped when someone presented them again, so
+	// abandoned ones accumulated for the life of the process. Sweep on mint:
+	// it's the only place the map grows, and it's rare.
+	now := time.Now()
+	for t, exp := range sessions {
+		if now.After(exp) {
+			delete(sessions, t)
+		}
+	}
+	sessions[tok] = now.Add(ttl)
 	authMu.Unlock()
 	return tok
 }
 
 func validSession(tok string) bool {
+	if tok == "" {
+		return false
+	}
 	authMu.RLock()
 	exp, ok := sessions[tok]
 	authMu.RUnlock()
@@ -169,17 +300,21 @@ func isAuthed(r *http.Request) bool {
 // loopbackHost reports whether a Host/authority is a loopback address. This is
 // the anti-DNS-rebinding control: a browser tricked into resolving evil.com to
 // 127.0.0.1 still sends "Host: evil.com", which we reject.
+//
+// The check must be on the parsed IP, never on a string prefix: a name like
+// "127.0.0.1.evil.com" starts with "127." but is a DNS name an attacker can
+// point at loopback, which is exactly the rebinding case we're defending.
+// "localhost" is the only *name* allowed, because browsers resolve it locally.
 func loopbackHost(hostport string) bool {
 	host := hostport
 	if h, _, err := splitHostPort(hostport); err == nil {
 		host = h
 	}
 	host = strings.Trim(host, "[]")
-	switch strings.ToLower(host) {
-	case "127.0.0.1", "localhost", "::1":
-		return true
+	if ip := net.ParseIP(host); ip != nil {
+		return ip.IsLoopback() // 127.0.0.0/8 and ::1
 	}
-	return strings.HasPrefix(host, "127.") // 127.0.0.0/8
+	return strings.EqualFold(host, "localhost")
 }
 
 // splitHostPort is net.SplitHostPort but tolerant of a missing port.
@@ -255,17 +390,59 @@ func securityMiddleware(next http.Handler) http.Handler {
 				return
 			}
 		}
-		if authEnabled() && !isPublicPath(r.URL.Path) && !isAuthed(r) {
-			if strings.HasPrefix(r.URL.Path, "/api/") || r.Method != http.MethodGet {
-				http.Error(w, `{"ok":false,"error":"unauthorized"}`, http.StatusUnauthorized)
+		// Exactly one gate is always in force: the password when one is set,
+		// otherwise the local token. Never both, never neither.
+		if !isPublicPath(r.URL.Path) && !isAuthed(r) {
+			if authEnabled() {
+				if strings.HasPrefix(r.URL.Path, "/api/") || r.Method != http.MethodGet {
+					http.Error(w, `{"ok":false,"error":"unauthorized"}`, http.StatusUnauthorized)
+					return
+				}
+				http.Redirect(w, r, "/login", http.StatusFound)
 				return
 			}
-			http.Redirect(w, r, "/login", http.StatusFound)
-			return
+			// No password → the token in the URL we opened is what authorizes
+			// this browser. Exchange it for a cookie so the token never has to
+			// appear in a link again.
+			if !validLocalToken(r.URL.Query().Get("t")) {
+				denyLocal(w, r)
+				return
+			}
+			http.SetCookie(w, sessionCookieFor(localSessionTTL))
 		}
 		next.ServeHTTP(w, r)
 	})
 }
+
+// denyLocal rejects a request that presented neither a session nor the local
+// token. API callers get JSON; a browser gets a page explaining how to get in,
+// because the honest answer ("open it from the tray") is not guessable.
+func denyLocal(w http.ResponseWriter, r *http.Request) {
+	log.Printf("[gate] blocked (no session, no local token): %s %s", r.Method, r.URL.Path)
+	if strings.HasPrefix(r.URL.Path, "/api/") {
+		http.Error(w, `{"ok":false,"error":"forbidden: local token required"}`, http.StatusForbidden)
+		return
+	}
+	T := strings_(langFrom(r))
+	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	w.WriteHeader(http.StatusForbidden)
+	fmt.Fprintf(w, gateHTML, langFrom(r), html.EscapeString(T["gate_title"]),
+		html.EscapeString(T["gate_title"]), html.EscapeString(T["gate_body"]),
+		html.EscapeString(filepath.Join(appDir, tokenFile)))
+}
+
+const gateHTML = `<!doctype html><html lang="%s"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>%s</title><style>
+*{box-sizing:border-box} body{margin:0;height:100vh;display:flex;align-items:center;justify-content:center;
+background:#0d1117;color:#c9d1d9;font-family:system-ui,Segoe UI,sans-serif}
+.box{background:#161b22;border:1px solid #30363d;border-radius:10px;padding:28px 32px;max-width:460px}
+h1{font-size:16px;margin:0 0 10px} p{color:#8b949e;font-size:13px;margin:0 0 10px;line-height:1.6}
+code{background:#0d1117;border:1px solid #30363d;border-radius:4px;padding:1px 5px;font-size:12px;word-break:break-all}
+.lock{font-size:26px;margin-bottom:8px;text-align:center}
+</style></head><body><div class="box">
+<div class="lock">🔒</div><h1>%s</h1><p>%s</p><p><code>%s</code></p>
+</div></body></html>`
 
 // rootHandler is the fully-wrapped handler the server serves.
 func rootHandler() http.Handler { return securityMiddleware(http.DefaultServeMux) }
@@ -277,17 +454,18 @@ func handleLogin(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if r.Method == http.MethodPost {
-		if locked, remain := loginLocked(); locked {
+		ip := clientIP(r)
+		if locked, remain := loginLocked(ip); locked {
 			renderLogin(w, lang, fmt.Sprintf(strings_(lang)["login_locked"], int(remain.Seconds())+1))
 			return
 		}
 		if checkPassword(r.FormValue("password")) {
-			resetLoginFails()
+			resetLoginFails(ip)
 			http.SetCookie(w, sessionCookie())
 			http.Redirect(w, r, "/", http.StatusFound)
 			return
 		}
-		recordLoginFail()
+		recordLoginFail(ip)
 		time.Sleep(500 * time.Millisecond) // throttle on top of the lockout
 		renderLogin(w, lang, strings_(lang)["login_error"])
 		return
@@ -326,6 +504,12 @@ func renderLogin(w http.ResponseWriter, lang, errMsg string) {
 }
 
 func handleLogout(w http.ResponseWriter, r *http.Request) {
+	// With no password there is nothing to log out of, and dropping the session
+	// would only lock this browser out behind the local-token gate.
+	if !authEnabled() {
+		http.Redirect(w, r, "/", http.StatusFound)
+		return
+	}
 	if c, err := r.Cookie("sid"); err == nil {
 		authMu.Lock()
 		delete(sessions, c.Value)

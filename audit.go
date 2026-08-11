@@ -27,7 +27,9 @@ type AuditCheck struct {
 var auditStrings = map[string]map[string]string{
 	"es": {
 		"found_prefix": "%d encontrado(s): ", "more": " … (+%d más)",
-		"cat_proc": "Procesos", "cat_persist": "Persistencia", "cat_harden": "Hardening",
+		"check_failed":  "No se pudo comprobar (%v) — resultado indeterminado, no asumas que está limpio.",
+		"check_partial": " ⚠ comprobación incompleta (el comando falló o agotó el tiempo): puede haber más.",
+		"cat_proc":      "Procesos", "cat_persist": "Persistencia", "cat_harden": "Hardening",
 		"cat_rk":       "Rootkit (heurístico)",
 		"p_suspath":    "Procesos desde rutas sospechosas (Temp/Downloads…)",
 		"p_suspath_ok": "Ningún proceso corriendo desde rutas sospechosas.",
@@ -93,7 +95,9 @@ var auditStrings = map[string]map[string]string{
 	},
 	"en": {
 		"found_prefix": "%d found: ", "more": " … (+%d more)",
-		"cat_proc": "Processes", "cat_persist": "Persistence", "cat_harden": "Hardening",
+		"check_failed":  "Could not check (%v) — result is indeterminate, do not read it as clean.",
+		"check_partial": " ⚠ incomplete check (the command failed or timed out): there may be more.",
+		"cat_proc":      "Processes", "cat_persist": "Persistence", "cat_harden": "Hardening",
 		"cat_rk":       "Rootkit (heuristic)",
 		"p_suspath":    "Processes from suspicious paths (Temp/Downloads…)",
 		"p_suspath_ok": "No processes running from suspicious paths.",
@@ -170,19 +174,53 @@ func atr(lang, key string) string {
 }
 
 var (
-	auditMu    sync.Mutex
+	auditMu    sync.Mutex // guards the maps below; never held across a scan
+	auditRunMu sync.Mutex // serializes scans, so N callers cost one scan
 	auditCache = map[string][]AuditCheck{}
 	auditAt    = map[string]time.Time{}
 )
 
+const auditTTL = 60 * time.Second
+
+// auditCached returns the audit for lang, running one if the cached copy is
+// missing, stale, or explicitly refreshed.
+//
+// A full scan is expensive — driverquery, schtasks, find over /home, and on Linux
+// a kill(pid,0) sweep — and it used to run with auditMu held for its entire
+// duration, so /audit.json and /audit.txt blocked behind it and every click on
+// "re-scan" queued another complete scan. Now the lock only covers the map
+// access, and concurrent callers coalesce onto a single in-flight scan.
 func auditCached(lang string, refresh bool) []AuditCheck {
-	auditMu.Lock()
-	defer auditMu.Unlock()
-	if refresh || auditCache[lang] == nil || time.Since(auditAt[lang]) > 30*time.Second {
-		auditCache[lang] = Audit(lang)
-		auditAt[lang] = time.Now()
+	read := func() ([]AuditCheck, time.Time) {
+		auditMu.Lock()
+		defer auditMu.Unlock()
+		return auditCache[lang], auditAt[lang]
 	}
-	return auditCache[lang]
+	if !refresh {
+		if cached, at := read(); cached != nil && time.Since(at) < auditTTL {
+			return cached
+		}
+	}
+
+	start := time.Now()
+	auditRunMu.Lock()
+	defer auditRunMu.Unlock()
+
+	cached, at := read()
+	// Someone finished a scan while we were queued: that result is newer than
+	// this request, so it satisfies even an explicit refresh.
+	if cached != nil && at.After(start) {
+		return cached
+	}
+	if !refresh && cached != nil && time.Since(at) < auditTTL {
+		return cached
+	}
+
+	res := Audit(lang)
+	auditMu.Lock()
+	auditCache[lang], auditAt[lang] = res, time.Now()
+	auditMu.Unlock()
+	return res
 }
 
 // Audit runs all checks for the current OS in the given language.
@@ -195,11 +233,28 @@ func Audit(lang string) []AuditCheck {
 	return c
 }
 
+// runCmd returns the command's stdout and discards any error. Only use it where
+// empty output is itself a valid answer; if a failure would be mistaken for a
+// clean result, use runCmdErr.
 func runCmd(timeout time.Duration, name string, args ...string) string {
+	out, _ := runCmdErr(timeout, name, args...)
+	return out
+}
+
+// runCmdErr is runCmd but surfaces the failure, including a timeout.
+//
+// This matters: `find /home -perm /6000` against a big home directory routinely
+// hits its deadline, and swallowing that turned "we never finished looking" into
+// "no SUID binaries found". In a security audit a false OK is the worst possible
+// output, so callers whose check can't distinguish the two must use this.
+func runCmdErr(timeout time.Duration, name string, args ...string) (string, error) {
 	ctx, cancel := context.WithTimeout(context.Background(), timeout)
 	defer cancel()
-	out, _ := commandContext(ctx, name, args...).Output()
-	return string(out)
+	out, err := commandContext(ctx, name, args...).Output()
+	if ctx.Err() != nil {
+		return string(out), fmt.Errorf("%s: %w", name, ctx.Err())
+	}
+	return string(out), err
 }
 
 // finding builds one check from a list of offending items (cat/name/ok already translated).
@@ -214,6 +269,20 @@ func finding(lang, cat, name, status string, items []string, ok string) AuditChe
 	}
 	return AuditCheck{cat, name, status,
 		fmt.Sprintf(atr(lang, "found_prefix"), len(items)) + strings.Join(shown, " | ") + extra}
+}
+
+// findingOrUnknown is finding() for checks backed by an external command: when
+// that command failed it reports "couldn't check" instead of "ok", and when it
+// produced partial output it keeps the findings but says so.
+func findingOrUnknown(lang, cat, name, status string, items []string, ok string, err error) AuditCheck {
+	if err != nil && len(items) == 0 {
+		return AuditCheck{cat, name, "info", fmt.Sprintf(atr(lang, "check_failed"), err)}
+	}
+	c := finding(lang, cat, name, status, items, ok)
+	if err != nil {
+		c.Detail += atr(lang, "check_partial")
+	}
+	return c
 }
 
 // ── Processes ────────────────────────────────────────────────────────────────
@@ -323,7 +392,8 @@ func auditPersistenceWindows(lang string) []AuditCheck {
 	out = append(out, finding(lang, cat, atr(lang, "pw_startup"), "warn", startup, atr(lang, "pw_startup_ok")))
 
 	var tasks []string
-	for _, ln := range strings.Split(runCmd(20*time.Second, "schtasks", "/query", "/v", "/fo", "csv"), "\n") {
+	schtasksOut, schtasksErr := runCmdErr(30*time.Second, "schtasks", "/query", "/v", "/fo", "csv")
+	for _, ln := range strings.Split(schtasksOut, "\n") {
 		l := strings.ToLower(ln)
 		if strings.Contains(l, `\temp\`) || strings.Contains(l, `\appdata\`) ||
 			strings.Contains(l, "powershell -enc") || strings.Contains(l, "mshta") {
@@ -332,7 +402,8 @@ func auditPersistenceWindows(lang string) []AuditCheck {
 			}
 		}
 	}
-	out = append(out, finding(lang, cat, atr(lang, "pw_tasks"), "risk", tasks, atr(lang, "pw_tasks_ok")))
+	out = append(out, findingOrUnknown(lang, cat, atr(lang, "pw_tasks"), "risk", tasks,
+		atr(lang, "pw_tasks_ok"), schtasksErr))
 	return out
 }
 
@@ -430,14 +501,7 @@ func auditHardeningWindows(lang string) []AuditCheck {
 	cat := atr(lang, "cat_harden")
 	var out []AuditCheck
 
-	fw := strings.ToLower(runCmd(8*time.Second, "netsh", "advfirewall", "show", "allprofiles", "state"))
-	if off := strings.Count(fw, "off"); off > 0 {
-		out = append(out, AuditCheck{cat, atr(lang, "hw_fw"), "risk", fmt.Sprintf(atr(lang, "fw_off"), off)})
-	} else if strings.Contains(fw, "on") {
-		out = append(out, AuditCheck{cat, atr(lang, "hw_fw"), "ok", atr(lang, "fw_on")})
-	} else {
-		out = append(out, AuditCheck{cat, atr(lang, "hw_fw"), "info", atr(lang, "fw_unknown")})
-	}
+	out = append(out, auditWinFirewall(lang, cat))
 
 	mp := strings.TrimSpace(runCmd(15*time.Second, "powershell", "-NoProfile", "-Command",
 		"$s=Get-MpComputerStatus; \"$($s.RealTimeProtectionEnabled);$($s.AntivirusSignatureAge)\""))
@@ -464,12 +528,68 @@ func auditHardeningWindows(lang string) []AuditCheck {
 		out = append(out, AuditCheck{cat, atr(lang, "hw_rdp"), "ok", atr(lang, "rdp_off")})
 	}
 
-	admins := parseList(runCmd(8*time.Second, "net", "localgroup", "administrators"))
-	out = append(out, AuditCheck{cat, atr(lang, "hw_admins"), statusFor(len(admins) > 3, "warn"),
-		strings.Join(admins, ", ")})
+	// Locale-independent: `net localgroup administrators` fails on a non-English
+	// Windows (the group is "Administradores", "Administratoren", …) and its
+	// output was parsed by looking for the English "The command completed".
+	// The well-known SID S-1-5-32-544 is the same on every install.
+	adminOut, adminErr := runCmdErr(20*time.Second, "powershell", "-NoProfile", "-NonInteractive",
+		"-Command", "(Get-LocalGroupMember -SID S-1-5-32-544 | ForEach-Object { $_.Name }) -join ';'")
+	var admins []string
+	for _, m := range strings.Split(strings.TrimSpace(adminOut), ";") {
+		if m = strings.TrimSpace(m); m != "" {
+			admins = append(admins, m)
+		}
+	}
+	switch {
+	case len(admins) > 0:
+		out = append(out, AuditCheck{cat, atr(lang, "hw_admins"), statusFor(len(admins) > 3, "warn"),
+			strings.Join(admins, ", ")})
+	default:
+		out = append(out, AuditCheck{cat, atr(lang, "hw_admins"), "info",
+			fmt.Sprintf(atr(lang, "check_failed"), adminErr)})
+	}
 
 	out = append(out, auditHostsFile(lang, filepath.Join(os.Getenv("SystemRoot"), `System32\drivers\etc\hosts`)))
 	return out
+}
+
+// auditWinFirewall reports the per-profile firewall state.
+//
+// It used to count the substring "off" in `netsh advfirewall show allprofiles`
+// output, which only works on an English Windows: on a Spanish install the state
+// reads "ACTIVADO"/"DESACTIVADO", so the count was 0, "on" was absent too, and
+// the check reported "could not determine" — every time, on the maintainer's own
+// machine. Get-NetFirewallProfile returns True/False regardless of system
+// language, so the parse is locale-independent.
+func auditWinFirewall(lang, cat string) AuditCheck {
+	out, err := runCmdErr(20*time.Second, "powershell", "-NoProfile", "-NonInteractive", "-Command",
+		"(Get-NetFirewallProfile -PolicyStore ActiveStore | "+
+			"ForEach-Object { \"$($_.Name)=$($_.Enabled)\" }) -join ';'")
+	var off, on []string
+	for _, part := range strings.Split(strings.TrimSpace(out), ";") {
+		name, state, ok := strings.Cut(strings.TrimSpace(part), "=")
+		if !ok {
+			continue
+		}
+		// Enabled renders as True/False (or 1/0 on some builds).
+		switch strings.ToLower(strings.TrimSpace(state)) {
+		case "true", "1":
+			on = append(on, name)
+		case "false", "0":
+			off = append(off, name)
+		}
+	}
+	switch {
+	case len(off) > 0:
+		return AuditCheck{cat, atr(lang, "hw_fw"), "risk",
+			fmt.Sprintf(atr(lang, "fw_off"), len(off)) + " (" + strings.Join(off, ", ") + ")"}
+	case len(on) > 0:
+		return AuditCheck{cat, atr(lang, "hw_fw"), "ok", atr(lang, "fw_on")}
+	case err != nil:
+		return AuditCheck{cat, atr(lang, "hw_fw"), "info", fmt.Sprintf(atr(lang, "check_failed"), err)}
+	default:
+		return AuditCheck{cat, atr(lang, "hw_fw"), "info", atr(lang, "fw_unknown")}
+	}
 }
 
 func auditHardeningLinux(lang string) []AuditCheck {
@@ -575,19 +695,25 @@ func auditSudoers(lang, cat string) AuditCheck {
 // auditSUID finds SUID/SGID binaries in paths where they should never appear.
 func auditSUID(lang, cat string) AuditCheck {
 	var found []string
+	var failed error
 	for _, dir := range []string{"/tmp", "/var/tmp", "/dev/shm", "/home", "/var/www", "/srv"} {
 		if _, err := os.Stat(dir); err != nil {
 			continue
 		}
 		// -xdev: stay on same filesystem (don't cross into /proc, network mounts, etc.)
-		out := runCmd(8*time.Second, "find", dir, "-xdev", "-perm", "/6000", "-type", "f")
+		// A large /home regularly exceeds the deadline, so the error is kept and
+		// reported rather than turned into a clean bill of health.
+		out, err := runCmdErr(20*time.Second, "find", dir, "-xdev", "-perm", "/6000", "-type", "f")
+		if err != nil && failed == nil {
+			failed = err
+		}
 		for _, ln := range strings.Split(strings.TrimSpace(out), "\n") {
 			if ln != "" {
 				found = append(found, ln)
 			}
 		}
 	}
-	return finding(lang, cat, atr(lang, "hl_suid"), "risk", found, atr(lang, "suid_ok"))
+	return findingOrUnknown(lang, cat, atr(lang, "hl_suid"), "risk", found, atr(lang, "suid_ok"), failed)
 }
 
 // auditMAC checks whether AppArmor or SELinux is active.
@@ -734,24 +860,29 @@ func auditKernelModules(lang, cat string) AuditCheck {
 }
 
 func auditHiddenPorts(lang, cat string) AuditCheck {
+	// The API-side set must cover the same protocols as the command we compare
+	// against. It used to collect only Status=="LISTEN", which excludes every UDP
+	// socket (gopsutil gives datagram sockets no state), while `ss -tuln` lists
+	// them — so every open UDP port was reported as a hidden rootkit port.
 	gset := map[uint32]bool{}
 	if conns, err := gnet.Connections("inet"); err == nil {
 		for _, c := range conns {
-			if c.Status == "LISTEN" {
+			if c.Status == "LISTEN" || isUDP(c) {
 				gset[c.Laddr.Port] = true
 			}
 		}
 	}
 	var raw string
+	var err error
 	switch {
 	case runtime.GOOS == "windows":
-		raw = runCmd(10*time.Second, "netstat", "-ano")
+		raw, err = runCmdErr(10*time.Second, "netstat", "-ano")
 	case hasCmd("ss"):
-		raw = runCmd(10*time.Second, "ss", "-H", "-tuln")
+		raw, err = runCmdErr(10*time.Second, "ss", "-H", "-tuln")
 	default:
-		raw = runCmd(10*time.Second, "netstat", "-tuln")
+		raw, err = runCmdErr(10*time.Second, "netstat", "-tuln")
 	}
-	if strings.TrimSpace(raw) == "" {
+	if err != nil || strings.TrimSpace(raw) == "" {
 		return AuditCheck{cat, atr(lang, "rk_ports"), "info", atr(lang, "rk_ports_na")}
 	}
 	var diff []string
@@ -775,29 +906,13 @@ func auditHiddenPorts(lang, cat string) AuditCheck {
 
 func auditWinDrivers(lang, cat string) AuditCheck {
 	var unsigned []string
-	for _, ln := range strings.Split(runCmd(25*time.Second, "driverquery", "/si", "/fo", "csv"), "\n") {
+	out, err := runCmdErr(25*time.Second, "driverquery", "/si", "/fo", "csv")
+	for _, ln := range strings.Split(out, "\n") {
 		if f := strings.Split(ln, `","`); len(f) >= 3 && strings.EqualFold(strings.Trim(f[2], `"`), "FALSE") {
 			unsigned = append(unsigned, strings.Trim(f[0], `"`))
 		}
 	}
-	return finding(lang, cat, atr(lang, "rk_drivers"), "warn", unsigned, atr(lang, "drivers_ok"))
-}
-
-func parseList(out string) []string {
-	var res []string
-	started := false
-	for _, ln := range strings.Split(out, "\n") {
-		ln = strings.TrimSpace(ln)
-		if strings.HasPrefix(ln, "----") {
-			started = true
-			continue
-		}
-		if !started || ln == "" || strings.HasPrefix(ln, "The command completed") {
-			continue
-		}
-		res = append(res, ln)
-	}
-	return res
+	return findingOrUnknown(lang, cat, atr(lang, "rk_drivers"), "warn", unsigned, atr(lang, "drivers_ok"), err)
 }
 
 func statusFor(bad bool, badStatus string) string {

@@ -6,7 +6,6 @@ import (
 	_ "embed"
 	"log"
 	"net"
-	"net/http"
 	"os"
 
 	"fyne.io/systray"
@@ -18,7 +17,7 @@ var trayIcon []byte
 // runApp serves HTTP in the background and shows a system-tray icon with a menu.
 func runApp(ln net.Listener, url string) {
 	go func() {
-		if err := http.Serve(ln, rootHandler()); err != nil {
+		if err := newServer().Serve(ln); err != nil {
 			log.Fatal(err)
 		}
 	}()
@@ -38,7 +37,7 @@ func trayReady(url string) {
 		for {
 			select {
 			case <-mOpen.ClickedCh:
-				openBrowser(url)
+				openDashboard(url)
 			case <-mQuit.ClickedCh:
 				systray.Quit()
 				os.Exit(0)

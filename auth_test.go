@@ -23,21 +23,38 @@ func TestPasswordMinLength(t *testing.T) {
 }
 
 func TestLoginLockout(t *testing.T) {
-	resetLoginFails()
-	t.Cleanup(resetLoginFails)
+	const ip = "10.0.0.7"
+	resetLoginFails(ip)
+	t.Cleanup(func() { resetLoginFails(ip) })
 
 	for i := 0; i < lockThreshold; i++ {
-		if locked, _ := loginLocked(); locked {
+		if locked, _ := loginLocked(ip); locked {
 			t.Fatalf("locked too early at attempt %d", i)
 		}
-		recordLoginFail()
+		recordLoginFail(ip)
 	}
-	if locked, remain := loginLocked(); !locked || remain <= 0 {
+	if locked, remain := loginLocked(ip); !locked || remain <= 0 {
 		t.Error("should be locked after threshold failures")
 	}
-	resetLoginFails()
-	if locked, _ := loginLocked(); locked {
+	resetLoginFails(ip)
+	if locked, _ := loginLocked(ip); locked {
 		t.Error("reset should clear the lockout")
+	}
+}
+
+// A locked-out attacker must not lock out anybody else: the backoff is per IP.
+func TestLoginLockoutIsPerIP(t *testing.T) {
+	const attacker, operator = "203.0.113.9", "192.168.1.20"
+	t.Cleanup(func() { resetLoginFails(attacker); resetLoginFails(operator) })
+
+	for i := 0; i < lockThreshold+2; i++ {
+		recordLoginFail(attacker)
+	}
+	if locked, _ := loginLocked(attacker); !locked {
+		t.Error("attacker should be locked out")
+	}
+	if locked, _ := loginLocked(operator); locked {
+		t.Error("operator must not be locked out by another IP's failures")
 	}
 }
 
@@ -46,6 +63,11 @@ func TestLoopbackHost(t *testing.T) {
 		"127.0.0.1:5000": true, "localhost:5000": true, "[::1]:5000": true,
 		"127.5.5.5:5000": true, "localhost": true, "127.0.0.1": true,
 		"evil.com:5000": false, "192.168.1.5:5000": false, "10.0.0.1": false, "": false,
+		// DNS-rebinding names that merely *look* loopback must be rejected: the
+		// attacker owns the domain and points it at 127.0.0.1.
+		"127.0.0.1.evil.com:5000": false, "127.evil.com:5000": false,
+		"127.0.0.1.nip.io:5000": false, "localhost.evil.com:5000": false,
+		"127.0.0.1x:5000": false,
 	} {
 		if got := loopbackHost(h); got != want {
 			t.Errorf("loopbackHost(%q)=%v, want %v", h, got, want)
@@ -70,6 +92,7 @@ func TestHostAllowed(t *testing.T) {
 	for h, want := range map[string]bool{
 		"127.0.0.1:5000": true, "192.168.1.5:5000": true, "10.0.0.9:5000": true,
 		"[2001:db8::1]:5000": true, "evil.com:5000": false, "myhost:5000": false,
+		"127.0.0.1.evil.com:5000": false,
 	} {
 		if got := hostAllowed(h); got != want {
 			t.Errorf("[exposed] hostAllowed(%q)=%v, want %v", h, got, want)
@@ -115,7 +138,7 @@ func TestPasswordAndSession(t *testing.T) {
 		t.Error("wrong password accepted")
 	}
 
-	tok := newSession()
+	tok := newSession(sessionTTL)
 	if !validSession(tok) {
 		t.Error("fresh session should be valid")
 	}

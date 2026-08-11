@@ -3,6 +3,7 @@ package main
 import (
 	"sort"
 	"sync"
+	"sync/atomic"
 	"time"
 )
 
@@ -23,10 +24,16 @@ var (
 	mBlocked     = map[string]Blocked{} // ip  -> record
 
 	// Write-through toggles, independent per action type. Default on (the
-	// historical behavior); set from Settings, persisted in .env.
-	persistWhitelist = true // PERSIST_WHITELIST — binaries + IPs whitelist
-	persistBlocks    = true // PERSIST_BLOCKS    — blocked IPs
+	// historical behavior); set from Settings, persisted in .env. Atomic because
+	// the settings handler writes them while other handlers read them.
+	persistWhitelist atomic.Bool // PERSIST_WHITELIST — binaries + IPs whitelist
+	persistBlocks    atomic.Bool // PERSIST_BLOCKS    — blocked IPs
 )
+
+func init() { // both default on
+	persistWhitelist.Store(true)
+	persistBlocks.Store(true)
+}
 
 // loadState seeds the session maps from whatever is persisted in the DB.
 func loadState() {
@@ -81,7 +88,7 @@ func addWhitelist(exe string) {
 	stateMu.Lock()
 	mWhitelist[exe] = added
 	stateMu.Unlock()
-	if persistWhitelist {
+	if persistWhitelist.Load() {
 		dbAddWhitelist(exe, added)
 	}
 }
@@ -121,7 +128,7 @@ func addIPWhitelist(ip string) {
 	stateMu.Lock()
 	mIPWhitelist[ip] = added
 	stateMu.Unlock()
-	if persistWhitelist {
+	if persistWhitelist.Load() {
 		dbAddIPWhitelist(ip, added)
 	}
 }
@@ -151,7 +158,7 @@ func saveBlocked(ip, report string) {
 	stateMu.Lock()
 	mBlocked[ip] = b
 	stateMu.Unlock()
-	if persistBlocks {
+	if persistBlocks.Load() {
 		dbSaveBlocked(b.IP, b.At, b.Report)
 	}
 }

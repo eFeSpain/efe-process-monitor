@@ -33,7 +33,14 @@ GOOS=darwin go build -o efemon .  # macOS
 - **`.env`** → searched: exe dir → cwd → `../.env` (dev: real keys are in `../.env`). `writeEnv` saves to the one found.
 - Keys/flags in `.env`: `VT_API_KEY`, `ABUSEIPDB_API_KEY`, `NOTIFY_DESKTOP`, `NOTIFY_SOUND`,
   `PERSIST_WHITELIST`, `PERSIST_BLOCKS`, `REFRESH_SECS`, `AUTH_HASH` (base64 of a bcrypt hash; "" = login off),
-  `LISTEN_ADDR` ("" = `127.0.0.1:5000`), optional `LISTEN_CERT`/`LISTEN_KEY`.
+  `LISTEN_ADDR` ("" = `127.0.0.1:5000`), optional `LISTEN_CERT`/`LISTEN_KEY`,
+  `EVENT_RETENTION_DAYS` (history pruning; default 30, 0 = keep forever).
+- Env-only (not written back to `.env`): `EFEMON_DEV=1` lets the `.env` lookup fall back to the
+  working directory and its parent (off by default, so running the binary inside another project
+  can't read or rewrite that project's `.env`); `RESTART_WAIT=1` is set on the relaunched process
+  by "Restart now".
+- `efemon-token` (0600, next to the binary) holds this run's local access token — the gate that
+  applies when no password is set. See `auth.go`.
   **Every setting is server-persisted in `.env`**
   (loaded at startup) — nothing UI-facing lives only in the browser.
 
@@ -59,7 +66,7 @@ GOOS=darwin go build -o efemon .  # macOS
   `getProcDetails`, `RemoteIPs`. `threatScore` also sets `Conn.Partial` via `coverageIncomplete` — a zero
   score with unresolved key signals (VT `PENDING`/`N/A`, public IP not yet enriched) is shown as `~`
   (muted, "datos incompletos") instead of a confident "limpio", so a low score never reads as "safe".
-- **intel.go** — `Enrichment`, `enrichIP` (geo ip-api, reverse DNS, `vtIP`, `abuseIPDB`, `torExits`,
+- **intel.go** — `Enrichment`, `enrichIP` (geo ipwho.is, reverse DNS, `vtIP`, `abuseIPDB`, `torExits`,
   `feodoC2`, `threatFoxLookup`, `spamhausHit`, `shodan`), provider attenuation (`detectProvider`), `ipReport`,
   HTTP helpers (`getJSON`/`getText`/`getZipCSV`), `vtKey`/`abuseKey`. **Keyless downloaded feeds**: ThreatFox
   (abuse.ch zipped CSV → `ip→malware family` map) and Spamhaus DROP (`drop_v4.json` → CIDR set, matched with

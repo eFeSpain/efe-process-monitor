@@ -10,7 +10,7 @@
     <td data-sort="{{ $c.Threat }}"><span class="threat threat-{{ threatClass $c.Threat }}{{ if $c.Partial }} threat-partial{{ end }}" title="{{ $c.Breakdown }}">{{ $c.Threat }}{{ if $c.Partial }}<span class="partial-mark">~</span>{{ end }}</span></td>
     <td data-sort="{{ $c.Port }}">{{ $c.Port }}{{ if $c.RPort }} ↔ {{ $c.RPort }}{{ end }}</td>
     <td data-sort="{{ $c.PID }}">{{ if $c.PID }}{{ $c.PID }}{{ else }}—{{ end }}</td>
-    <td class="{{ if eq $c.Status "ESTABLISHED" }}{{ if $hasRemote }}remote-yes{{ else }}established{{ end }}{{ else }}listen{{ end }}">{{ $c.Status }}</td>
+    <td class="{{ if eq $c.Status "ESTABLISHED" }}{{ if $hasRemote }}remote-yes{{ else }}established{{ end }}{{ else if eq $c.Status "UDP" }}{{ if $hasRemote }}remote-yes{{ else }}udp{{ end }}{{ else if eq $c.Status "UDP-BOUND" }}udp{{ else }}listen{{ end }}">{{ $c.Status }}</td>
     <td><strong>{{ $c.Process }}</strong>{{ if $c.Whitelist }} <span class="badge-wl" title="whitelist">✓</span>{{ end }}</td>
     <td>{{ if $okd }}{{ $d.ParentName }}{{ else }}—{{ end }}</td>
     <td>{{ if $c.SuspPort }}<span class="vt-bad" title="{{ $T.malware_port_t }}">⚠ {{ $c.Known }}</span>{{ else }}{{ $c.Known }}{{ end }}</td>
@@ -22,10 +22,11 @@
     <td title="{{ $c.Sig.Signer }}">
         {{ if $c.Sig.Trusted }}<span class="sig-ok">✓ {{ trunc 20 $c.Sig.Signer }}</span>
         {{ else if eq $c.Sig.Status "NotSigned" }}<span class="sig-bad">{{ $T.sig_unsigned }}</span>
+        {{ else if eq $c.Sig.Status "PENDING" }}<span class="vt-na">PENDING</span>
         {{ else }}<span class="sig-na">—</span>{{ end }}
     </td>
     <td title="{{ $c.Exe }}">{{ if $c.Suspicious }}⚠ {{ end }}{{ trunc 50 $c.Exe }}</td>
-    <td>{{ if and (eq $c.Status "ESTABLISHED") $hasRemote }}<button class="btn btn-sniff" onclick="event.stopPropagation(); openCapture({{ $i }}, '{{ $c.LocalIP }}', '{{ $c.RemoteIP }}')">⬡ Sniff</button>{{ end }}</td>
+    <td>{{ if $c.Capturable }}<button class="btn btn-sniff" onclick="event.stopPropagation(); openCapture({{ $i }}, '{{ $c.LocalIP }}', '{{ $c.RemoteIP }}')">⬡ Sniff</button>{{ end }}</td>
 </tr>
 
 <tr id="d{{ $i }}" class="details-row" style="display:none"><td colspan="11">
@@ -101,7 +102,7 @@
         </div>
     </div>
 
-    {{ if and (eq $c.Status "ESTABLISHED") $hasRemote }}
+    {{ if $c.Capturable }}
     <div id="cap-panel-{{ $i }}" class="capture-panel" style="display:none"
          data-local="{{ $c.LocalIP }}" data-remote="{{ $c.RemoteIP }}">
         <div class="capture-header">

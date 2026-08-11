@@ -3,6 +3,7 @@ package main
 import (
 	"database/sql"
 	"log"
+	"os"
 	"path/filepath"
 	"time"
 
@@ -27,13 +28,44 @@ CREATE TABLE IF NOT EXISTS blocked     (ip TEXT PRIMARY KEY, at TEXT, report TEX
 
 func initDB() {
 	var err error
-	db, err = sql.Open("sqlite", filepath.Join(appDir, "efemon.db"))
+	path := filepath.Join(appDir, "efemon.db")
+	// WAL lets the audit/history reads proceed while the monitor is inserting,
+	// and busy_timeout replaces an instant "database is locked" with a short wait.
+	dsn := path + "?_pragma=journal_mode(WAL)&_pragma=busy_timeout(5000)&_pragma=synchronous(NORMAL)"
+	db, err = sql.Open("sqlite", dsn)
 	if err != nil {
 		log.Fatalf("db open: %v", err)
 	}
 	db.SetMaxOpenConns(1) // serialize access (modernc sqlite, simplest safe model)
 	if _, err := db.Exec(schema); err != nil {
 		log.Fatalf("db schema: %v", err)
+	}
+	// The DB holds the forensic history; don't leave it world-readable.
+	if err := os.Chmod(path, 0o600); err != nil && !os.IsNotExist(err) {
+		log.Printf("[!] no se pudieron ajustar los permisos de %s: %v", path, err)
+	}
+	pruneEvents()
+}
+
+// eventRetentionDays bounds the forensic history. The events table grows with
+// every connection change; without a cap it grows for as long as the tool runs.
+// 0 disables pruning (keep everything).
+var eventRetentionDays = 30
+
+// pruneEvents drops events older than the retention window and is called at
+// startup and once a day by the monitor loop.
+func pruneEvents() {
+	if eventRetentionDays <= 0 {
+		return
+	}
+	cutoff := float64(time.Now().AddDate(0, 0, -eventRetentionDays).Unix())
+	res, err := db.Exec("DELETE FROM events WHERE epoch < ?", cutoff)
+	if err != nil {
+		log.Printf("[!] no se pudo purgar el histórico: %v", err)
+		return
+	}
+	if n, _ := res.RowsAffected(); n > 0 {
+		log.Printf("[+] histórico purgado: %d eventos con más de %d días", n, eventRetentionDays)
 	}
 }
 

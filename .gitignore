@@ -4,6 +4,7 @@
 /icon.png
 /efemon-cert.pem
 /efemon-key.pem
+/efemon-token
 
 # Build output
 /efemon

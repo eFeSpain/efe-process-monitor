@@ -3,16 +3,32 @@ package main
 import (
 	"bufio"
 	"fmt"
+	"log"
 	"os"
+	"path/filepath"
 	"regexp"
 	"strings"
+	"sync"
+	"sync/atomic"
 )
 
 var envPath = ".env"
 
+// Settings that the UI can change at runtime are read by background goroutines
+// (the monitor loop, the notifier) and written by HTTP handlers, so they can't be
+// plain variables: unsynchronized access is a data race under Go's memory model,
+// it just happened to be invisible because CI ran the tests without -race.
+// Atomic types keep every access safe without a lock discipline to get wrong.
+
 // refreshSecs is the table auto-refresh interval (seconds; 0 = off), persisted
 // server-side in .env so it's the same on every browser/restart.
-var refreshSecs = 0
+var refreshSecs atomic.Int64
+
+// atomicString is a string safe for concurrent reads and writes.
+type atomicString struct{ v atomic.Value }
+
+func (a *atomicString) Load() string   { s, _ := a.v.Load().(string); return s }
+func (a *atomicString) Store(s string) { a.v.Store(s) }
 
 func mask(k string) string {
 	if len(k) >= 4 {
@@ -30,13 +46,13 @@ func getSettings() map[string]any {
 		"vt_hint":           mask(getVTKey()),
 		"abuse_configured":  getAbuseKey() != "",
 		"abuse_hint":        mask(getAbuseKey()),
-		"notify_desktop":    notifyDesktop,
-		"notify_sound":      notifySound,
-		"persist_whitelist": persistWhitelist,
-		"persist_blocks":    persistBlocks,
-		"refresh_secs":      refreshSecs,
+		"notify_desktop":    notifyDesktop.Load(),
+		"notify_sound":      notifySound.Load(),
+		"persist_whitelist": persistWhitelist.Load(),
+		"persist_blocks":    persistBlocks.Load(),
+		"refresh_secs":      refreshSecs.Load(),
 		"auth_enabled":      authEnabled(),
-		"listen_addr":       listenAddr,
+		"listen_addr":       listenAddr.Load(),
 		"exposed":           listenExposed,
 	}
 }
@@ -45,14 +61,15 @@ func getSettings() map[string]any {
 // Empty = default loopback. Exposing a non-loopback address still requires a
 // login password (enforced at startup) and is served over HTTPS.
 func setListenAddr(s string) {
-	listenAddr = strings.TrimSpace(s)
-	writeEnv(map[string]string{"LISTEN_ADDR": listenAddr})
+	addr := strings.TrimSpace(s)
+	listenAddr.Store(addr)
+	writeEnv(map[string]string{"LISTEN_ADDR": addr})
 }
 
 // setPersistWhitelist toggles write-through to SQLite for the whitelist (binaries
 // and IPs). Turning it on flushes the current session so existing entries persist.
 func setPersistWhitelist(b bool) {
-	persistWhitelist = b
+	persistWhitelist.Store(b)
 	if b {
 		flushWhitelist()
 	}
@@ -61,7 +78,7 @@ func setPersistWhitelist(b bool) {
 
 // setPersistBlocks toggles write-through to SQLite for blocked IPs.
 func setPersistBlocks(b bool) {
-	persistBlocks = b
+	persistBlocks.Store(b)
 	if b {
 		flushBlocks()
 	}
@@ -76,17 +93,17 @@ func setRefreshSecs(n int) {
 	if n > 3600 {
 		n = 3600
 	}
-	refreshSecs = n
+	refreshSecs.Store(int64(n))
 	writeEnv(map[string]string{"REFRESH_SECS": fmt.Sprintf("%d", n)})
 }
 
 func setNotifyDesktop(b bool) {
-	notifyDesktop = b
+	notifyDesktop.Store(b)
 	writeEnv(map[string]string{"NOTIFY_DESKTOP": fmt.Sprintf("%t", b)})
 }
 
 func setNotifySound(b bool) {
-	notifySound = b
+	notifySound.Store(b)
 	writeEnv(map[string]string{"NOTIFY_SOUND": fmt.Sprintf("%t", b)})
 }
 
@@ -110,8 +127,21 @@ func updateSettings(vt, abuse string) {
 
 var envKeyRe = regexp.MustCompile(`^\s*([A-Z_][A-Z0-9_]*)\s*=`)
 
+// envMu serializes the read-modify-write of .env. Two concurrent POSTs to
+// /api/settings would otherwise each read the old file and write back their own
+// merge, losing the other's keys.
+var envMu sync.Mutex
+
 // writeEnv merges key=value pairs into the .env file, preserving other lines.
+//
+// The write is atomic (temp file + rename): os.WriteFile truncates first, and
+// this process has two exit paths that fire ~400ms after responding (restart and
+// shutdown). A truncated .env loses AUTH_HASH, which silently disables the login
+// — a durability bug with a security consequence, so it gets the careful version.
 func writeEnv(updates map[string]string) {
+	envMu.Lock()
+	defer envMu.Unlock()
+
 	var lines []string
 	seen := map[string]bool{}
 	if f, err := os.Open(envPath); err == nil {
@@ -134,5 +164,35 @@ func writeEnv(updates map[string]string) {
 			lines = append(lines, fmt.Sprintf("%s=%s", k, v))
 		}
 	}
-	os.WriteFile(envPath, []byte(strings.Join(lines, "\n")+"\n"), 0o600)
+	if err := writeFileAtomic(envPath, []byte(strings.Join(lines, "\n")+"\n"), 0o600); err != nil {
+		log.Printf("[!] no se pudo guardar %s: %v", envPath, err)
+	}
+}
+
+// writeFileAtomic writes data to path via a temp file in the same directory and
+// a rename, so a crash mid-write leaves the previous contents intact rather than
+// a truncated file.
+func writeFileAtomic(path string, data []byte, perm os.FileMode) error {
+	f, err := os.CreateTemp(filepath.Dir(path), filepath.Base(path)+".tmp-*")
+	if err != nil {
+		return err
+	}
+	tmp := f.Name()
+	defer os.Remove(tmp) // no-op once the rename below has succeeded
+
+	if _, err := f.Write(data); err != nil {
+		f.Close()
+		return err
+	}
+	if err := f.Sync(); err != nil { // durability: survive a power loss, not just a crash
+		f.Close()
+		return err
+	}
+	if err := f.Close(); err != nil {
+		return err
+	}
+	if err := os.Chmod(tmp, perm); err != nil {
+		return err
+	}
+	return os.Rename(tmp, path)
 }

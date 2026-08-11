@@ -74,7 +74,19 @@ const (
 	beaconMinSamples = 4
 	beaconCVThresh   = 0.15
 	beaconMinGap     = 5.0 // seconds
+	// beaconIdle drops tracking state for an exe+IP pair that has been quiet for
+	// this long. Without it the map keeps an entry for every pair ever seen.
+	beaconIdle = 2 * time.Hour
 )
+
+// pruneBeacons forgets idle exe|IP pairs. Caller holds beaconMu.
+func pruneBeacons(now float64) {
+	for k, ts := range beaconTrack {
+		if len(ts) == 0 || now-ts[len(ts)-1] > beaconIdle.Seconds() {
+			delete(beaconTrack, k)
+		}
+	}
+}
 
 func checkBeacon(exe, remoteIP string, now float64) float64 {
 	if exe == "" || remoteIP == "" {
@@ -83,6 +95,7 @@ func checkBeacon(exe, remoteIP string, now float64) float64 {
 	key := exe + "|" + remoteIP
 	beaconMu.Lock()
 	defer beaconMu.Unlock()
+	pruneBeacons(now)
 	ts := append(beaconTrack[key], now)
 	if len(ts) > 8 {
 		ts = ts[len(ts)-8:]
@@ -128,7 +141,13 @@ func snapshot() map[connKey]gnet.ConnectionStat {
 	}
 	out := map[connKey]gnet.ConnectionStat{}
 	for _, c := range conns {
-		if c.Status != "LISTEN" && c.Status != "ESTABLISHED" {
+		if !trackConn(c) {
+			continue
+		}
+		// A UDP socket with no peer is usually an ephemeral bind — every DNS
+		// query opens and closes one — so tracking them here would flood the feed
+		// and the history with noise. Connected UDP (QUIC, UDP C2) is tracked.
+		if isUDP(c) && c.Raddr.IP == "" {
 			continue
 		}
 		if c.Pid == ownPID { // never monitor our own API traffic
@@ -138,7 +157,7 @@ func snapshot() map[connKey]gnet.ConnectionStat {
 			continue
 		}
 		k := connKey{c.Pid, fmt.Sprintf("%s:%d", c.Laddr.IP, c.Laddr.Port),
-			fmt.Sprintf("%s:%d", c.Raddr.IP, c.Raddr.Port), c.Status}
+			fmt.Sprintf("%s:%d", c.Raddr.IP, c.Raddr.Port), connStatus(c)}
 		out[k] = c
 	}
 	return out
@@ -194,19 +213,31 @@ func describe(c gnet.ConnectionStat) Event {
 	return ev
 }
 
+// knownPIDTTL is how long a PID stays "known" after we last saw it holding a
+// connection. It bounds the map (which previously kept every PID ever seen for
+// the life of the process) while still avoiding a bogus "new process" tag for
+// something that merely reconnects a moment later.
+const knownPIDTTL = time.Hour
+
 func monitorLoop() {
 	prev := snapshot()
-	knownPIDs := map[int32]bool{}
+	knownPIDs := map[int32]time.Time{}
+	seen := time.Now()
 	for _, c := range prev {
-		knownPIDs[c.Pid] = true
+		knownPIDs[c.Pid] = seen
 		baselineSeen(describe(c).Exe)
 	}
+	lastPrune := time.Now()
 
 	for {
 		time.Sleep(monitorInterval)
 		snap := snapshot()
 		if snap == nil {
 			continue
+		}
+		if time.Since(lastPrune) > 24*time.Hour {
+			lastPrune = time.Now()
+			pruneEvents()
 		}
 		now := float64(time.Now().UnixNano()) / 1e9
 		wl := whitelist()
@@ -227,7 +258,7 @@ func monitorLoop() {
 			default:
 				ev.Kind = "new"
 			}
-			if c.Pid > 0 && !knownPIDs[c.Pid] {
+			if c.Pid > 0 && knownPIDs[c.Pid].IsZero() {
 				ev.NewProcess = true
 			}
 			if ev.Exe != "" && !baselineSeen(ev.Exe) {
@@ -275,8 +306,14 @@ func monitorLoop() {
 		}
 
 		prev = snap
+		now2 := time.Now()
 		for _, c := range snap {
-			knownPIDs[c.Pid] = true
+			knownPIDs[c.Pid] = now2
+		}
+		for pid, at := range knownPIDs {
+			if now2.Sub(at) > knownPIDTTL {
+				delete(knownPIDs, pid)
+			}
 		}
 	}
 }

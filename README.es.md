@@ -138,19 +138,36 @@ Sin las de VirusTotal/AbuseIPDB, esas dos simplemente se omiten.
 
 ## Acceso
 
-Por defecto el panel escucha **solo en `127.0.0.1`** y **sin contraseña** — expone
-datos sensibles y acciones destructivas, así que está pensado como herramienta
-local.
+Por defecto el panel escucha **solo en `127.0.0.1`**. Siempre hay exactamente una
+puerta activa:
 
-- Si quieres exponerlo a la red, **activa primero una contraseña** en Ajustes.
-  Exponerlo solo se permite con contraseña, y entonces se sirve por **HTTPS** (se
-  genera un certificado autofirmado automáticamente).
+- **Sin contraseña (por defecto): un token de acceso local.** Escuchar en
+  loopback frena a otras máquinas, pero no a otros programas de **esta**; y la
+  herramienta está pensada para ejecutarse con privilegios, así que un proceso sin
+  privilegios que alcance el puerto heredaría matar procesos, firewall y ajustes.
+  Al arrancar se escribe un token aleatorio en `efemon-token` (permisos 0600)
+  junto al binario y se le pasa al navegador en la URL que abre la propia
+  aplicación; el navegador lo canjea por una cookie de sesión y sigue funcionando
+  con ella. Abre el panel siempre desde el **icono de la bandeja** o volviendo a
+  lanzar el ejecutable — si entras desde un marcador con el navegador limpio verás
+  una página que te lo explica. En Unix un fichero 0600 propiedad de root deja
+  fuera a los procesos sin privilegios; en Windows un proceso del mismo usuario
+  puede llegar a leerlo, así que allí sube el listón más que cerrar la puerta.
+- **Una contraseña, si la configuras** en Ajustes. Sustituye al token. Cambiarla
+  o quitarla exige la contraseña actual.
+
+Exponerlo a la red solo se permite con contraseña, y entonces se sirve por
+**HTTPS** (se genera un certificado autofirmado automáticamente).
+
+Además se comprueba que el `Host` sea loopback o una IP literal (anti
+DNS-rebinding) y que el `Origin` sea del mismo origen en toda petición que
+modifique estado (anti CSRF).
 
 ## Privacidad
 
 Sin telemetría; todo se guarda en local (`efemon.db`). Para enriquecer la
 información, la herramienta consulta servicios externos sobre las IPs/hashes que
-**tú inspeccionas**: ip-api, VirusTotal, AbuseIPDB y Shodan reciben esos valores;
+**tú inspeccionas**: ipwho.is, VirusTotal, AbuseIPDB y Shodan reciben esos valores;
 las listas de abuse.ch / Spamhaus / Tor son descargas públicas que no revelan nada
 de ti. Los resultados se cachean, así que cada binario/IP se consulta como mucho
 una vez (cada hora las IPs). La auditoría del equipo corre 100% en local. El panel

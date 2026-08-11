@@ -48,6 +48,13 @@ func lanLookup(ip string) *LANInfo {
 	info.NetBIOS = netbiosName(ip)
 
 	lanMu.Lock()
+	// Bound both maps: entries were kept forever, only ignored once stale.
+	for k, at := range lanAt {
+		if time.Since(at) >= lanTTL {
+			delete(lanAt, k)
+			delete(lanCache, k)
+		}
+	}
 	lanCache[ip] = info
 	lanAt[ip] = time.Now()
 	lanMu.Unlock()
@@ -82,17 +89,40 @@ func arpMAC(ip string) string {
 	return ""
 }
 
+// groupWords are the localized spellings of nbtstat's "GROUP" type. The type
+// column is translated by Windows, so matching only the English "UNIQUE" (as
+// this used to) silently returned no NetBIOS name on any localized install.
+var groupWords = []string{"GROUP", "GRUPO", "GRUPPO", "GRUPPE", "GROUPE"}
+
 // netbiosName resolves the host's NetBIOS computer name.
 func netbiosName(ip string) string {
 	switch runtime.GOOS {
 	case "windows":
 		out := runCmd(5*time.Second, "nbtstat", "-A", ip)
+		var names []string
 		for _, ln := range strings.Split(out, "\n") {
-			if strings.Contains(ln, "<00>") && strings.Contains(strings.ToUpper(ln), "UNIQUE") {
-				if f := strings.Fields(strings.TrimSpace(ln)); len(f) > 0 {
-					return f[0]
+			f := strings.Fields(strings.TrimSpace(ln))
+			// Layout is: <name> <00> <TYPE> <status>; the name is positional, so
+			// only the group/unique distinction needs the localized word.
+			if len(f) < 3 || f[1] != "<00>" {
+				continue
+			}
+			isGroup := false
+			for _, g := range groupWords {
+				if strings.Contains(strings.ToUpper(f[2]), g) {
+					isGroup = true
+					break
 				}
 			}
+			if !isGroup {
+				return f[0] // unique = the workstation name
+			}
+			names = append(names, f[0])
+		}
+		// Every <00> looked like a group (unknown language): the workstation name
+		// is conventionally listed first, so that's the best remaining guess.
+		if len(names) > 0 {
+			return names[0]
 		}
 	case "linux":
 		if hasCmd("nmblookup") {

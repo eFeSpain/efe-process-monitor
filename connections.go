@@ -15,6 +15,8 @@ import (
 	"sync"
 	"time"
 
+	"syscall"
+
 	gnet "github.com/shirou/gopsutil/v4/net"
 	"github.com/shirou/gopsutil/v4/process"
 )
@@ -66,6 +68,7 @@ type Conn struct {
 	Suspicious  bool
 	SuspPort    bool
 	Blockable   bool
+	Capturable  bool // has a public remote peer, so tshark has something to filter on
 	Sig         Signature
 	Whitelist   bool
 	IPWhitelist bool
@@ -178,6 +181,40 @@ func isLoopback(ip string) bool {
 	return a != nil && a.IsLoopback()
 }
 
+// ── TCP/UDP socket classification ────────────────────────────────────────────
+//
+// gopsutil never reports "LISTEN" or "ESTABLISHED" for datagram sockets: on
+// Linux it hardcodes Status "NONE", and on Windows the UDP row conversion never
+// sets Status at all. Filtering on those two labels — which is what this code
+// used to do — silently dropped *every* UDP socket from the table, the live
+// monitor, the history and the audit's cross-view. That hid QUIC/HTTP3 on 443,
+// DNS traffic and any UDP-based C2, and it made the audit report every open UDP
+// port as a "hidden listening port" because the netstat/ss side does list them.
+
+// isUDP reports whether a socket is a datagram socket.
+func isUDP(c gnet.ConnectionStat) bool { return c.Type == uint32(syscall.SOCK_DGRAM) }
+
+// trackConn reports whether a socket belongs in the dashboard: for TCP only the
+// two interesting states, for UDP always (there are no states to filter on).
+func trackConn(c gnet.ConnectionStat) bool {
+	if isUDP(c) {
+		return true
+	}
+	return c.Status == "LISTEN" || c.Status == "ESTABLISHED"
+}
+
+// connStatus is the label shown in the State column. UDP is split into "peered"
+// (has a remote address, e.g. QUIC) and a plain bound socket.
+func connStatus(c gnet.ConnectionStat) string {
+	if isUDP(c) {
+		if c.Raddr.IP != "" {
+			return "UDP"
+		}
+		return "UDP-BOUND"
+	}
+	return c.Status
+}
+
 // ── File hash (cached by path+mtime+size) ────────────────────────────────────
 
 type hashEntry struct {
@@ -190,6 +227,19 @@ var (
 	hashMu    sync.Mutex
 	hashCache = map[string]hashEntry{}
 )
+
+// maxPathCache bounds the path-keyed caches (file hashes, signatures). The number
+// of distinct binaries on a machine is naturally limited, but paths under temp
+// directories churn, so an unbounded map would drift upwards forever.
+const maxPathCache = 8192
+
+// capMap drops everything once a map outgrows its bound. Crude but adequate: both
+// caches are backed by SQLite, so a reset costs a re-read, not a re-scan.
+func capMap[V any](m map[string]V, max int) {
+	if len(m) > max {
+		clear(m)
+	}
+}
 
 func fileHash(path string) string {
 	fi, err := os.Stat(path)
@@ -214,6 +264,7 @@ func fileHash(path string) string {
 	}
 	sum := hex.EncodeToString(h.Sum(nil))
 	hashMu.Lock()
+	capMap(hashCache, maxPathCache)
 	hashCache[path] = hashEntry{fi.ModTime().UnixNano(), fi.Size(), sum}
 	hashMu.Unlock()
 	return sum
@@ -262,9 +313,16 @@ var (
 	sigCache = map[string]sigEntry{}
 )
 
+// checkSignatures returns the signature for each path from cache, queueing
+// anything unknown for background resolution.
+//
+// It used to resolve inline, which meant the HTTP handler waited on a PowerShell
+// start-up (Windows) or on one `dpkg -S` per path at 5s each, sequentially
+// (Linux) — tens of seconds of page render for a machine with many new binaries.
+// Unknown entries now report PENDING and appear on the next refresh, exactly like
+// the VirusTotal hash lookups already did.
 func checkSignatures(paths []string) map[string]Signature {
 	out := map[string]Signature{}
-	var toQuery []string
 	for _, p := range paths {
 		if p == "" || p == "N/A" || p == "ACCESS_DENIED" {
 			continue
@@ -288,28 +346,72 @@ func checkSignatures(paths []string) map[string]Signature {
 			sigMu.Unlock()
 			continue
 		}
-		toQuery = append(toQuery, p)
+		out[p] = Signature{Status: sigPendingStatus}
+		enqueueSig(p)
 	}
-	if len(toQuery) == 0 {
-		return out
+	return out
+}
+
+// sigPendingStatus marks a signature that hasn't been resolved yet. It must be
+// treated as "no information" by the score, never as a bad signature.
+const sigPendingStatus = "PENDING"
+
+var (
+	sigQueue      = make(chan string, 4096)
+	sigInProgress sync.Map // path -> struct{}, avoids duplicate queue entries
+)
+
+func enqueueSig(path string) {
+	if _, loaded := sigInProgress.LoadOrStore(path, struct{}{}); loaded {
+		return
 	}
+	select {
+	case sigQueue <- path:
+	default:
+		sigInProgress.Delete(path) // queue full; a later render re-enqueues
+	}
+}
+
+// sigWorker resolves queued signatures in batches, so one PowerShell start-up
+// covers up to sigBatch binaries instead of one each.
+func sigWorker() {
+	const sigBatch = 32
+	for path := range sigQueue {
+		batch := []string{path}
+	drain:
+		for len(batch) < sigBatch {
+			select {
+			case p := <-sigQueue:
+				batch = append(batch, p)
+			default:
+				break drain
+			}
+		}
+		resolveSignatures(batch)
+		for _, p := range batch {
+			sigInProgress.Delete(p)
+		}
+	}
+}
+
+// resolveSignatures queries the platform for each path and persists the verdict.
+func resolveSignatures(paths []string) {
 	var queried map[string]Signature
 	if runtime.GOOS == "windows" {
-		queried = queryAuthenticode(toQuery) // Authenticode
+		queried = queryAuthenticode(paths) // Authenticode
 	} else {
-		queried = queryProvenance(toQuery) // package provenance (Linux/macOS)
+		queried = queryProvenance(paths) // package provenance (Linux/macOS)
 	}
 	for p, s := range queried {
-		out[p] = s
 		if fi, err := os.Stat(p); err == nil {
 			mtime := fi.ModTime().UnixNano()
 			sigMu.Lock()
+			capMap(sigCache, maxPathCache)
 			sigCache[p] = sigEntry{mtime, s}
 			sigMu.Unlock()
 			dbSaveSignature(p, mtime, s) // L2: persist across restarts
 		}
 	}
-	return out
 }
 
 // queryProvenance is the Unix analog of Authenticode: it asks the system package
@@ -444,7 +546,9 @@ func threatScore(c *Conn) int {
 	switch c.Sig.Status {
 	case "NotSigned":
 		add(15, "binario sin firma")
-	case "Valid", "N/A", "Unknown", "", "Packaged", "Unmanaged":
+	// PENDING means "not resolved yet", so it must score 0 — it is reflected in
+	// coverageIncomplete instead, which marks the row as partial data.
+	case "Valid", "N/A", "Unknown", "", "Packaged", "Unmanaged", sigPendingStatus:
 	default:
 		add(10, "firma "+c.Sig.Status)
 	}
@@ -508,10 +612,39 @@ func coverageIncomplete(c *Conn) bool {
 	}
 	// IP reputation: only relevant for a public remote; covered once enriched.
 	ipCovered := c.RemoteIP == "" || isPrivateIP(c.RemoteIP) || c.Enrich != nil
-	return !vtCovered || !ipCovered
+	// Signature: a queued-but-unresolved lookup is missing data, not a clean bill.
+	sigCovered := c.Sig.Status != sigPendingStatus
+	return !vtCovered || !ipCovered || !sigCovered
 }
 
 // ── Main analysis ────────────────────────────────────────────────────────────
+
+// Concurrency caps for the per-request enrichment passes. Small on purpose: the
+// point is to overlap latency, not to open a hundred sockets or spawn a hundred
+// subprocesses because the machine happens to be busy.
+const (
+	maxHashWorkers   = 8
+	maxEnrichWorkers = 8
+	maxLANWorkers    = 8
+)
+
+// forEachLimited runs fn for every item, with at most limit running at once.
+func forEachLimited[T any](items []T, limit int, fn func(T)) {
+	if limit < 1 {
+		limit = 1
+	}
+	sem := make(chan struct{}, limit)
+	var wg sync.WaitGroup
+	for _, it := range items {
+		wg.Add(1)
+		sem <- struct{}{}
+		go func(it T) {
+			defer func() { <-sem; wg.Done() }()
+			fn(it)
+		}(it)
+	}
+	wg.Wait()
+}
 
 func analyzeConnections(hideSelf bool) []Conn {
 	conns, err := gnet.Connections("inet")
@@ -530,8 +663,34 @@ func analyzeConnections(hideSelf bool) []Conn {
 	lanSet := map[string]bool{}
 	pidConns := map[int32][]ProcConn{} // built once for getProcDetails
 
+	// Process identity is per PID, not per socket: a browser with 60 sockets used
+	// to cost 60 × (NewProcess + Name + Exe), which on Windows is 60 handle opens
+	// and 60 queries for the same answer.
+	type procInfo struct{ name, exe string }
+	procCache := map[int32]procInfo{}
+	lookupProc := func(pid int32) procInfo {
+		if pi, ok := procCache[pid]; ok {
+			return pi
+		}
+		pi := procInfo{"N/A", "N/A"}
+		if pid > 0 {
+			if p, err := process.NewProcess(pid); err == nil {
+				if n, err := p.Name(); err == nil {
+					pi.name = n
+				}
+				if e, err := p.Exe(); err == nil && e != "" {
+					pi.exe = e
+				}
+			} else {
+				pi = procInfo{"ACCESS_DENIED", "ACCESS_DENIED"}
+			}
+		}
+		procCache[pid] = pi
+		return pi
+	}
+
 	for _, c := range conns {
-		if c.Status != "LISTEN" && c.Status != "ESTABLISHED" {
+		if !trackConn(c) {
 			continue
 		}
 		if hideSelf && c.Pid == ownPID {
@@ -541,19 +700,8 @@ func analyzeConnections(hideSelf bool) []Conn {
 			pidConns[c.Pid] = append(pidConns[c.Pid],
 				ProcConn{c.Laddr.IP, c.Laddr.Port, c.Raddr.IP, c.Raddr.Port})
 		}
-		name, exe := "N/A", "N/A"
-		if c.Pid > 0 {
-			if p, err := process.NewProcess(c.Pid); err == nil {
-				if n, err := p.Name(); err == nil {
-					name = n
-				}
-				if e, err := p.Exe(); err == nil && e != "" {
-					exe = e
-				}
-			} else {
-				name, exe = "ACCESS_DENIED", "ACCESS_DENIED"
-			}
-		}
+		pi := lookupProc(c.Pid)
+		name, exe := pi.name, pi.exe
 		rows = append(rows, row{c, name, exe})
 		if exe != "N/A" && exe != "ACCESS_DENIED" {
 			exeSet[exe] = true
@@ -566,14 +714,22 @@ func analyzeConnections(hideSelf bool) []Conn {
 		}
 	}
 
-	// Concurrent: VT hash per unique exe.
+	// The three enrichment passes run concurrently with each other, but each one
+	// is bounded. Previously every unique exe, public IP and LAN host got its own
+	// goroutine with no cap: 150 public IPs meant 150 goroutines × ~6 HTTP calls
+	// each, on every single /api/connections request.
 	vtMap := map[string][3]string{} // exe -> {cached("1"/""), result, undetected}
 	var vtMapMu sync.Mutex
+	enrichMap := map[string]*Enrichment{}
+	var enrichMu sync.Mutex
+	lanMap := map[string]*LANInfo{}
+	var lanMapMu sync.Mutex
+
 	var wg sync.WaitGroup
-	for exe := range exeSet {
-		wg.Add(1)
-		go func(exe string) {
-			defer wg.Done()
+	wg.Add(3)
+	go func() { // VT hash per unique exe (disk-bound: SHA-256 over each binary)
+		defer wg.Done()
+		forEachLimited(keys(exeSet), maxHashWorkers, func(exe string) {
 			cached, res, und := analyzeExe(exe)
 			c := ""
 			if cached {
@@ -582,36 +738,26 @@ func analyzeConnections(hideSelf bool) []Conn {
 			vtMapMu.Lock()
 			vtMap[exe] = [3]string{c, res, und}
 			vtMapMu.Unlock()
-		}(exe)
-	}
-
-	// Concurrent: enrichment per unique public IP.
-	enrichMap := map[string]*Enrichment{}
-	var enrichMu sync.Mutex
-	for ip := range ipSet {
-		wg.Add(1)
-		go func(ip string) {
-			defer wg.Done()
+		})
+	}()
+	go func() { // reputation per unique public IP (several HTTP calls each)
+		defer wg.Done()
+		forEachLimited(keys(ipSet), maxEnrichWorkers, func(ip string) {
 			e := enrichIP(ip)
 			enrichMu.Lock()
 			enrichMap[ip] = e
 			enrichMu.Unlock()
-		}(ip)
-	}
-
-	// Concurrent: LAN host info (name/MAC) per unique LAN IP.
-	lanMap := map[string]*LANInfo{}
-	var lanMapMu sync.Mutex
-	for ip := range lanSet {
-		wg.Add(1)
-		go func(ip string) {
-			defer wg.Done()
+		})
+	}()
+	go func() { // LAN host info per unique LAN IP (arp/nbtstat subprocesses)
+		defer wg.Done()
+		forEachLimited(keys(lanSet), maxLANWorkers, func(ip string) {
 			l := lanLookup(ip)
 			lanMapMu.Lock()
 			lanMap[ip] = l
 			lanMapMu.Unlock()
-		}(ip)
-	}
+		})
+	}()
 	wg.Wait()
 
 	sigMap := checkSignatures(keys(exeSet))
@@ -630,7 +776,7 @@ func analyzeConnections(hideSelf bool) []Conn {
 			RemoteIP:    r.c.Raddr.IP,
 			PID:         r.c.Pid,
 			Process:     r.name,
-			Status:      r.c.Status,
+			Status:      connStatus(r.c),
 			Exe:         r.exe,
 			Known:       known,
 			Cached:      vt[0] == "1",
@@ -649,7 +795,10 @@ func analyzeConnections(hideSelf bool) []Conn {
 		if isLAN(conn.RemoteIP) {
 			conn.LAN = lanMap[conn.RemoteIP]
 		}
-		if r.c.Status == "ESTABLISHED" && r.c.Pid > 0 {
+		// Capture needs a public peer to filter on; it works the same for UDP
+		// (QUIC) as for TCP, so the gate is "has a public remote", not the state.
+		conn.Capturable = conn.Enrich != nil
+		if (r.c.Status == "ESTABLISHED" || isUDP(r.c)) && r.c.Pid > 0 {
 			d, ok := detailsMap[r.c.Pid]
 			if !ok {
 				d = getProcDetails(r.c.Pid, pidConns)
