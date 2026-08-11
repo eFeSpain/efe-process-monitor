@@ -24,6 +24,21 @@ CREATE TABLE IF NOT EXISTS baseline    (exe TEXT PRIMARY KEY, first_seen TEXT);
 CREATE TABLE IF NOT EXISTS whitelist   (exe TEXT PRIMARY KEY, added TEXT);
 CREATE TABLE IF NOT EXISTS ip_whitelist(ip TEXT PRIMARY KEY, added TEXT);
 CREATE TABLE IF NOT EXISTS blocked     (ip TEXT PRIMARY KEY, at TEXT, report TEXT);
+
+-- Hostnames observed bound to an address (TLS SNI or a DNS answer). One address
+-- legitimately serves several names on a CDN, hence the composite key.
+CREATE TABLE IF NOT EXISTS hostnames (
+    ip TEXT, name TEXT, source TEXT, at TEXT,
+    PRIMARY KEY (ip, name)
+);
+CREATE INDEX IF NOT EXISTS idx_hostnames_ip ON hostnames(ip);
+
+-- Score change log: one row each time the risk of an (exe, remote ip) pair
+-- changes, so the history can answer "what did this look like on Tuesday".
+CREATE TABLE IF NOT EXISTS score_history (
+    epoch REAL, at TEXT, exe TEXT, ip TEXT, threat INTEGER, breakdown TEXT
+);
+CREATE INDEX IF NOT EXISTS idx_score_history_epoch ON score_history(epoch);
 `
 
 func initDB() {
@@ -63,6 +78,11 @@ func pruneEvents() {
 	if err != nil {
 		log.Printf("[!] no se pudo purgar el histórico: %v", err)
 		return
+	}
+	// The score timeline is bounded by the same window; it grows on the same
+	// trigger (observed activity) and would otherwise outlive the events it explains.
+	if _, err := db.Exec("DELETE FROM score_history WHERE epoch < ?", cutoff); err != nil {
+		log.Printf("[!] no se pudo purgar el histórico de score: %v", err)
 	}
 	if n, _ := res.RowsAffected(); n > 0 {
 		log.Printf("[+] histórico purgado: %d eventos con más de %d días", n, eventRetentionDays)
@@ -250,6 +270,127 @@ func dbSaveBlocked(ip, at, report string) {
 }
 
 func dbDeleteBlocked(ip string) { db.Exec("DELETE FROM blocked WHERE ip=?", ip) }
+
+// ── Observed hostnames ───────────────────────────────────────────────────────
+
+func dbSaveHostname(ip, name, source, at string) {
+	// This runs from the packet-capture path, which is the one place in the app
+	// that processes data at high rate; a nil handle here would panic the capture
+	// goroutine rather than merely lose a row.
+	if db == nil {
+		return
+	}
+	// INSERT OR IGNORE: the first sighting keeps its timestamp, and an SNI binding
+	// is not downgraded by a later DNS one.
+	if _, err := db.Exec("INSERT OR IGNORE INTO hostnames VALUES (?,?,?,?)",
+		ip, name, source, at); err != nil {
+		log.Printf("[!] no se pudo guardar el hostname %s→%s: %v", ip, name, err)
+	}
+}
+
+// Hostname is a name observed for an address.
+type Hostname struct {
+	Name   string `json:"name"`
+	Source string `json:"source"` // "sni" (client-declared) or "dns" (answer record)
+	At     string `json:"at"`
+}
+
+// dbHostnames returns the names seen for an address, SNI first (stronger binding).
+func dbHostnames(ip string) []Hostname {
+	if db == nil {
+		return nil
+	}
+	rows, err := db.Query(
+		`SELECT name, source, at FROM hostnames WHERE ip=?
+		 ORDER BY CASE source WHEN 'sni' THEN 0 ELSE 1 END, at DESC LIMIT ?`,
+		ip, maxHostnamesPerIP)
+	if err != nil {
+		return nil
+	}
+	defer rows.Close()
+	var out []Hostname
+	for rows.Next() {
+		var h Hostname
+		if err := rows.Scan(&h.Name, &h.Source, &h.At); err == nil {
+			out = append(out, h)
+		}
+	}
+	return out
+}
+
+// dbAllHostnames loads every binding as ip -> names, for one pass over the table.
+func dbAllHostnames() map[string][]Hostname {
+	out := map[string][]Hostname{}
+	if db == nil {
+		return out
+	}
+	rows, err := db.Query(
+		`SELECT ip, name, source, at FROM hostnames
+		 ORDER BY ip, CASE source WHEN 'sni' THEN 0 ELSE 1 END, at DESC`)
+	if err != nil {
+		return out
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var ip string
+		var h Hostname
+		if err := rows.Scan(&ip, &h.Name, &h.Source, &h.At); err != nil {
+			continue
+		}
+		if len(out[ip]) < maxHostnamesPerIP {
+			out[ip] = append(out[ip], h)
+		}
+	}
+	return out
+}
+
+// ── Score history ────────────────────────────────────────────────────────────
+
+// ScoreChange is one entry in the risk timeline of an (exe, ip) pair.
+type ScoreChange struct {
+	At        string `json:"at"`
+	Exe       string `json:"exe"`
+	IP        string `json:"ip"`
+	Threat    int    `json:"threat"`
+	Breakdown string `json:"breakdown"`
+}
+
+func dbSaveScoreChange(exe, ip string, threat int, breakdown string) {
+	if _, err := db.Exec(
+		"INSERT INTO score_history (epoch, at, exe, ip, threat, breakdown) VALUES (?,?,?,?,?,?)",
+		float64(time.Now().UnixNano())/1e9, now(), exe, ip, threat, breakdown); err != nil {
+		log.Printf("[!] no se pudo guardar el cambio de score: %v", err)
+	}
+}
+
+// dbLastScore returns the most recent recorded score for a pair, so only actual
+// changes are written.
+func dbLastScore(exe, ip string) (int, string, bool) {
+	var threat int
+	var breakdown string
+	err := db.QueryRow(
+		"SELECT threat, breakdown FROM score_history WHERE exe=? AND ip=? ORDER BY epoch DESC LIMIT 1",
+		exe, ip).Scan(&threat, &breakdown)
+	return threat, breakdown, err == nil
+}
+
+func dbScoreHistory(limit int) []ScoreChange {
+	rows, err := db.Query(
+		`SELECT at, exe, ip, threat, breakdown FROM score_history
+		 ORDER BY epoch DESC LIMIT ?`, limit)
+	if err != nil {
+		return nil
+	}
+	defer rows.Close()
+	var out []ScoreChange
+	for rows.Next() {
+		var s ScoreChange
+		if err := rows.Scan(&s.At, &s.Exe, &s.IP, &s.Threat, &s.Breakdown); err == nil {
+			out = append(out, s)
+		}
+	}
+	return out
+}
 
 func dbAllBlocked() []Blocked {
 	rows, err := db.Query("SELECT ip, at, report FROM blocked ORDER BY at DESC")

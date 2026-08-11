@@ -6,6 +6,50 @@ Versions follow [Semantic Versioning](https://semver.org/).
 
 ---
 
+## [Unreleased] — hostname correlation, risk timeline, release provenance, macOS
+
+### Added
+- **Hostname correlation: what the process actually asked for.** Everything else
+  the tool knew about a remote address was *about the address* — geo, ASN,
+  reputation — and none of it answered the first question an analyst asks.
+  `hostnames.go` records the bindings already flowing through the capture parser
+  and previously discarded: the TLS **SNI** (the client wrote that name into a
+  handshake sent to that address — no inference) and **DNS answer records**. Shown
+  on the connection card as "asked for", with SNI marked as the stronger source.
+  Reverse DNS stays, relabelled `rDNS`, because it is a weaker claim made by the
+  address owner — who controls their own PTR record.
+- **Risk timeline** (`score_history`): one row each time the verdict for an
+  (exe, remote IP) pair changes, with the breakdown that produced it, exposed at
+  `/api/score_history` and in the history modal. The score used to exist only on
+  the rendered page, so the history could not answer "what did this look like on
+  Tuesday". Written as a change log, not per render, so refreshes don't bury the
+  real transitions; bounded by the same retention window as the events.
+- **Signed build provenance on releases** (`actions/attest-build-provenance`).
+  `checksums.txt` only proves the files agree with themselves; it says nothing
+  about where they came from. Downloads can now be verified with
+  `gh attestation verify <file> --repo eFeSpain/efe-process-monitor`.
+
+### Fixed
+- **The audit no longer claims to have run checks it cannot.** On macOS the
+  process cross-view was a stub returning an empty list, and the deleted-binary
+  check read `/proc`, which does not exist there — so both rendered as confident
+  passes ("no discrepancies between process sources"). A probe that did not run
+  now reports "not available on this OS", the same honesty the command-failure path
+  already had. The same applies to a failed `tasklist` on Windows and an
+  unreadable sysfs on Linux.
+- Guarded the database helpers reachable from the capture path against a nil
+  handle: a missing database should cost a row, not panic the capture goroutine.
+
+### Removed
+- **macOS binaries are no longer published.** The badge claimed a platform that
+  had never been tested, and the reason not to ship it is concrete rather than
+  cautious: parts of the audit have no macOS implementation, so a user would be
+  running a security tool with holes in it. The code still cross-compiles for
+  darwin and CI keeps proving it, so building from source remains possible — the
+  README now explains what is missing instead of implying support.
+
+---
+
 ## [Unreleased] — logging, process ancestry, score calibration
 
 ### Added

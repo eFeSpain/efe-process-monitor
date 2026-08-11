@@ -48,7 +48,10 @@
     {{ if $hasRemote }}{{ $e := $c.Enrich }}
     <div class="detail-block">
         <h4>{{ $T.detail_ip }} — {{ $c.RemoteIP }}{{ if $c.IPWhitelist }} <span class="badge-wl" title="whitelist">✓</span>{{ end }}{{ if $e.Provider }} <span class="provider-chip">✓ {{ $e.Provider }}</span>{{ end }}</h4>
-        <div class="detail-line"><span class="detail-label">DNS</span><span>{{ $e.DNS }}</span></div>
+        {{ if $c.Hostnames }}<div class="detail-line"><span class="detail-label" title="{{ $T.asked_for_hint }}">{{ $T.asked_for }}</span><span>
+            {{ range $c.Hostnames }}<span class="hostchip {{ if eq .Source "sni" }}hostchip-sni{{ end }}" title="{{ if eq .Source "sni" }}{{ $T.src_sni }}{{ else }}{{ $T.src_dns }}{{ end }} · {{ .At }}">{{ .Name }}</span> {{ end }}
+        </span></div>{{ end }}
+        <div class="detail-line"><span class="detail-label" title="{{ $T.rdns_hint }}">rDNS</span><span>{{ $e.DNS }}</span></div>
         <div class="detail-line"><span class="detail-label">Geo</span><span>{{ $e.City }}, {{ $e.Country }}</span></div>
         <div class="detail-line"><span class="detail-label">ISP</span><span>{{ $e.ISP }}</span></div>
         <div class="detail-line"><span class="detail-label">ASN</span><span>{{ $e.ASN }}</span></div>

@@ -12,7 +12,7 @@ import (
 
 // hiddenProcs (Linux): cross-view between /proc and a kill(pid,0) probe. A PID
 // that answers a signal but has no /proc entry is being hidden (classic LKM rootkit).
-func hiddenProcs(lang string) []string {
+func hiddenProcs(lang string) ([]string, bool) {
 	max := 32768
 	if b, err := os.ReadFile("/proc/sys/kernel/pid_max"); err == nil {
 		if m, err := strconv.Atoi(strings.TrimSpace(string(b))); err == nil {
@@ -42,15 +42,15 @@ func hiddenProcs(lang string) []string {
 			}
 		}
 	}
-	return hidden
+	return hidden, true
 }
 
 // promiscIfaces (Linux): interfaces with the IFF_PROMISC flag set (0x100).
-func promiscIfaces() []string {
+func promiscIfaces() ([]string, bool) {
 	var res []string
 	ents, err := os.ReadDir("/sys/class/net")
 	if err != nil {
-		return nil
+		return nil, false // couldn't read sysfs: indeterminate, not "none"
 	}
 	for _, e := range ents {
 		b, err := os.ReadFile("/sys/class/net/" + e.Name() + "/flags")
@@ -62,5 +62,5 @@ func promiscIfaces() []string {
 			res = append(res, e.Name())
 		}
 	}
-	return res
+	return res, true
 }

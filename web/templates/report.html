@@ -41,6 +41,10 @@ td { padding:6px 12px; border-bottom:1px solid #21262d; white-space:nowrap; vert
 .listen { color:#8b949e; } .established { color:#3fb950; } .remote-yes { color:#58a6ff; }
 .udp { color:#a371f7; } /* datagram socket with no peer (bound only) */
 .chain { color:#8b949e; font-size:11px; word-break:break-all; } /* process ancestry */
+/* hostnames observed for an address; SNI is the stronger binding, so it stands out */
+.hostchip { display:inline-block; background:#161b22; border:1px solid #30363d; border-radius:8px;
+    padding:0 6px; margin:1px 2px; color:#8b949e; font-size:11px; }
+.hostchip-sni { color:#d2a8ff; border-color:#8957e5; }
 .threat { display:inline-block; min-width:30px; text-align:center; padding:1px 7px; border-radius:10px; font-weight:bold; }
 .threat-high{background:#3d1c1c;color:#f85149;} .threat-med{background:#3a2e10;color:#e3b341;}
 .threat-low{background:#21262d;color:#d29922;} .threat-min{background:#12261a;color:#3fb950;}
@@ -281,6 +285,7 @@ select{background:#0d1117;color:#c9d1d9;border:1px solid #30363d;padding:3px 6px
                     <option value="86400">{{ .T.hist_age_1d }}</option>
                     <option value="604800">{{ .T.hist_age_7d }}</option>
                 </select>
+                <button class="btn" onclick="toggleScoreHistory()" id="score-hist-btn">📈 {{ .T.score_hist }}</button>
                 <button class="btn btn-stop" onclick="deleteHistory()">🗑 {{ .T.hist_delete }}</button>
                 <a class="btn" href="/export.csv">⬇ CSV</a> <a class="btn" href="/export.json">⬇ JSON</a>
                 <a class="btn" href="/logs.txt" target="_blank" title="{{ .T.log_hint }}">📄 {{ .T.log_btn }}</a>
@@ -870,6 +875,7 @@ function formatPacket(p) {
 // ── History ───────────────────────────────────────────────────────────────
 function openHistory() {
     const m = document.getElementById('history-modal'), b = document.getElementById('history-body');
+    showingScoreHistory = false; // always open on the event list, not the risk view
     m.style.display = 'flex'; b.textContent = '…';
     fetch('/api/events?limit=500').then(r => r.json()).then(evs => {
         // refresh the kind filter with the kinds actually present
@@ -899,6 +905,24 @@ function deleteHistory() {
         .catch(() => openHistory());
 }
 function closeHistory() { document.getElementById('history-modal').style.display = 'none'; }
+
+// The risk timeline: one entry per change of verdict for an (exe, IP) pair, which
+// is what makes "what did this look like on Tuesday" answerable.
+let showingScoreHistory = false;
+function toggleScoreHistory() {
+    showingScoreHistory = !showingScoreHistory;
+    if (!showingScoreHistory) { openHistory(); return; }
+    const b = document.getElementById('history-body');
+    b.textContent = '…';
+    fetch('/api/score_history?limit=500').then(r => r.json()).then(list => {
+        if (!list || !list.length) { b.textContent = T.score_hist_none; return; }
+        b.innerHTML = list.map(s => `<div class="hist-row">
+            <span class="t">${esc(s.at)}</span>
+            <span class="threat threat-${s.threat >= 70 ? 'high' : s.threat >= 40 ? 'med' : s.threat >= 15 ? 'low' : 'min'}">${s.threat}</span>
+            <span>${esc(s.exe)} → ${esc(s.ip)}</span>
+            <span class="t">${esc(s.breakdown)}</span></div>`).join('');
+    }).catch(() => { b.textContent = 'error'; });
+}
 
 // ── Blocked IPs ───────────────────────────────────────────────────────────
 function openBlocked() {

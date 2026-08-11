@@ -10,7 +10,7 @@ sobre el binario y la IP remota.
 
 ![Go](https://img.shields.io/badge/Go-1.26-00ADD8?logo=go&logoColor=white)
 ![License](https://img.shields.io/badge/license-MIT-green)
-![Platforms](https://img.shields.io/badge/platform-Windows%20%7C%20Linux%20%7C%20macOS-blue)
+![Platforms](https://img.shields.io/badge/platform-Windows%20%7C%20Linux-blue)
 
 [English](README.md) · **Español**
 
@@ -48,6 +48,12 @@ no para atacar a otros.
 **Reputación e inteligencia**
 - Binario: hash SHA-256 en **VirusTotal**, y firma de código — **Authenticode** en
   Windows, **pertenencia a paquete** (`dpkg`/`rpm`/`pacman`) en Linux.
+- **Lo que el proceso pidió de verdad**: nombres observados asociados a una IP
+  durante una captura, desde el **SNI** de TLS (declarado por el cliente, el
+  vínculo más fuerte que existe) y desde las **respuestas DNS**. Es algo distinto
+  y mejor que el DNS inverso, que es lo que declara el *dueño* de la IP — un host
+  malicioso controla su propio PTR, pero no lo que tu navegador escribe en un
+  handshake.
 - IP remota: geolocalización / ISP / ASN, DNS inverso, **VirusTotal**, **AbuseIPDB**,
   nodos de salida **Tor**, **abuse.ch** (Feodo + ThreatFox), **Spamhaus DROP** y
   **Shodan** (puertos abiertos / CVEs).
@@ -78,6 +84,10 @@ no para atacar a otros.
   (OUI)**.
 - **Histórico** forense en SQLite, exportable a CSV/JSON, con borrado por filtros
   (por proceso, tipo o antigüedad).
+- **Cronología de riesgo**: una entrada cada vez que cambia el veredicto de un par
+  (binario, IP remota), con el razonamiento que lo produjo — así «¿qué pinta tenía
+  esto el martes?» tiene respuesta, en vez de que el score exista solo en la página
+  renderizada.
 - **Log de la aplicación** (`efemon.log`, rota a 5 MiB): toda acción del operador
   (matar, bloquear, desbloquear, ajustes, borrado de histórico) y todo acceso
   rechazado, consultable desde el panel. La versión publicada no tiene consola, así
@@ -86,7 +96,7 @@ no para atacar a otros.
 **Otros**
 - **Login con contraseña** opcional, y exposición a la red por **HTTPS** opcional
   (desactivada por defecto — ver *Acceso*).
-- Interfaz bilingüe (inglés / español), icono en la bandeja del sistema en Windows y Linux (escritorios SNI), binario único. macOS sin probar — úsalo bajo tu cuenta y riesgo.
+- Interfaz bilingüe (inglés / español), icono en la bandeja del sistema en Windows y Linux (escritorios SNI), binario único.
 
 ## Capturas
 
@@ -130,7 +140,14 @@ GOOS=darwin CGO_ENABLED=0 go build -o efemon .   # compilar para macOS
   [AppIndicator and KStatusNotifierItem Support](https://extensions.gnome.org/extension/615/appindicator-support/);
   sin ella (o en escritorios no compatibles), no aparece icono — en su lugar
   se muestra un botón **Detener** en el panel web.
-- **macOS** no ha sido probado nunca — el binario puede compilar y arrancar pero el comportamiento es desconocido. No se ofrece soporte.
+- **macOS no está soportado y no se publica binario de macOS.** El código sigue
+  compilando para darwin y la CI lo comprueba, así que puedes construirlo desde
+  fuente — pero conviene saber *por qué* no se distribuye: varias sondas de la
+  auditoría no tienen implementación en macOS (el cross-view de procesos y el
+  check de binario borrado), así que la auditoría estaría informando sobre
+  comprobaciones que no puede ejecutar. Ahora dice «no disponible en este sistema»
+  en lugar de darlas por buenas, que es honesto pero sigue significando que
+  usarías una herramienta de seguridad con agujeros. Sin probar y sin soporte.
 
 ### Claves de API (opcional)
 

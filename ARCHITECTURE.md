@@ -49,6 +49,15 @@ GOOS=darwin go build -o efemon .  # macOS
   `suspiciousAncestry` matches spawn patterns that should never occur (document/browser → script
   host, web server → shell) and feeds `wBadSpawn` into the score. Deliberately narrow: a broad rule
   here would swamp the score with false positives.
+- **hostnames.go** — `observeHostnames` harvests IP↔name bindings from each captured packet (TLS SNI
+  and DNS answer records) into the `hostnames` table. SNI outranks DNS because the client declared
+  it; both outrank reverse DNS, which the address owner controls. Only sees traffic while a capture
+  runs — this is not passive DNS logging.
+- `score_history` is a change log, written by `recordScoreChange` only when the verdict for an
+  (exe, remote IP) pair actually moves. Skips local traffic and rows flagged `Partial`.
+- Platform-specific audit probes return `(result, ran bool)`. `findingOrSkipped` turns `ran == false`
+  into an informational "not available on this OS" — a stub returning an empty slice must never
+  render as a clean pass. macOS is where this bites: no process cross-view, no `/proc`.
 - Score weights are named constants at the top of the threat-score section in `connections.go`, and
   `score_corpus_test.go` pins labelled scenarios to score *bands* — change a weight there and the
   corpus tells you whether ordinary traffic moved into "suspicious" or an intrusion moved out.

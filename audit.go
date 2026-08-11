@@ -28,6 +28,7 @@ var auditStrings = map[string]map[string]string{
 	"es": {
 		"found_prefix": "%d encontrado(s): ", "more": " … (+%d más)",
 		"check_failed":  "No se pudo comprobar (%v) — resultado indeterminado, no asumas que está limpio.",
+		"check_skipped": "No disponible en este sistema operativo — esta comprobación NO se ha ejecutado. No lo interpretes como que está limpio.",
 		"check_partial": " ⚠ comprobación incompleta (el comando falló o agotó el tiempo): puede haber más.",
 		"cat_proc":      "Procesos", "cat_persist": "Persistencia", "cat_harden": "Hardening",
 		"cat_rk":       "Rootkit (heurístico)",
@@ -96,6 +97,7 @@ var auditStrings = map[string]map[string]string{
 	"en": {
 		"found_prefix": "%d found: ", "more": " … (+%d more)",
 		"check_failed":  "Could not check (%v) — result is indeterminate, do not read it as clean.",
+		"check_skipped": "Not available on this operating system — this check did NOT run. Do not read it as clean.",
 		"check_partial": " ⚠ incomplete check (the command failed or timed out): there may be more.",
 		"cat_proc":      "Processes", "cat_persist": "Persistence", "cat_harden": "Hardening",
 		"cat_rk":       "Rootkit (heuristic)",
@@ -271,6 +273,16 @@ func finding(lang, cat, name, status string, items []string, ok string) AuditChe
 		fmt.Sprintf(atr(lang, "found_prefix"), len(items)) + strings.Join(shown, " | ") + extra}
 }
 
+// findingOrSkipped is finding() for probes that may not exist on this platform.
+// When the probe did not run it reports "not available here" instead of "ok" — a
+// stub returning an empty list must never render as a clean pass.
+func findingOrSkipped(lang, cat, name, status string, items []string, ok string, ran bool) AuditCheck {
+	if !ran {
+		return AuditCheck{cat, name, "info", atr(lang, "check_skipped")}
+	}
+	return finding(lang, cat, name, status, items, ok)
+}
+
 // findingOrUnknown is finding() for checks backed by an external command: when
 // that command failed it reports "couldn't check" instead of "ok", and when it
 // produced partial output it keeps the findings but says so.
@@ -307,7 +319,9 @@ func auditProcesses(lang string) []AuditCheck {
 				masq = append(masq, fmt.Sprintf("%s (pid %d) %s", name, p.Pid, exe))
 			}
 		}
-		if runtime.GOOS != "windows" {
+		// /proc is Linux-only: on macOS this silently found nothing and the check
+		// then reported a clean pass for something it never looked at.
+		if runtime.GOOS == "linux" {
 			if link, err := os.Readlink(fmt.Sprintf("/proc/%d/exe", p.Pid)); err == nil &&
 				strings.Contains(link, "(deleted)") {
 				deleted = append(deleted, fmt.Sprintf("%s (pid %d) %s", name, p.Pid, link))
@@ -317,10 +331,14 @@ func auditProcesses(lang string) []AuditCheck {
 	out := []AuditCheck{
 		finding(lang, cat, atr(lang, "p_suspath"), "risk", susPath, atr(lang, "p_suspath_ok")),
 	}
-	if runtime.GOOS == "windows" {
+	switch runtime.GOOS {
+	case "windows":
 		out = append(out, finding(lang, cat, atr(lang, "p_masq"), "risk", masq, atr(lang, "p_masq_ok")))
-	} else {
+	case "linux":
 		out = append(out, finding(lang, cat, atr(lang, "p_deleted"), "risk", deleted, atr(lang, "p_deleted_ok")))
+	default:
+		out = append(out, findingOrSkipped(lang, cat, atr(lang, "p_deleted"), "risk",
+			nil, atr(lang, "p_deleted_ok"), false))
 	}
 	return out
 }
@@ -788,7 +806,9 @@ func auditRootkit(lang string) []AuditCheck {
 	if runtime.GOOS == "linux" {
 		hpStatus = "risk"
 	}
-	out = append(out, finding(lang, cat, atr(lang, "rk_hidden"), hpStatus, hiddenProcs(lang), atr(lang, "rk_hidden_ok")))
+	hidden, hpRan := hiddenProcs(lang)
+	out = append(out, findingOrSkipped(lang, cat, atr(lang, "rk_hidden"), hpStatus,
+		hidden, atr(lang, "rk_hidden_ok"), hpRan))
 	out = append(out, auditHiddenPorts(lang, cat))
 
 	if runtime.GOOS == "linux" {
@@ -806,7 +826,9 @@ func auditRootkit(lang string) []AuditCheck {
 				out = append(out, AuditCheck{cat, atr(lang, "rk_tainted"), "ok", atr(lang, "tainted_ok")})
 			}
 		}
-		out = append(out, finding(lang, cat, atr(lang, "rk_promisc"), "warn", promiscIfaces(), atr(lang, "promisc_ok")))
+		promisc, promiscRan := promiscIfaces()
+		out = append(out, findingOrSkipped(lang, cat, atr(lang, "rk_promisc"), "warn",
+			promisc, atr(lang, "promisc_ok"), promiscRan))
 		out = append(out, auditEnvPreload(lang, cat))
 		out = append(out, auditKernelModules(lang, cat))
 	}

@@ -6,7 +6,9 @@ on:
     tags: ["v*"]
 
 permissions:
-  contents: write   # needed to create the release and upload assets
+  contents: write      # needed to create the release and upload assets
+  id-token: write      # OIDC token used to sign the provenance attestation
+  attestations: write  # store the attestation against the repository
 
 jobs:
   build:
@@ -18,10 +20,15 @@ jobs:
         with:
           go-version-file: go.mod
 
+      # macOS is deliberately NOT shipped. The binary compiles for darwin (CI keeps
+      # proving that), but several audit probes have no implementation there —
+      # the process cross-view and the deleted-binary check — and shipping a
+      # security tool that cannot run parts of its own audit invites the user to
+      # read "not checked" as "clean". Anyone on a Mac can still build from source.
       - name: Build all platforms
         run: |
           mkdir -p dist
-          for t in windows/amd64 windows/arm64 linux/amd64 linux/arm64 darwin/amd64 darwin/arm64; do
+          for t in windows/amd64 windows/arm64 linux/amd64 linux/arm64; do
             os=${t%/*}; arch=${t#*/}
             out="efemon-${os}-${arch}"
             ld="-s -w"
@@ -35,6 +42,19 @@ jobs:
           done
           ( cd dist && sha256sum * > checksums.txt )
           ls -la dist
+
+      # Build provenance: a signed, verifiable statement of which workflow, from
+      # which commit, produced these exact binaries. The checksums.txt alone only
+      # proves the files agree with themselves — it says nothing about where they
+      # came from. For a security tool people download and run elevated, "you can
+      # check this really was built from this source" is the whole point.
+      #
+      # Verify a download with:
+      #   gh attestation verify efemon-windows-amd64.exe --repo eFeSpain/efe-process-monitor
+      - name: Attest build provenance
+        uses: actions/attest-build-provenance@v2
+        with:
+          subject-path: dist/efemon-*
 
       - name: Publish release
         uses: softprops/action-gh-release@v2

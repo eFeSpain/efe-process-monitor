@@ -10,7 +10,7 @@ sources say about the binary and the remote IP.
 
 ![Go](https://img.shields.io/badge/Go-1.26-00ADD8?logo=go&logoColor=white)
 ![License](https://img.shields.io/badge/license-MIT-green)
-![Platforms](https://img.shields.io/badge/platform-Windows%20%7C%20Linux%20%7C%20macOS-blue)
+![Platforms](https://img.shields.io/badge/platform-Windows%20%7C%20Linux-blue)
 
 **English** · [Español](README.es.md)
 
@@ -47,6 +47,11 @@ attacking others.
 **Reputation & threat intel**
 - Binary: SHA-256 lookup on **VirusTotal**, and code signature — **Authenticode**
   on Windows, **package ownership** (`dpkg`/`rpm`/`pacman`) on Linux.
+- **What the process actually asked for**: hostnames observed bound to an address
+  during a capture, from the TLS **SNI** (client-declared, the strongest binding
+  there is) and from **DNS answer records**. This is a different and better thing
+  than reverse DNS, which is what the address *owner* claims — a malicious host
+  controls its own PTR record but not what your browser writes into a handshake.
 - Remote IP: geolocation / ISP / ASN, reverse DNS, **VirusTotal**, **AbuseIPDB**,
   **Tor** exit nodes, **abuse.ch** (Feodo + ThreatFox), **Spamhaus DROP** and
   **Shodan** (open ports / CVEs).
@@ -72,6 +77,9 @@ attacking others.
 - **LAN host info**: NetBIOS / DNS / MAC, with offline **OUI vendor** lookup.
 - Forensic **history** in SQLite, exportable to CSV/JSON, with filtered deletion
   (by process, type or age).
+- **Risk timeline**: one entry each time the verdict for a (binary, remote IP) pair
+  changes, with the reasoning that produced it — so "what did this look like on
+  Tuesday" has an answer, instead of the score existing only on the rendered page.
 - **Application log** (`efemon.log`, rotated at 5 MiB): every operator action
   (kill, block, unblock, settings, history cleared) and every rejected access,
   readable from the dashboard. The release build has no console, so this file is
@@ -80,7 +88,7 @@ attacking others.
 **Other**
 - Optional **password login**, and optional network exposure over **HTTPS** (off
   by default — see *Access*).
-- Bilingual UI (English / Spanish), system-tray icon on Windows and Linux (SNI desktops), single binary. macOS builds are untested — use at your own risk.
+- Bilingual UI (English / Spanish), system-tray icon on Windows and Linux (SNI desktops), single binary.
 
 ## Screenshots
 
@@ -124,7 +132,13 @@ GOOS=darwin CGO_ENABLED=0 go build -o efemon .   # cross-compile for macOS
   [AppIndicator and KStatusNotifierItem Support](https://extensions.gnome.org/extension/615/appindicator-support/)
   extension; without it (or on any other unsupported desktop), no tray icon
   appears — a **Stop** button is shown in the web dashboard instead.
-- **macOS** has never been tested — the binary may compile and run but behaviour is unknown. No support is provided.
+- **macOS is not supported and no macOS binary is published.** The code still
+  cross-compiles for darwin and CI keeps proving it, so you can build from source
+  — but be aware of *why* it isn't shipped: several audit probes have no macOS
+  implementation (the process cross-view and the deleted-binary check), so the
+  audit would be reporting on checks it cannot actually run. It now says
+  "not available on this OS" instead of passing them, which is honest but still
+  means you'd be using a security tool with holes in it. Untested and unsupported.
 
 ### API keys (optional)
 

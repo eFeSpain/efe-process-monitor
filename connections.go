@@ -13,9 +13,8 @@ import (
 	"strconv"
 	"strings"
 	"sync"
-	"time"
-
 	"syscall"
+	"time"
 
 	gnet "github.com/shirou/gopsutil/v4/net"
 	"github.com/shirou/gopsutil/v4/process"
@@ -79,6 +78,7 @@ type Conn struct {
 	IPWhitelist bool
 	Partial     bool // key signals (VT/enrichment) couldn't be resolved → low score ≠ clean
 	Enrich      *Enrichment
+	Hostnames   []Hostname // names observed bound to RemoteIP (TLS SNI / DNS answers)
 	LAN         *LANInfo
 	Details     *ProcDetails
 	Breakdown   string
@@ -147,8 +147,6 @@ var stagingPaths = []string{
 // perfectly ordinary machine showed a wall of amber rows.
 var untrustedPaths = []string{`\downloads`, `/downloads`}
 
-// portLabel resolves a protocol label for the connection. Known malware/C2 ports
-// win (and flag it); otherwise a standard service name; else "—".
 // portLabel resolves the protocol label and whether it should score. A legacy
 // RAT port still gets its label (useful context) but returns false, so it adds
 // nothing to the threat score.
@@ -860,6 +858,7 @@ func analyzeConnections(hideSelf bool) []Conn {
 	sigMap := checkSignatures(keys(exeSet))
 	wl := whitelist()
 	ipwl := ipWhitelist()
+	hostMap := dbAllHostnames()            // one query, not one per row
 	detailsMap := map[int32]*ProcDetails{} // deduped per PID
 
 	out := make([]Conn, 0, len(rows))
@@ -890,6 +889,7 @@ func analyzeConnections(hideSelf bool) []Conn {
 		if conn.RemoteIP != "" && !isPrivateIP(conn.RemoteIP) {
 			conn.Enrich = enrichMap[conn.RemoteIP]
 		}
+		conn.Hostnames = hostMap[conn.RemoteIP]
 		if isLAN(conn.RemoteIP) {
 			conn.LAN = lanMap[conn.RemoteIP]
 		}
@@ -920,6 +920,7 @@ func analyzeConnections(hideSelf bool) []Conn {
 			}
 		}
 		conn.Threat = threatScore(&conn)
+		recordScoreChange(&conn)
 		out = append(out, conn)
 	}
 
@@ -930,6 +931,31 @@ func analyzeConnections(hideSelf bool) []Conn {
 		return out[i].PID < out[j].PID
 	})
 	return out
+}
+
+// recordScoreChange appends to the risk timeline, but only when the verdict for
+// this (exe, remote IP) pair actually changed.
+//
+// The history used to keep a free-text detail line and nothing else, so it could
+// not answer "what did this look like on Tuesday" — the score and its reasoning
+// existed only in the rendered page. Writing every row on every render would be
+// thousands of near-identical rows, so this is a change log: the interesting
+// moment is when a pair's risk moves, which is also exactly what a trend is made of.
+func recordScoreChange(c *Conn) {
+	if c.Exe == "" || c.Exe == "N/A" || c.Exe == "ACCESS_DENIED" {
+		return
+	}
+	if c.RemoteIP == "" || isPrivateIP(c.RemoteIP) {
+		return // local traffic has no reputation to trend
+	}
+	if c.Partial {
+		return // don't record a verdict we already know is based on missing data
+	}
+	if last, lastWhy, ok := dbLastScore(c.Exe, c.RemoteIP); ok &&
+		last == c.Threat && lastWhy == c.Breakdown {
+		return
+	}
+	dbSaveScoreChange(c.Exe, c.RemoteIP, c.Threat, c.Breakdown)
 }
 
 func orNA(s string) string {

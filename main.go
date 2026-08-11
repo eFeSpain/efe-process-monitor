@@ -179,6 +179,7 @@ func main() {
 	http.HandleFunc("/api/blocked", handleBlocked)
 	http.HandleFunc("/api/unblock", handleUnblock)
 	http.HandleFunc("/api/shutdown", handleShutdown)
+	http.HandleFunc("/api/score_history", handleScoreHistory)
 	http.HandleFunc("/logs.txt", handleLogs)
 	http.HandleFunc("/api/audit", handleAudit)
 	http.HandleFunc("/audit.json", handleAuditJSON)
@@ -591,6 +592,16 @@ func handleBlockIP(w http.ResponseWriter, r *http.Request) {
 
 func handleBlocked(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, listBlocked())
+}
+
+// handleScoreHistory returns the risk timeline: when the verdict for an
+// (exe, remote IP) pair changed, and why.
+func handleScoreHistory(w http.ResponseWriter, r *http.Request) {
+	limit := 200
+	if n, err := strconv.Atoi(r.URL.Query().Get("limit")); err == nil && n > 0 && n <= 2000 {
+		limit = n
+	}
+	writeJSON(w, dbScoreHistory(limit))
 }
 
 // handleLogs serves the tail of the log. It's the only way to read the operator

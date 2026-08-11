@@ -123,6 +123,9 @@ var captureFields = []string{
 	"tls.handshake.extensions_server_name",
 	// added: real protocol label (incl. QUIC), info column and HTTP method
 	"_ws.col.protocol", "_ws.col.info", "http.request.method",
+	// DNS answer records, so a resolved name can be tied to the address it
+	// resolved to (see observeHostnames).
+	"dns.a", "dns.aaaa",
 }
 
 var packetKeys = []string{
@@ -131,6 +134,7 @@ var packetKeys = []string{
 	"win", "udp_src", "udp_dst", "dns", "http_host", "http_uri", "http_code",
 	"ua", "tls_sni",
 	"proto", "info", "http_method",
+	"dns_a", "dns_aaaa",
 }
 
 func bpf(localIP, remoteIP string) string {
@@ -171,6 +175,9 @@ func parsePacket(line string) map[string]string {
 			pkt[key] = parts[i]
 		}
 	}
+	// Harvest IP↔hostname bindings while the packets pass through. This is the
+	// only place they are visible, and they were previously discarded.
+	observeHostnames(pkt)
 	return pkt
 }
 

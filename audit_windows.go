@@ -15,7 +15,7 @@ import (
 // tasklist. Each discrepancy is re-verified to avoid timing false positives.
 // PIDs are kept as int32 end to end — the width the process API uses — so no
 // narrowing conversion is needed anywhere in this comparison.
-func hiddenProcs(lang string) []string {
+func hiddenProcs(lang string) ([]string, bool) {
 	gset := map[int32]bool{}
 	pids, _ := process.Pids()
 	for _, p := range pids {
@@ -23,7 +23,8 @@ func hiddenProcs(lang string) []string {
 	}
 	tset := tasklistPids()
 	if len(tset) == 0 {
-		return nil // tasklist failed — don't raise a false alarm
+		// tasklist failed: report "couldn't check", not "nothing found".
+		return nil, false
 	}
 	cand := map[int32]bool{}
 	for p := range tset {
@@ -51,7 +52,7 @@ func hiddenProcs(lang string) []string {
 			hidden = append(hidden, fmt.Sprintf(atr(lang, "rk_proc_only"), p, src))
 		}
 	}
-	return hidden
+	return hidden, true
 }
 
 func tasklistPids() map[int32]bool {
@@ -71,4 +72,6 @@ func tasklistPids() map[int32]bool {
 	return set
 }
 
-func promiscIfaces() []string { return nil } // not implemented on Windows
+// promiscIfaces is not implemented on Windows; false means "not checked", which
+// the audit reports as indeterminate rather than as a clean pass.
+func promiscIfaces() ([]string, bool) { return nil, false }
