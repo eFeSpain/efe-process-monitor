@@ -9,6 +9,13 @@ Versions follow [Semantic Versioning](https://semver.org/).
 ## [Unreleased] — data-volume signal, real ACLs on the secrets
 
 ### Added
+- **`verify.sh`**: runs every CI gate locally in the same order, then cross-compiles
+  all six release targets and executes the test binary on Linux through WSL. It
+  exists because three separate CI failures had the same cause — a local run that
+  covered a subset of the gates. Each tool in it has caught something the others
+  missed: `-race` found the settings data races, `gosec` an unbounded PID
+  conversion, `staticcheck` dead code, and the Linux run a `filepath.Base` call
+  whose GOOS dependence had made a detection rule permanently inert.
 - **Data-volume signal.** The process I/O counters were already being read and
   displayed and then used for nothing. `volume.go` now tracks the per-process
   rate between monitor samples and flags a sustained outbound flow.

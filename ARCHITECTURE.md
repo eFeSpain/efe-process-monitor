@@ -49,6 +49,11 @@ GOOS=darwin go build -o efemon .  # macOS
   `suspiciousAncestry` matches spawn patterns that should never occur (document/browser → script
   host, web server → shell) and feeds `wBadSpawn` into the score. Deliberately narrow: a broad rule
   here would swamp the score with false positives.
+- **verify.sh** — runs every CI gate locally in the same order (`gofmt`, `vet`, `test -race`,
+  `staticcheck`, `gosec` with the identical arguments), then the two things CI cannot do from one
+  runner: cross-compile all six release targets, and execute the test binary on Linux via WSL from a
+  Windows checkout. `--quick` skips the last two. Keep the gosec arguments in sync with
+  `.github/workflows/ci.yml` or the step stops meaning anything.
 - **volume.go** — per-process I/O rate sampled once per monitor cycle. On Linux the block-device
   totals are subtracted from `rchar`/`wchar` to isolate non-disk traffic; on Windows
   `GetProcessIoCounters` cannot separate file from network I/O, so the figure is weaker and the UI

@@ -179,10 +179,6 @@ func rateFor(pid int32) ioRate {
 	return ioRate{}
 }
 
-// egressIsProxy reports whether the outbound figure on this platform mixes disk
-// I/O in with network I/O, so the UI can qualify what it shows.
-func egressIsProxy() bool { return runtime.GOOS != "linux" }
-
 // humanRate formats a bytes-per-second figure for display and for the score
 // breakdown.
 func humanRate(bps float64) string {
