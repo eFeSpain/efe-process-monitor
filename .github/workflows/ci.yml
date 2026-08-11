@@ -40,10 +40,27 @@ jobs:
           version: latest
           install-go: false
 
+      # gosec, with exclusions scoped to the files where a rule is structurally
+      # unavoidable for this kind of tool — never globally, so each rule stays
+      # live everywhere else:
+      #   audit.go   reads system config files by design (/etc/crontab, sudoers,
+      #              ~/.bashrc, /sys/...) from hardcoded lists → G304, G703.
+      #   lan.go     same, for the OUI/ARP helpers → G304.
+      #   proc.go    the single exec wrapper every subprocess goes through; all
+      #              call sites use a fixed binary name and validated args, and
+      #              nothing runs via a shell → G204, G702.
+      #   tools/     build-time asset generators, not part of the shipped binary.
+      # G101 is excluded globally: it is a lexical match on identifiers such as
+      # auth_* / login_* / token in the translation maps, not a credential.
       - name: gosec
         uses: securego/gosec@master
         with:
-          args: -exclude-generated -severity medium ./...
+          args: >-
+            -exclude-generated
+            -severity medium
+            -exclude=G101
+            -exclude-rules=audit\.go:G304,G703;lan\.go:G304;proc\.go:G204,G702;tools/.*:G115,G304,G306
+            ./...
 
   build:
     # Guarantees the binary stays cgo-free and compiles on every target OS.

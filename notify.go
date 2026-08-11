@@ -43,6 +43,8 @@ func notifyIcon() string {
 			return
 		}
 		p := filepath.Join(appDir, "icon.png")
+		// #nosec G306 -- intentionally world-readable: this is the app icon, and the
+		// Windows toast subsystem reads it from disk as a different security context.
 		if err := os.WriteFile(p, data, 0o644); err != nil {
 			return
 		}

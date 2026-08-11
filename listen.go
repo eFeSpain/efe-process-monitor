@@ -153,6 +153,9 @@ func selfSignedCert() (tls.Certificate, error) {
 	if err != nil {
 		return tls.Certificate{}, err
 	}
+	// The certificate is public by definition, so 0644 is correct; the private key
+	// on the next line is the one that must stay 0600.
+	// #nosec G306 -- public certificate, intentionally readable
 	os.WriteFile(cp, pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: der}), 0o644)
 	os.WriteFile(kp, pem.EncodeToMemory(&pem.Block{Type: "EC PRIVATE KEY", Bytes: keyDER}), 0o600)
 	return tls.LoadX509KeyPair(cp, kp)

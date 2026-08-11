@@ -242,6 +242,10 @@ func sessionCookie() *http.Cookie { return sessionCookieFor(sessionTTL) }
 
 // sessionCookieFor builds a session cookie valid for ttl.
 func sessionCookieFor(ttl time.Duration) *http.Cookie {
+	// #nosec G124 -- Secure is deliberately conditional, not a literal true: on the
+	// default plain-HTTP loopback bind a Secure cookie would never be stored by the
+	// browser, so the dashboard could not hold a session at all. It is set exactly
+	// when we serve HTTPS, which is the only case where it can help.
 	return &http.Cookie{
 		Name: "sid", Value: newSession(ttl), Path: "/",
 		HttpOnly: true, SameSite: http.SameSiteStrictMode,
@@ -423,10 +427,13 @@ func denyLocal(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, `{"ok":false,"error":"forbidden: local token required"}`, http.StatusForbidden)
 		return
 	}
-	T := strings_(langFrom(r))
+	lang := langFrom(r)
+	T := strings_(lang)
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	w.WriteHeader(http.StatusForbidden)
-	fmt.Fprintf(w, gateHTML, langFrom(r), html.EscapeString(T["gate_title"]),
+	// Every interpolated value is escaped, including lang: it can only be a key of
+	// the translations map today, but that's an invariant somewhere else.
+	fmt.Fprintf(w, gateHTML, html.EscapeString(lang), html.EscapeString(T["gate_title"]),
 		html.EscapeString(T["gate_title"]), html.EscapeString(T["gate_body"]),
 		html.EscapeString(filepath.Join(appDir, tokenFile)))
 }
@@ -499,7 +506,7 @@ func renderLogin(w http.ResponseWriter, lang, errMsg string) {
 		errHTML = `<p class="err">` + html.EscapeString(errMsg) + `</p>`
 	}
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
-	fmt.Fprintf(w, loginHTML, lang, html.EscapeString(T["login_title"]),
+	fmt.Fprintf(w, loginHTML, html.EscapeString(lang), html.EscapeString(T["login_title"]),
 		html.EscapeString(T["login_prompt"]), html.EscapeString(T["login_btn"]), errHTML)
 }
 
@@ -515,6 +522,10 @@ func handleLogout(w http.ResponseWriter, r *http.Request) {
 		delete(sessions, c.Value)
 		authMu.Unlock()
 	}
-	http.SetCookie(w, &http.Cookie{Name: "sid", Value: "", Path: "/", MaxAge: -1})
+	// Same attributes as the cookie being replaced, so the browser reliably
+	// overwrites it rather than keeping both.
+	// #nosec G124 -- Secure mirrors sessionCookieFor; see the note there.
+	http.SetCookie(w, &http.Cookie{Name: "sid", Value: "", Path: "/", MaxAge: -1,
+		HttpOnly: true, SameSite: http.SameSiteStrictMode, Secure: listenTLS})
 	http.Redirect(w, r, "/login", http.StatusFound)
 }

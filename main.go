@@ -9,6 +9,7 @@ import (
 	"io"
 	"io/fs"
 	"log"
+	"math"
 	"net"
 	"net/http"
 	"os"
@@ -72,9 +73,15 @@ var funcMap = template.FuncMap{
 	// Note the argument order: templates read better as `join ", " $items`, which
 	// is the reverse of strings.Join's own signature.
 	"join": func(sep string, items []string) string { return strings.Join(items, sep) },
+	// json injects a value into a <script> block. template.JS bypasses the
+	// contextual escaper, which is safe here for one specific reason: json.Marshal
+	// escapes the characters "<", ">" and "&" into their \u00XX form, so a string
+	// containing a closing script tag cannot terminate the block. Keep it that
+	// way — switching to an Encoder with SetEscapeHTML(false) would turn this into
+	// an injection point.
 	"json": func(v any) template.JS {
 		b, _ := json.Marshal(v)
-		return template.JS(b)
+		return template.JS(b) // #nosec G203 -- json.Marshal escapes <, > and &; see above
 	},
 	"deref": func(p *int) int {
 		if p == nil {
@@ -218,8 +225,10 @@ func handleIndex(w http.ResponseWriter, r *http.Request) {
 		// MaxAge, otherwise the choice is a session cookie and the UI silently
 		// reverts to Spanish next time the browser is restarted, unlike every
 		// other setting.
+		// #nosec G124 -- Secure mirrors sessionCookieFor; see the note there.
 		http.SetCookie(w, &http.Cookie{Name: "lang", Value: lang, Path: "/",
-			MaxAge: int((365 * 24 * time.Hour).Seconds()), SameSite: http.SameSiteStrictMode})
+			MaxAge: int((365 * 24 * time.Hour).Seconds()), SameSite: http.SameSiteStrictMode,
+			HttpOnly: true, Secure: listenTLS})
 	}
 	render(w, "report.html", map[string]any{"T": strings_(lang), "Lang": lang, "Admin": elevated,
 		"RefreshSecs": refreshSecs.Load(), "NoTray": noTrayMode})
@@ -406,7 +415,10 @@ func handleKill(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var body struct{ PID int }
-	if json.NewDecoder(r.Body).Decode(&body) != nil || body.PID <= 0 {
+	// The upper bound matters: PID is an int from JSON and int32() below would
+	// wrap a huge value round into a different, valid PID — killing a process the
+	// caller never named.
+	if json.NewDecoder(r.Body).Decode(&body) != nil || body.PID <= 0 || body.PID > math.MaxInt32 {
 		http.Error(w, `{"ok":false,"error":"invalid pid"}`, 400)
 		return
 	}

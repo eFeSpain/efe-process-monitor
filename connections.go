@@ -253,6 +253,8 @@ func fileHash(path string) string {
 	}
 	hashMu.Unlock()
 
+	// #nosec G304 -- hashing a binary by path is the whole job here; the path comes
+	// from the OS process table (p.Exe()), not from a request.
 	f, err := os.Open(path)
 	if err != nil {
 		return ""
