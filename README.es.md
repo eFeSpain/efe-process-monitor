@@ -64,6 +64,11 @@ no para atacar a otros.
   proveedores se atenúan para reducir falsas alarmas.
 
 **Monitorización en vivo**
+- **Caudal de datos por proceso** (bytes/s, muestreado por el monitor) con marca
+  cuando la salida es sostenida. Solo puntúa combinado con un motivo independiente
+  para desconfiar del binario — el caudal por sí solo es lo que parece una descarga
+  o una copia de seguridad. En Linux se descuenta el I/O a disco y se aproxima al
+  tráfico de red; en Windows el sistema no permite separarlo e incluye disco.
 - Feed por SSE de conexiones nuevas/cerradas y procesos nuevos, heurísticas de
   **beaconing/C2** (conexiones regulares al mismo host), anomalías de binario nuevo
   y **notificaciones de escritorio** opcionales.

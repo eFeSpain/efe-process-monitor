@@ -99,6 +99,21 @@ var scoreCorpus = []struct {
 		},
 	},
 
+	{
+		// Volume alone is not a signal: this is what a download, a backup or a
+		// video call looks like, and weighting it would repeat the mistake the
+		// path and port signals used to make.
+		name: "signed app streaming data out at 8 MB/s",
+		want: benign,
+		conn: Conn{
+			VT: "0", Exe: `C:\Program Files\Backup\agent.exe`,
+			Sig:        Signature{Status: "Valid", Signer: "Acme Ltd", Trusted: true},
+			RemoteIP:   "3.5.20.1",
+			Enrich:     &Enrichment{ISP: "Amazon", Provider: "Amazon"},
+			HighEgress: true, RateOut: 8 << 20,
+		},
+	},
+
 	// ── Notable: worth a glance ────────────────────────────────────────────────
 	{
 		name: "unsigned self-built tool, clean reputation",
@@ -167,6 +182,21 @@ var scoreCorpus = []struct {
 			Sig:      Signature{Status: "Valid", Signer: "Acme Ltd", Trusted: true},
 			RemoteIP: "193.0.0.1",
 			Enrich:   &Enrichment{Spamhaus: true, AbuseScore: iptr(70)},
+		},
+	},
+
+	{
+		// The same traffic as the benign case above, but from a binary in a
+		// staging directory: that combination is the exfiltration shape.
+		name: "unsigned binary in temp streaming data out",
+		want: suspicious,
+		conn: Conn{
+			VT: "NOT_IN_VT", Exe: `C:\Users\efe\AppData\Local\Temp\svc.exe`,
+			Suspicious: true,
+			Sig:        Signature{Status: "NotSigned"},
+			RemoteIP:   "45.9.148.20",
+			Enrich:     &Enrichment{},
+			HighEgress: true, RateOut: 2 << 20,
 		},
 	},
 

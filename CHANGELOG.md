@@ -6,6 +6,55 @@ Versions follow [Semantic Versioning](https://semver.org/).
 
 ---
 
+## [Unreleased] — data-volume signal, real ACLs on the secrets
+
+### Added
+- **Data-volume signal.** The process I/O counters were already being read and
+  displayed and then used for nothing. `volume.go` now tracks the per-process
+  rate between monitor samples and flags a sustained outbound flow.
+
+  What the numbers are, because it bounds the claim: on Linux `rchar`/`wchar`
+  minus the block-device totals isolates non-disk traffic, which is a reasonable
+  proxy for network egress; on Windows `GetProcessIoCounters` lumps file, network
+  and device I/O together with no way to separate them. Neither platform
+  attributes bytes to a connection, so this is per-process and cannot prove where
+  the data went. The UI says all of this in the tooltip.
+
+  **Volume scores nothing on its own** — a download, a backup and a video call all
+  move data, and weighting that would repeat the mistake the path and port signals
+  used to make. It adds to the score only when the binary is already suspect for
+  an independent reason (staging path, anomalous spawn chain, malware port), which
+  is the actual exfiltration shape. Pinned in the corpus both ways: a signed app
+  at 8 MB/s scores 0, an unsigned binary in Temp at 2 MB/s scores 65.
+
+### Security
+- **The token file and the TLS private key now get a real ACL on Windows.**
+  `os.WriteFile(..., 0600)` is a no-op there — Go maps the mode to the read-only
+  attribute and nothing else — so both files simply inherited the directory ACL
+  and were readable by any process running as this user. For the local access
+  token that is precisely the principal the gate exists to exclude.
+
+  `writeSecretFile` now applies an explicit ACL. The set depends on elevation,
+  because elevating on Windows does **not** change your SID: an elevated and a
+  non-elevated process of the same account share it, so granting "the current
+  user" would leave the hole open. What differs is that the Administrators group
+  is deny-only in a non-elevated token.
+
+  - elevated → Administrators + SYSTEM. A non-elevated same-user process is
+    refused, which closes the escalation path. Verified by applying the ACL and
+    confirming a non-elevated read fails with `Permission denied`.
+  - not elevated → the current user only. Cannot do better without locking
+    ourselves out, but other users of the machine are shut out — the equivalent of
+    0600 on Unix.
+
+  The startup banner now prints who can read the token, and warns explicitly when
+  running unelevated on Windows means a same-user process could still read it.
+  Documented in the code: there is a one-syscall window between creating the file
+  and applying the ACL, because attaching a security descriptor at creation needs
+  `CreateFileW` with `SECURITY_ATTRIBUTES`, which Go's `os` package does not expose.
+
+---
+
 ## [Unreleased] — hostname correlation, risk timeline, release provenance, macOS
 
 ### Added

@@ -49,6 +49,15 @@ GOOS=darwin go build -o efemon .  # macOS
   `suspiciousAncestry` matches spawn patterns that should never occur (document/browser → script
   host, web server → shell) and feeds `wBadSpawn` into the score. Deliberately narrow: a broad rule
   here would swamp the score with false positives.
+- **volume.go** — per-process I/O rate sampled once per monitor cycle. On Linux the block-device
+  totals are subtracted from `rchar`/`wchar` to isolate non-disk traffic; on Windows
+  `GetProcessIoCounters` cannot separate file from network I/O, so the figure is weaker and the UI
+  says so. Not attributable to a connection. `wExfilCombo` only applies when an independent distrust
+  signal is already present — volume alone must never score.
+- **secure_windows.go / secure_other.go** — `writeSecretFile` for the local token and the TLS
+  private key. On Windows a 0600 mode is ignored by the OS, so an explicit ACL is applied; the
+  principal set depends on `elevated`, because elevating does not change the user's SID and only the
+  Administrators group distinguishes the two tokens. See the comment in `secure_windows.go`.
 - **hostnames.go** — `observeHostnames` harvests IP↔name bindings from each captured packet (TLS SNI
   and DNS answer records) into the `hostnames` table. SNI outranks DNS because the client declared
   it; both outrank reverse DNS, which the address owner controls. Only sees traffic while a capture

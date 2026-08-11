@@ -72,7 +72,10 @@ type Conn struct {
 	Untrusted   bool // runs from a downloads directory: weak signal
 	SuspPort    bool
 	Blockable   bool
-	Capturable  bool // has a public remote peer, so tshark has something to filter on
+	Capturable  bool    // has a public remote peer, so tshark has something to filter on
+	RateIn      float64 // bytes/sec inbound (see volume.go on what this measures)
+	RateOut     float64 // bytes/sec outbound
+	HighEgress  bool    // sustained outbound flow; informational unless combined
 	Sig         Signature
 	Whitelist   bool
 	IPWhitelist bool
@@ -600,6 +603,7 @@ const (
 	wSuspiciousPath  = 25.0 // temp / shared-memory / public dirs: malware staging
 	wUntrustedPath   = 8.0  // Downloads: weakly suspicious, extremely common
 	wMalwarePort     = 12.0 // a port still used by live tooling (Metasploit)
+	wExfilCombo      = 25.0 // sustained egress *from a binary already distrusted*
 )
 
 func threatScore(c *Conn) int {
@@ -637,6 +641,15 @@ func threatScore(c *Conn) int {
 	// signals computable without any external service.
 	if c.Details != nil && c.Details.BadSpawn != "" {
 		add(wBadSpawn, "cadena anómala ("+c.Details.BadSpawn+")")
+	}
+	// Volume never scores on its own: a download, a backup and a video call all
+	// move data. It scores when the binary was already suspect for an independent
+	// reason, because "this odd process is streaming data out" is a different
+	// claim from "this process is busy". See volume.go.
+	if c.HighEgress && (c.Suspicious || c.SuspPort ||
+		(c.Details != nil && c.Details.BadSpawn != "")) {
+		add(wExfilCombo, fmt.Sprintf("volumen de salida sostenido (%s/s) desde binario sospechoso",
+			humanRate(c.RateOut)))
 	}
 	switch c.Sig.Status {
 	case "NotSigned":
@@ -890,6 +903,9 @@ func analyzeConnections(hideSelf bool) []Conn {
 			conn.Enrich = enrichMap[conn.RemoteIP]
 		}
 		conn.Hostnames = hostMap[conn.RemoteIP]
+		if rate := rateFor(r.c.Pid); rate.In > 0 || rate.Out > 0 || rate.HighEgress {
+			conn.RateIn, conn.RateOut, conn.HighEgress = rate.In, rate.Out, rate.HighEgress
+		}
 		if isLAN(conn.RemoteIP) {
 			conn.LAN = lanMap[conn.RemoteIP]
 		}

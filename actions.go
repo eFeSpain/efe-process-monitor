@@ -155,7 +155,15 @@ func startupBanner() {
 		log.Println("[+] Login           ENABLED (password required)")
 	} else {
 		log.Println("[+] Login           disabled — local token gate active (only the browser this app opens can act)")
-		log.Printf("[+] Token           %s", filepath.Join(appDir, tokenFile))
+		tp := filepath.Join(appDir, tokenFile)
+		log.Printf("[+] Token           %s", tp)
+		// Print who can read it: this is the whole strength of the local gate, and
+		// on Windows it silently depends on whether we are elevated.
+		log.Printf("[+] Token ACL       %s", describeFileACL(tp))
+		if runtime.GOOS == "windows" && !elevated {
+			log.Println("[!] Token ACL       sin elevación solo se puede restringir al propio usuario:")
+			log.Println("[!]                 otro proceso del mismo usuario aún podría leer el token.")
+		}
 	}
 	if logPath != "" {
 		log.Printf("[+] Log             %s (rota a %d MiB, %d archivos)", logPath, logMaxBytes>>20, logKeep)

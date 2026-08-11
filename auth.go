@@ -132,7 +132,10 @@ func initLocalToken() {
 	}
 	localToken = hex.EncodeToString(b)
 	p := filepath.Join(appDir, tokenFile)
-	if err := os.WriteFile(p, []byte(localToken), 0o600); err != nil {
+	// writeSecretFile, not os.WriteFile: on Windows the 0600 mode is a no-op and
+	// the file would inherit the directory ACL, leaving it readable by any process
+	// running as this user — the very principal this gate exists to exclude.
+	if err := writeSecretFile(p, []byte(localToken)); err != nil {
 		// Not fatal: this run still works (we pass the token in the URL we open),
 		// only the second-instance handoff degrades.
 		log.Printf("[!] no se pudo escribir %s: %v", p, err)

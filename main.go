@@ -96,6 +96,7 @@ var funcMap = template.FuncMap{
 		}
 		return strings.Join(parts, sep)
 	},
+	"rate": humanRate,
 	"humanBytes": func(n uint64) string {
 		f := float64(n)
 		for _, u := range []string{"B", "KB", "MB", "GB", "TB"} {

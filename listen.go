@@ -153,10 +153,16 @@ func selfSignedCert() (tls.Certificate, error) {
 	if err != nil {
 		return tls.Certificate{}, err
 	}
-	// The certificate is public by definition, so 0644 is correct; the private key
-	// on the next line is the one that must stay 0600.
+	// The certificate is public by definition, so 0644 is correct.
 	// #nosec G306 -- public certificate, intentionally readable
-	os.WriteFile(cp, pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: der}), 0o644)
-	os.WriteFile(kp, pem.EncodeToMemory(&pem.Block{Type: "EC PRIVATE KEY", Bytes: keyDER}), 0o600)
+	if err := os.WriteFile(cp, pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: der}), 0o644); err != nil {
+		return tls.Certificate{}, err
+	}
+	// The private key goes through writeSecretFile: a 0600 mode is silently
+	// ignored on Windows, so the TLS key for the exposed-over-the-network mode was
+	// inheriting the directory ACL like any ordinary file.
+	if err := writeSecretFile(kp, pem.EncodeToMemory(&pem.Block{Type: "EC PRIVATE KEY", Bytes: keyDER})); err != nil {
+		return tls.Certificate{}, err
+	}
 	return tls.LoadX509KeyPair(cp, kp)
 }

@@ -61,6 +61,11 @@ attacking others.
   marked, and noisy reports on big providers are attenuated to cut false alarms.
 
 **Live monitoring**
+- **Data volume per process** (bytes/sec, sampled by the monitor) with a sustained
+  outbound flow flagged. It scores only in combination with an independent reason
+  to distrust the binary — volume alone is what a download or a backup looks like.
+  On Linux disk I/O is subtracted so it approximates network traffic; on Windows
+  the OS does not allow that split and the figure includes disk.
 - SSE feed of new/closed connections and new processes, **beaconing/C2**
   heuristics (regular connections to the same host), new-binary anomalies, and
   optional **desktop notifications**.

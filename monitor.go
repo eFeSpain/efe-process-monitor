@@ -239,6 +239,9 @@ func monitorLoop() {
 			lastPrune = time.Now()
 			pruneEvents()
 		}
+		// Refresh the per-process traffic rates. Only processes holding a socket
+		// are polled, which is exactly the set in the snapshot.
+		sampleProcessIO(snap)
 		now := float64(time.Now().UnixNano()) / 1e9
 		wl := whitelist()
 

@@ -39,6 +39,7 @@
         {{ if $d.BadSpawn }}<div class="detail-line"><span class="detail-label">⚠</span><span class="vt-bad" title="{{ $T.badspawn_hint }}">{{ $T.badspawn }}: {{ $d.BadSpawn }}</span></div>{{ end }}
         <div class="detail-line"><span class="detail-label">{{ $T.detail_start }}</span><span>{{ $d.CreateTime }}</span></div>
         <div class="detail-line"><span class="detail-label">I/O</span><span>{{ if $d.IOok }}↓ {{ humanBytes $d.IORead }} &nbsp; ↑ {{ humanBytes $d.IOWrite }}{{ else }}N/A{{ end }}</span></div>
+        {{ if or $c.RateOut $c.RateIn }}<div class="detail-line"><span class="detail-label" title="{{ $T.rate_hint }}">{{ $T.rate }}</span><span class="{{ if $c.HighEgress }}vt-bad{{ end }}">↓ {{ rate $c.RateIn }}/s &nbsp; ↑ {{ rate $c.RateOut }}/s{{ if $c.HighEgress }} ⚠{{ end }}</span></div>{{ end }}
         <div class="detail-line"><span class="detail-label">{{ $T.detail_conns_n }}</span><span>{{ $d.TotalConns }}</span></div>
         <div style="margin-top:6px;color:#8b949e;font-size:11px;">CMD:</div>
         <div class="cmdline-block">{{ $d.Cmdline }}</div>
