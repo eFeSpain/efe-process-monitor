@@ -26,12 +26,9 @@ func describeFileACL(path string) string {
 
 // writeSecretFile writes data with owner-only permissions.
 //
-// O_EXCL is not used: the file is rewritten on every start by design. The mode is
-// applied at creation by the kernel, so unlike the Windows path there is no window
-// where the file exists with wider permissions.
+// Delegates to writeFileAtomic, which creates a temp file, restricts it, and only
+// then renames it into place — so the secret never exists at its real path with
+// wider permissions, and a crash mid-write cannot truncate it.
 func writeSecretFile(path string, data []byte) error {
-	if err := os.WriteFile(path, data, 0o600); err != nil {
-		return err
-	}
-	return secureFile(path)
+	return writeFileAtomic(path, data, 0o600)
 }

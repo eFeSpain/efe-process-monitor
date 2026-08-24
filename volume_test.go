@@ -199,3 +199,46 @@ func TestSecretFileACLDropsInheritance(t *testing.T) {
 		}
 	}
 }
+
+// .env holds the VirusTotal and AbuseIPDB keys and the AUTH_HASH, so it is the
+// most valuable secret the app writes — more than the token or the TLS key. It
+// went through writeFileAtomic with a 0600 mode, which is a no-op on Windows, so
+// it was left readable by every process running as this user. This pins the fix.
+func TestEnvFileIsRestricted(t *testing.T) {
+	dir := t.TempDir()
+	old := envPath
+	envPath = filepath.Join(dir, ".env")
+	t.Cleanup(func() { envPath = old })
+
+	writeEnv(map[string]string{"VT_API_KEY": "secret-key-value", "AUTH_HASH": "hash"})
+
+	body, err := os.ReadFile(envPath)
+	if err != nil {
+		t.Fatalf("writeEnv produced no file: %v", err)
+	}
+	if !strings.Contains(string(body), "VT_API_KEY=secret-key-value") {
+		t.Errorf("key not written: %q", body)
+	}
+
+	if runtime.GOOS == "windows" {
+		acl := describeFileACL(envPath)
+		t.Logf(".env ACL: %s (elevated=%v)", acl, elevated)
+		for _, broad := range []string{"Everyone", "Todos", `BUILTIN\Users`, "Usuarios"} {
+			if strings.Contains(acl, broad) {
+				t.Errorf(".env still grants %q: %s", broad, acl)
+			}
+		}
+		// Inheritance must be gone: that is what was granting the user's own SID.
+		if strings.Count(acl, ",") > 2 {
+			t.Errorf("expected a narrow ACL, got: %s", acl)
+		}
+	} else {
+		fi, err := os.Stat(envPath)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if perm := fi.Mode().Perm(); perm != 0o600 {
+			t.Errorf(".env mode = %#o, want 0600", perm)
+		}
+	}
+}

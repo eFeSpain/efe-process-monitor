@@ -194,5 +194,14 @@ func writeFileAtomic(path string, data []byte, perm os.FileMode) error {
 	if err := os.Chmod(tmp, perm); err != nil {
 		return err
 	}
+	// The mode above is ignored on Windows, so a 0600 file is only genuinely
+	// private once an ACL is applied. Applying it to the *temp* file means the
+	// data is never visible at its real path unprotected — a stronger guarantee
+	// than write-then-lock, which leaves a window.
+	if perm == 0o600 {
+		if err := secureFile(tmp); err != nil {
+			return err
+		}
+	}
 	return os.Rename(tmp, path)
 }

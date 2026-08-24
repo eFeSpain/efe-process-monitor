@@ -83,14 +83,13 @@ func describeFileACL(path string) string {
 	return strings.Join(who, ", ")
 }
 
-// writeSecretFile writes data and then locks the file down.
+// writeSecretFile writes data and locks the file down before it is visible.
 //
-// The order matters and is not ideal: there is a brief window between creation
-// and the ACL being applied. Closing it properly means creating the handle with a
-// security descriptor already attached (CreateFileW with SECURITY_ATTRIBUTES),
-// which Go's os package does not expose. The window is one syscall wide on a file
-// whose name an attacker must already be racing, and the alternative is hand-rolled
-// syscall code in the startup path; documented rather than pretended away.
+// It delegates to writeFileAtomic, which applies the ACL to a temp file and only
+// then renames it into place. That ordering matters: an earlier version wrote the
+// file and locked it afterwards, leaving a window where the secret sat at its real,
+// predictable path with the directory's inherited ACL. The remaining exposure is a
+// temp file with a random suffix, which is a much harder target than "efemon-token".
 func writeSecretFile(path string, data []byte) error {
 	// Remove any pre-existing file first: if a previous elevated run locked it to
 	// Administrators and this run is not elevated, the write below would fail and
@@ -100,8 +99,5 @@ func writeSecretFile(path string, data []byte) error {
 			log.Printf("[!] no se pudo eliminar %s antes de reescribirlo: %v", path, err)
 		}
 	}
-	if err := os.WriteFile(path, data, 0o600); err != nil {
-		return err
-	}
-	return secureFile(path)
+	return writeFileAtomic(path, data, 0o600)
 }
