@@ -164,6 +164,20 @@ VT_API_KEY=tu_clave_de_virustotal
 ABUSEIPDB_API_KEY=tu_clave_de_abuseipdb
 ```
 
+> **El `.env` tiene que estar junto al binario.** Las versiones anteriores también
+> lo buscaban en el directorio actual y en el padre, lo que hacía que lanzar el
+> binario desde dentro de otro proyecto leyera *y reescribiera* el `.env` de ese
+> proyecto, metiéndole tus claves de API y el `AUTH_HASH`. Ese fallback ahora
+> requiere `EFEMON_DEV=1`. Si tras actualizar tus claves aparecen de golpe como
+> «no configuradas», es por esto — mueve el `.env` junto al ejecutable, o define
+> `EFEMON_DEV=1` para mantener la distribución antigua.
+
+El fichero contiene tus claves de API y, si pones contraseña, su hash. Se escribe
+con permisos solo para el propietario — en Windows eso significa una ACL explícita,
+porque el modo de fichero de Unix allí se ignora. Un `.env` creado a mano **no**
+recibe ese tratamiento hasta que la app lo reescriba; `icacls <fichero>
+/inheritance:r /grant:r "*<tu-SID>:F"` lo aplica ya.
+
 Geolocalización, Tor, Feodo/ThreatFox, Spamhaus y Shodan funcionan **sin clave**.
 Sin las de VirusTotal/AbuseIPDB, esas dos simplemente se omiten.
 
