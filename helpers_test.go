@@ -1,6 +1,9 @@
 package main
 
-import "testing"
+import (
+	"strings"
+	"testing"
+)
 
 func TestIsPrivateIP(t *testing.T) {
 	cases := map[string]bool{
@@ -87,20 +90,57 @@ func TestIsSuspiciousPath(t *testing.T) {
 
 func TestPortLabel(t *testing.T) {
 	// suspicious port wins and flags
-	if name, susp := portLabel(4444, 0); !susp || name != "Metasploit/Meterpreter" {
-		t.Errorf("portLabel(4444,0)=(%q,%v)", name, susp)
+	if name, susp, legacy := portLabel(4444, 0); !susp || legacy || name != "Metasploit/Meterpreter" {
+		t.Errorf("portLabel(4444,0)=(%q,%v,%v)", name, susp, legacy)
+	}
+	// a legacy RAT port is labelled and marked, but never scores
+	if name, susp, legacy := portLabel(31337, 0); susp || !legacy || name != "Back Orifice (RAT)" {
+		t.Errorf("portLabel(31337,0)=(%q,%v,%v)", name, susp, legacy)
 	}
 	// known service, not suspicious
-	if name, susp := portLabel(443, 0); susp || name != "HTTPS" {
-		t.Errorf("portLabel(443,0)=(%q,%v)", name, susp)
+	if name, susp, legacy := portLabel(443, 0); susp || legacy || name != "HTTPS" {
+		t.Errorf("portLabel(443,0)=(%q,%v,%v)", name, susp, legacy)
 	}
 	// remote known port used when local unknown
-	if name, susp := portLabel(50000, 53); susp || name != "DNS" {
+	if name, susp, _ := portLabel(50000, 53); susp || name != "DNS" {
 		t.Errorf("portLabel(50000,53)=(%q,%v)", name, susp)
 	}
 	// nothing known
-	if name, susp := portLabel(50000, 50001); susp || name != "—" {
+	if name, susp, _ := portLabel(50000, 50001); susp || name != "—" {
 		t.Errorf("portLabel(unknown)=(%q,%v)", name, susp)
+	}
+}
+
+// Port labels are data shown in every language, so they must carry no prose of
+// their own — the legacy note is rendered from i18n via LegacyPort.
+func TestPortLabelsAreLanguageNeutral(t *testing.T) {
+	for port, name := range legacyMalwarePorts {
+		if strings.Contains(name, "histórico") || strings.Contains(name, "legacy") {
+			t.Errorf("port %d label %q carries a language-specific note", port, name)
+		}
+	}
+}
+
+// The Linux firewall helpers are split by address family; picking the v4 tool
+// for a v6 address is a silent "Block IP" failure.
+func TestFirewallFamily(t *testing.T) {
+	for ip, v6 := range map[string]bool{
+		"8.8.8.8": false, "192.168.1.1": false, "::ffff:1.2.3.4": false,
+		"2001:4860:4860::8888": true, "fe80::1": true, "::1": true,
+	} {
+		if got := isIPv6(ip); got != v6 {
+			t.Errorf("isIPv6(%q) = %v, want %v", ip, got, v6)
+		}
+		wantTool, wantSet := "iptables", "blocked"
+		if v6 {
+			wantTool, wantSet = "ip6tables", "blocked6"
+		}
+		if got := iptablesFor(ip); got != wantTool {
+			t.Errorf("iptablesFor(%q) = %q, want %q", ip, got, wantTool)
+		}
+		if got := nftSetFor(ip); got != wantSet {
+			t.Errorf("nftSetFor(%q) = %q, want %q", ip, got, wantSet)
+		}
 	}
 }
 

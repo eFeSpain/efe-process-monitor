@@ -18,7 +18,16 @@ Versions follow [Semantic Versioning](https://semver.org/).
   and also pin the `%` verb count per key, so a translation that drops a `%s`
   cannot print `%!(EXTRA …)` into a tooltip.
 
+### Fixed
+- **Blocking an IPv6 peer on Linux failed.** `iptables -d <v6>` errors out and
+  the nft set was `ipv4_addr`, so "Block IP" on any IPv6 remote returned an
+  error (Windows `netsh` was fine). Linux now picks `ip6tables` and a second
+  `ipv6_addr` set by address family.
+
 ### Changed
+- Legacy malware-port labels (`SubSeven (RAT, histórico)`…) carried a Spanish
+  note inside the data. The label is now the name only, and the "legacy, never
+  scores" note is rendered from i18n next to it with its own tooltip.
 - **The score breakdown is no longer Spanish-only.** `threatScore` emits
   reason keys with arguments; the tooltip renders them in the active language
   and `score_history` stores the neutral encoding, so the risk timeline reads

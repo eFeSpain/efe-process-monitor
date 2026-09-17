@@ -90,12 +90,16 @@ func TestRowsTemplateExecutes(t *testing.T) {
 		Port: 5353, Status: "UDP-BOUND", Process: "mDNSResponder", Exe: "/usr/sbin/mdns",
 		Known: "mDNS", VT: "NOT_IN_VT", Sig: Signature{Status: "Packaged", Signer: "avahi", Trusted: true},
 	}
+	legacy := Conn{
+		Port: 31337, Status: "LISTEN", Process: "devserver", Exe: "/opt/dev/server",
+		Known: "Back Orifice (RAT)", LegacyPort: true, VT: "NOT_IN_VT",
+	}
 
 	for _, lang := range testLangs {
 		var sb strings.Builder
 		data := map[string]any{
 			"T":     strings_(lang),
-			"Conns": []Conn{full, udp, bare, bound},
+			"Conns": []Conn{full, udp, bare, bound, legacy},
 		}
 		if err := tm.ExecuteTemplate(&sb, "rows.html", data); err != nil {
 			t.Fatalf("rows.html [%s]: %v", lang, err)
@@ -105,6 +109,7 @@ func TestRowsTemplateExecutes(t *testing.T) {
 			"suspicious.exe", "UDP", "UDP-BOUND", "Cobalt Strike",
 			`class="udp"`,                // the bound-UDP row must get its own state class
 			"12.5 %", "150 MB", "SYSTEM", // the resource column and its detail line
+			"Back Orifice (RAT) <span class=\"vt-na\"", // legacy port label plus the localized note
 		} {
 			if !strings.Contains(out, want) {
 				t.Errorf("rows.html [%s] missing %q", lang, want)

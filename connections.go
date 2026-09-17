@@ -75,6 +75,7 @@ type Conn struct {
 	Suspicious    bool // runs from a staging directory (temp, public, /dev/shm)
 	Untrusted     bool // runs from a downloads directory: weak signal
 	SuspPort      bool
+	LegacyPort    bool // a RAT/worm default from decades ago: labelled, never scored
 	Blockable     bool
 	Capturable    bool    // has a public remote peer, so tshark has something to filter on
 	RateIn        float64 // bytes/sec inbound (see volume.go on what this measures)
@@ -165,33 +166,33 @@ var stagingPaths = []string{
 // perfectly ordinary machine showed a wall of amber rows.
 var untrustedPaths = []string{`\downloads`, `/downloads`}
 
-// portLabel resolves the protocol label and whether it should score. A legacy
-// RAT port still gets its label (useful context) but returns false, so it adds
-// nothing to the threat score.
-func portLabel(lport, rport uint32) (string, bool) {
+// portLabel resolves the protocol label, whether it should score, and whether
+// it is a legacy malware port: labelled as useful context, scored zero, and
+// marked so the UI can say why.
+func portLabel(lport, rport uint32) (label string, scores, legacy bool) {
 	for _, p := range [2]uint32{lport, rport} {
 		if p != 0 {
 			if name, ok := scoringMalwarePorts[p]; ok {
-				return name, true
+				return name, true, false
 			}
 		}
 	}
 	for _, p := range [2]uint32{lport, rport} {
 		if p != 0 {
 			if name, ok := legacyMalwarePorts[p]; ok {
-				return name, false // labelled, not scored
+				return name, false, true
 			}
 		}
 	}
 	if name, ok := knownPorts[lport]; ok {
-		return name, false
+		return name, false, false
 	}
 	if rport != 0 {
 		if name, ok := knownPorts[rport]; ok {
-			return name, false
+			return name, false, false
 		}
 	}
-	return "—", false
+	return "—", false, false
 }
 
 func pathKnown(p string) bool {
@@ -968,7 +969,7 @@ func analyzeConnections(hideSelf bool) []Conn {
 
 	out := make([]Conn, 0, len(rows))
 	for _, r := range rows {
-		known, suspPort := portLabel(r.c.Laddr.Port, r.c.Raddr.Port)
+		known, suspPort, legacyPort := portLabel(r.c.Laddr.Port, r.c.Raddr.Port)
 		vt := vtMap[r.exe]
 		conn := Conn{
 			Port:        r.c.Laddr.Port,
@@ -986,6 +987,7 @@ func analyzeConnections(hideSelf bool) []Conn {
 			Suspicious:  isSuspiciousPath(r.exe),
 			Untrusted:   isUntrustedPath(r.exe),
 			SuspPort:    suspPort,
+			LegacyPort:  legacyPort,
 			Blockable:   isBlockable(r.c.Raddr.IP),
 			Sig:         sigMap[r.exe],
 			Whitelist:   wl[r.exe],

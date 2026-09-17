@@ -69,20 +69,23 @@ var scoringMalwarePorts = map[uint32]string{
 // generator: 1337 and 12345 are ordinary development ports today, and nothing has
 // spoken Bagle or Sasser since the mid-2000s. Labelling without scoring keeps the
 // information and drops the noise.
+//
+// The labels are the malware's name only; the "legacy, no longer scores" note is
+// rendered by the UI from the port_legacy* keys, so it follows the language.
 var legacyMalwarePorts = map[uint32]string{
-	1243:  "SubSeven (RAT, histórico)",
-	1337:  "backdoor leet (histórico; hoy puerto de desarrollo)",
-	2745:  "Bagle (worm, histórico)",
-	3127:  "MyDoom (worm, histórico)",
-	5554:  "Sasser (worm, histórico)",
-	6711:  "SubSeven (RAT, histórico)",
-	6776:  "SubSeven (RAT, histórico)",
-	9898:  "Dabber (worm, histórico)",
-	12345: "NetBus (RAT, histórico; hoy puerto de desarrollo)",
-	12346: "NetBus (RAT, histórico)",
-	20034: "NetBus 2 (RAT, histórico)",
-	27374: "SubSeven (RAT, histórico)",
-	31337: "Back Orifice (RAT, histórico)",
-	54321: "Back Orifice 2000 (histórico)",
-	65506: "PhatBot (histórico)",
+	1243:  "SubSeven (RAT)",
+	1337:  "backdoor leet",
+	2745:  "Bagle (worm)",
+	3127:  "MyDoom (worm)",
+	5554:  "Sasser (worm)",
+	6711:  "SubSeven (RAT)",
+	6776:  "SubSeven (RAT)",
+	9898:  "Dabber (worm)",
+	12345: "NetBus (RAT)",
+	12346: "NetBus (RAT)",
+	20034: "NetBus 2 (RAT)",
+	27374: "SubSeven (RAT)",
+	31337: "Back Orifice (RAT)",
+	54321: "Back Orifice 2000",
+	65506: "PhatBot",
 }

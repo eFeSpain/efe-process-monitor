@@ -14,7 +14,7 @@
     <td><strong>{{ $c.Process }}</strong>{{ if $c.Whitelist }} <span class="badge-wl" title="whitelist">✓</span>{{ end }}</td>
     <td data-sort="{{ if $c.ResOK }}{{ pct $c.CPU }}{{ else }}-1{{ end }}" title="{{ $T.res_hint }}">{{ if $c.ResOK }}<span class="res-cpu{{ if ge $c.CPU 50.0 }} res-hot{{ end }}">{{ pct $c.CPU }} %</span> <span class="res-mem">{{ mem $c.RSS }}</span>{{ else }}<span class="vt-na">—</span>{{ end }}</td>
     <td>{{ if $okd }}{{ $d.ParentName }}{{ else }}—{{ end }}</td>
-    <td>{{ if $c.SuspPort }}<span class="vt-bad" title="{{ $T.malware_port_t }}">⚠ {{ $c.Known }}</span>{{ else }}{{ $c.Known }}{{ end }}</td>
+    <td>{{ if $c.SuspPort }}<span class="vt-bad" title="{{ $T.malware_port_t }}">⚠ {{ $c.Known }}</span>{{ else }}{{ $c.Known }}{{ if $c.LegacyPort }} <span class="vt-na" title="{{ $T.port_legacy_t }}">({{ $T.port_legacy }})</span>{{ end }}{{ end }}</td>
     <td data-sort="{{ $c.VT }}">
         {{ if or (eq $c.VT "N/A") (eq $c.VT "RATE_LIMITED") (eq $c.VT "NOT_IN_VT") (eq $c.VT "no_hash") (eq $c.VT "PENDING") }}<span class="vt-na">{{ $c.VT }}</span>
         {{ else }}<span class="{{ if eq $c.VT "0" }}vt-ok{{ else }}vt-bad{{ end }}">{{ $c.VT }}/{{ $c.Undetected }}</span>{{ end }}
