@@ -155,6 +155,9 @@ func openBrowser(url string) {
 		cmd = command("open", url)
 	default:
 		cmd = command("xdg-open", url)
+		// As root there is no display in our environment and the browser would
+		// run as root anyway; hand it to the logged-in user's session.
+		runAsDesktopUser(cmd)
 	}
 	_ = cmd.Start()
 }

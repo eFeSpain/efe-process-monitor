@@ -19,15 +19,21 @@ var trayIcon []byte
 // D-Bus, which is required for tray icons to work (KDE native; GNOME needs the
 // AppIndicator extension; XFCE/MATE/Cinnamon have it built in).
 func hasTraySupport() bool {
+	// Each step is logged on failure: "no tray" has three different causes
+	// (no bus, the bus refusing this uid, a bus with no tray host) and they
+	// call for three different fixes.
 	conn, err := dbus.SessionBusPrivate()
 	if err != nil {
+		log.Printf("[tray] sin bus de sesión (%s): %v", os.Getenv("DBUS_SESSION_BUS_ADDRESS"), err)
 		return false
 	}
 	defer conn.Close()
 	if err = conn.Auth(nil); err != nil {
+		log.Printf("[tray] el bus de sesión rechaza la autenticación de uid=%d: %v", os.Getuid(), err)
 		return false
 	}
 	if err = conn.Hello(); err != nil {
+		log.Printf("[tray] Hello en el bus de sesión falló: %v", err)
 		return false
 	}
 	obj := conn.Object("org.freedesktop.DBus", "/org/freedesktop/DBus")
@@ -36,17 +42,33 @@ func hasTraySupport() bool {
 		"org.freedesktop.StatusNotifierWatcher",
 	} {
 		var hasOwner bool
-		if err := obj.Call("org.freedesktop.DBus.NameHasOwner", 0, name).Store(&hasOwner); err == nil && hasOwner {
+		err := obj.Call("org.freedesktop.DBus.NameHasOwner", 0, name).Store(&hasOwner)
+		if err == nil && hasOwner {
 			return true
+		}
+		if err != nil {
+			log.Printf("[tray] NameHasOwner(%s) falló: %v", name, err)
 		}
 	}
 	return false
 }
 
 func runApp(ln net.Listener, url string) {
-	// Detect tray support before starting the server so noTrayMode is set
-	// before the first HTTP request arrives.
-	if !hasTraySupport() {
+	// Decide the tray before starting the server, so noTrayMode is set before
+	// the first HTTP request arrives.
+	viaHelper := false
+	if os.Geteuid() == 0 {
+		// Root cannot join the user's session bus (see desktop_linux.go): the
+		// icon is shown by a helper copy running as the logged-in user.
+		if s := desktopUser(); s == nil {
+			noTrayMode, noTrayRoot = true, true
+		} else if spawnTrayHelper(tokenURL(url, localToken), s) {
+			viaHelper = true
+			log.Printf("[tray] icono mostrado en la sesión de %s (uid=%d)", s.name, s.uid)
+		} else {
+			noTrayMode = true
+		}
+	} else if !hasTraySupport() {
 		noTrayMode = true
 	}
 
@@ -56,34 +78,47 @@ func runApp(ln net.Listener, url string) {
 		}
 	}()
 
+	if viaHelper {
+		select {} // the helper relays Quit; the server runs in the goroutine above
+	}
 	if noTrayMode {
-		log.Println("[tray] Icono de bandeja no disponible en este entorno.")
-		log.Println("[tray] En GNOME instala: AppIndicator and KStatusNotifierItem Support")
+		if noTrayRoot {
+			log.Println("[tray] Icono de bandeja no disponible: root sin sesión gráfica de usuario identificable (SUDO_UID / PKEXEC_UID).")
+			log.Println("[tray] Lánzalo con sudo desde tu sesión de escritorio.")
+		} else {
+			log.Println("[tray] Icono de bandeja no disponible: no hay StatusNotifierWatcher en el bus de sesión.")
+			log.Println("[tray] Si usas GNOME, instala: AppIndicator and KStatusNotifierItem Support")
+		}
 		log.Println("[tray] El botón 'Detener servicio' está disponible en el panel web.")
 		select {} // block; server runs in the goroutine above
 	}
 
-	systray.Run(func() { trayReady(url) }, func() {})
+	runTray(func() { openDashboard(url) }, func() {})
 }
 
-func trayReady(url string) {
-	systray.SetIcon(trayIcon)
-	systray.SetTitle("eFe Process Monitor")
-	systray.SetTooltip("eFe Process Monitor — " + url)
+// runTray shows the icon and blocks. open runs on "Open panel"; quit runs on
+// "Quit", right before the process exits.
+func runTray(open, quit func()) {
+	systray.Run(func() {
+		systray.SetIcon(trayIcon)
+		systray.SetTitle("eFe Process Monitor")
+		systray.SetTooltip("eFe Process Monitor")
 
-	mOpen := systray.AddMenuItem("Abrir panel / Open", "Abrir el panel en el navegador")
-	systray.AddSeparator()
-	mQuit := systray.AddMenuItem("Detener / Quit", "Detener el monitor y salir")
+		mOpen := systray.AddMenuItem("Abrir panel / Open", "Abrir el panel en el navegador")
+		systray.AddSeparator()
+		mQuit := systray.AddMenuItem("Detener / Quit", "Detener el monitor y salir")
 
-	go func() {
-		for {
-			select {
-			case <-mOpen.ClickedCh:
-				openDashboard(url)
-			case <-mQuit.ClickedCh:
-				systray.Quit()
-				os.Exit(0)
+		go func() {
+			for {
+				select {
+				case <-mOpen.ClickedCh:
+					open()
+				case <-mQuit.ClickedCh:
+					quit()
+					systray.Quit()
+					os.Exit(0)
+				}
 			}
-		}
-	}()
+		}()
+	}, func() {})
 }

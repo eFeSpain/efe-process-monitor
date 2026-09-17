@@ -190,7 +190,7 @@ select{background:#0d1117;color:#c9d1d9;border:1px solid #30363d;padding:3px 6px
 </div>
 
 {{ if not .Admin }}<div class="admin-warn">⚠ {{ .T.admin_warn }}</div>{{ end }}
-{{ if .NoTray }}<div class="notray-warn"><span>⚠ {{ .T.notray_warn }}</span><button class="btn btn-stop" style="padding:3px 12px;font-size:12px;white-space:nowrap;" onclick="stopService()">{{ .T.notray_stop }}</button><span id="stop-msg" style="font-size:11px;color:#8b949e;"></span></div>{{ end }}
+{{ if .NoTray }}<div class="notray-warn"><span>⚠ {{ if .NoTrayRoot }}{{ .T.notray_root }}{{ else }}{{ .T.notray_warn }}{{ end }}</span><button class="btn btn-stop" style="padding:3px 12px;font-size:12px;white-space:nowrap;" onclick="stopService()">{{ .T.notray_stop }}</button><span id="stop-msg" style="font-size:11px;color:#8b949e;"></span></div>{{ end }}
 
 <div class="live-panel">
     <div class="live-head">

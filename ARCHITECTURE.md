@@ -165,7 +165,12 @@ GOOS=darwin go build -o efemon .  # macOS
   `localizeBreakdown(lang, code)` renders them through the `bd_*` keys at display time.
   `langFrom` also records `uiLang` (guarded global) so background goroutines can localize via
   `currentLang()` — the live monitor uses it to emit **desktop notifications in the selected language**.
-- **tray_windows.go / tray_other.go** — `runApp`: Windows = systray icon + menu (Open/Quit); else headless.
+- **tray_windows.go / tray_linux.go / tray_other.go** — `runApp`: Windows = systray icon + menu (Open/Quit);
+  Linux = same over SNI/D-Bus when a `StatusNotifierWatcher` exists; else headless.
+- **desktop_linux.go** — root cannot join the user's session bus, so as root every desktop
+  interaction runs *as the logged-in user*: `runAsDesktopUser(cmd)` sets credentials + session env
+  (from `/proc/<pid>/environ`) for `xdg-open`/`notify-send`, and `spawnTrayHelper` runs a copy of
+  the binary with `--tray-helper` (URL over stdin, "ready|notray|quit" over stdout) to show the icon.
 - **tools/genicon/** — generates `web/static/icon.{ico,png}` from the hexagon design. `versioninfo.json`
   + `resource_windows.syso` embed the icon into the .exe (goversioninfo).
 - **tools/genoui/** — builds `ouidata.gz` by merging the IEEE MA-L/MA-M/MA-S CSVs (downloads all three,

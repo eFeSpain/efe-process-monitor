@@ -91,7 +91,9 @@ func sendNotification(title, message string) {
 			args = append(args, "-i", ic)
 		}
 		args = append(args, title, message)
-		if command("notify-send", args...).Start() == nil {
+		c := command("notify-send", args...)
+		runAsDesktopUser(c) // the notification daemon is on the user's session bus, closed to root
+		if c.Start() == nil {
 			return
 		}
 		log.Printf("NOTIFY: %s — %s", title, message)

@@ -19,6 +19,22 @@ Versions follow [Semantic Versioning](https://semver.org/).
   cannot print `%!(EXTRA …)` into a tooltip.
 
 ### Fixed
+- **Run as root on Linux: no tray icon, no desktop notifications, and the
+  browser never opened.** All three had one cause: `sudo` strips the
+  graphical session from the environment, and the session D-Bus only admits
+  the uid that owns it (dbus-daemon(1)), so root cannot borrow it either.
+  The tray check failed and the panel showed the "install the GNOME
+  extension" hint on a KDE desktop with a perfectly good tray.
+
+  Desktop work is now done *as the logged-in user*: `xdg-open` and
+  `notify-send` are spawned with that user's credentials and session
+  environment (read from a process of theirs: `WAYLAND_DISPLAY`, `DISPLAY`,
+  `XAUTHORITY`, the bus address), and the tray icon is shown by a helper copy
+  of the binary run the same way (`--tray-helper`), which receives the
+  dashboard URL over stdin and relays "Quit" over stdout. The user is
+  `SUDO_UID`/`PKEXEC_UID`, or the only user with a session bus. When no
+  session can be identified, the panel says that instead of blaming the
+  desktop.
 - **Blocking an IPv6 peer on Linux failed.** `iptables -d <v6>` errors out and
   the nft set was `ipv4_addr`, so "Block IP" on any IPv6 remote returned an
   error (Windows `netsh` was fine). Linux now picks `ip6tables` and a second

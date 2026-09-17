@@ -32,6 +32,7 @@ var staticFS embed.FS
 var tmpl *template.Template
 var elevated bool
 var noTrayMode bool
+var noTrayRoot bool // noTrayMode because root found no user session to show it in, not because the desktop lacks a tray
 
 // appDir is the directory of the executable; the DB and .env live there so the
 // app behaves the same regardless of the working directory it's launched from.
@@ -114,6 +115,11 @@ var funcMap = template.FuncMap{
 }
 
 func main() {
+	// A helper copy showing the tray icon in the user's session (Linux, when
+	// the main process is root). It must touch nothing below: no log, no DB.
+	if trayHelperMain() {
+		return
+	}
 	// DB and .env live next to the executable, so the app behaves the same
 	// wherever it's launched from.
 	//
@@ -239,7 +245,7 @@ func handleIndex(w http.ResponseWriter, r *http.Request) {
 			HttpOnly: true, Secure: listenTLS})
 	}
 	render(w, "report.html", map[string]any{"T": strings_(lang), "Lang": lang, "Admin": elevated,
-		"RefreshSecs": refreshSecs.Load(), "NoTray": noTrayMode})
+		"RefreshSecs": refreshSecs.Load(), "NoTray": noTrayMode, "NoTrayRoot": noTrayRoot})
 }
 
 func handleConnections(w http.ResponseWriter, r *http.Request) {
