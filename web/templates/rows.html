@@ -1,5 +1,5 @@
 {{ if not .Conns }}
-<tr><td colspan="11" class="loading-cell">{{ .T.no_connections }}</td></tr>
+<tr><td colspan="12" class="loading-cell">{{ .T.no_connections }}</td></tr>
 {{ end }}
 {{ $T := .T }}
 {{ range $i, $c := .Conns }}
@@ -12,6 +12,7 @@
     <td data-sort="{{ $c.PID }}">{{ if $c.PID }}{{ $c.PID }}{{ else }}—{{ end }}</td>
     <td class="{{ if eq $c.Status "ESTABLISHED" }}{{ if $hasRemote }}remote-yes{{ else }}established{{ end }}{{ else if eq $c.Status "UDP" }}{{ if $hasRemote }}remote-yes{{ else }}udp{{ end }}{{ else if eq $c.Status "UDP-BOUND" }}udp{{ else }}listen{{ end }}">{{ $c.Status }}</td>
     <td><strong>{{ $c.Process }}</strong>{{ if $c.Whitelist }} <span class="badge-wl" title="whitelist">✓</span>{{ end }}</td>
+    <td data-sort="{{ if $c.ResOK }}{{ pct $c.CPU }}{{ else }}-1{{ end }}" title="{{ $T.res_hint }}">{{ if $c.ResOK }}<span class="res-cpu{{ if ge $c.CPU 50.0 }} res-hot{{ end }}">{{ pct $c.CPU }} %</span> <span class="res-mem">{{ mem $c.RSS }}</span>{{ else }}<span class="vt-na">—</span>{{ end }}</td>
     <td>{{ if $okd }}{{ $d.ParentName }}{{ else }}—{{ end }}</td>
     <td>{{ if $c.SuspPort }}<span class="vt-bad" title="{{ $T.malware_port_t }}">⚠ {{ $c.Known }}</span>{{ else }}{{ $c.Known }}{{ end }}</td>
     <td data-sort="{{ $c.VT }}">
@@ -29,7 +30,7 @@
     <td>{{ if $c.Capturable }}<button class="btn btn-sniff" onclick="event.stopPropagation(); openCapture({{ $i }}, '{{ $c.LocalIP }}', '{{ $c.RemoteIP }}')">⬡ Sniff</button>{{ end }}</td>
 </tr>
 
-<tr id="d{{ $i }}" class="details-row" style="display:none"><td colspan="11">
+<tr id="d{{ $i }}" class="details-row" style="display:none"><td colspan="12">
     <div class="details-content">
     {{ if $okd }}
     <div class="detail-block">
@@ -40,6 +41,8 @@
         <div class="detail-line"><span class="detail-label">{{ $T.detail_start }}</span><span>{{ $d.CreateTime }}</span></div>
         <div class="detail-line"><span class="detail-label">I/O</span><span>{{ if $d.IOok }}↓ {{ humanBytes $d.IORead }} &nbsp; ↑ {{ humanBytes $d.IOWrite }}{{ else }}N/A{{ end }}</span></div>
         {{ if or $c.RateOut $c.RateIn }}<div class="detail-line"><span class="detail-label" title="{{ $T.rate_hint }}">{{ $T.rate }}</span><span class="{{ if $c.HighEgress }}vt-bad{{ end }}">↓ {{ rate $c.RateIn }}/s &nbsp; ↑ {{ rate $c.RateOut }}/s{{ if $c.HighEgress }} ⚠{{ end }}</span></div>{{ end }}
+        {{ if $d.DiskOK }}<div class="detail-line"><span class="detail-label" title="{{ $T.disk_hint }}">{{ $T.disk }}</span><span>↓ {{ humanBytes $d.DiskRead }} &nbsp; ↑ {{ humanBytes $d.DiskWrite }}</span></div>{{ end }}
+        {{ if $c.ResOK }}<div class="detail-line"><span class="detail-label" title="{{ $T.res_hint }}">{{ $T.res }}</span><span>CPU {{ pct $c.CPU }} % &nbsp; RAM {{ mem $c.RSS }} &nbsp; {{ $T.res_threads }} {{ $c.Threads }}{{ if $c.User }} &nbsp; {{ $T.res_user }} {{ $c.User }}{{ end }}</span></div>{{ end }}
         <div class="detail-line"><span class="detail-label">{{ $T.detail_conns_n }}</span><span>{{ $d.TotalConns }}</span></div>
         <div style="margin-top:6px;color:#8b949e;font-size:11px;">CMD:</div>
         <div class="cmdline-block">{{ $d.Cmdline }}</div>

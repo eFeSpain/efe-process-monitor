@@ -37,25 +37,30 @@ type Ancestor struct {
 func ancestryOf(pid int32) []Ancestor {
 	var out []Ancestor
 	seen := map[int32]bool{pid: true}
-	cur := pid
+	p, err := process.NewProcess(pid)
+	if err != nil {
+		return out
+	}
 	for i := 0; i < maxAncestryDepth; i++ {
-		p, err := process.NewProcess(cur)
-		if err != nil {
-			return out
-		}
 		ppid, err := p.Ppid()
 		if err != nil || ppid <= 0 || seen[ppid] {
 			return out
 		}
 		seen[ppid] = true
+		// The parent handle is reused as the next link, so each process in the
+		// chain is opened once — on Windows every open is an OpenProcess call,
+		// and this runs per PID on every render.
+		par, err := process.NewProcess(ppid)
+		if err != nil {
+			out = append(out, Ancestor{PID: ppid, Name: "?"})
+			return out
+		}
 		name := "?"
-		if par, err := process.NewProcess(ppid); err == nil {
-			if n, err := par.Name(); err == nil && n != "" {
-				name = n
-			}
+		if n, err := par.Name(); err == nil && n != "" {
+			name = n
 		}
 		out = append(out, Ancestor{PID: ppid, Name: name})
-		cur = ppid
+		p = par
 	}
 	return out
 }

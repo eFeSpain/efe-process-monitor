@@ -221,6 +221,13 @@ const knownPIDTTL = time.Hour
 
 func monitorLoop() {
 	prev := snapshot()
+	for prev == nil {
+		// A failed first enumeration must not stand in for "nothing was open":
+		// the next good one would then announce every existing connection as
+		// new, with the desktop notifications to match.
+		time.Sleep(monitorInterval)
+		prev = snapshot()
+	}
 	knownPIDs := map[int32]time.Time{}
 	seen := time.Now()
 	for _, c := range prev {

@@ -6,6 +6,40 @@ Versions follow [Semantic Versioning](https://semver.org/).
 
 ---
 
+## [Unreleased] — resource usage per process
+
+### Added
+- **CPU, memory, threads and owner per process**, sampled in the same monitor
+  pass that already reads the I/O counters (`volume.go`), so it costs two extra
+  cgo-free calls per socket-holding process every 3 s and nothing per render.
+  Shown as a sortable **CPU / Mem** column next to the process name and as a
+  *Resources* line in the details block.
+
+  CPU is a percentage of the whole machine (100 % = every core busy), averaged
+  over the last interval, so the first value takes two samples; PID reuse is
+  detected the same way as for the I/O counters (the cumulative clock going
+  backwards) and resets the figure and the owner. Memory is the resident set —
+  on Windows the working set, shared pages included, and the tooltip says so.
+
+  **None of it scores.** Same principle as volume: a compiler, a game and a video
+  call all burn CPU and memory, and weighting that would only add noise.
+- **Disk I/O line (Linux)** in the details block: the block-device bytes, next
+  to the syscall totals the I/O line already showed. The difference between the
+  two is what the throughput figure is built on, and now both are visible.
+  Windows does not separate disk from network, so the line is Linux-only.
+
+### Fixed
+- **`.env` line injection from Settings.** `writeEnv` wrote values verbatim, so
+  a settings request carrying `"x\nAUTH_HASH="` in an API-key field produced a
+  second line — and godotenv keeps the last assignment, so on the next start the
+  login could be off. That request only had to be authenticated; changing or
+  removing the password is supposed to require the *current* password. Values
+  are now trimmed and stripped of line breaks before they are written.
+- The monitor no longer treats a failed first enumeration as "nothing was open":
+  the next good snapshot used to announce every existing connection as new.
+- `ancestryOf` opened each process in the chain twice; on Windows that is two
+  `OpenProcess` calls per link, per PID, per render.
+
 ## [Unreleased] — data-volume signal, real ACLs on the secrets
 
 ### Added

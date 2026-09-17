@@ -127,6 +127,19 @@ func updateSettings(vt, abuse string) {
 
 var envKeyRe = regexp.MustCompile(`^\s*([A-Z_][A-Z0-9_]*)\s*=`)
 
+// cleanEnvValue makes a value safe to store as a single KEY=value line. A
+// newline inside a value would be written out as a *second* line, and a second
+// line reading AUTH_HASH= is the login switched off on the next start — from a
+// settings request that never had to prove it knew the current password.
+func cleanEnvValue(v string) string {
+	return strings.Map(func(r rune) rune {
+		if r == '\n' || r == '\r' || r == 0 {
+			return -1
+		}
+		return r
+	}, strings.TrimSpace(v))
+}
+
 // envMu serializes the read-modify-write of .env. Two concurrent POSTs to
 // /api/settings would otherwise each read the old file and write back their own
 // merge, losing the other's keys.
@@ -142,6 +155,9 @@ func writeEnv(updates map[string]string) {
 	envMu.Lock()
 	defer envMu.Unlock()
 
+	for k, v := range updates {
+		updates[k] = cleanEnvValue(v)
+	}
 	var lines []string
 	seen := map[string]bool{}
 	if f, err := os.Open(envPath); err == nil {

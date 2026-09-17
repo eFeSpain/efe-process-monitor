@@ -56,6 +56,7 @@ func TestRowsTemplateExecutes(t *testing.T) {
 		Partial:   true,
 		Breakdown: "ruta sospechosa (+25)",
 		RemoteIPs: []string{"93.184.216.34", "8.8.8.8"},
+		CPU:       12.5, RSS: 150 << 20, Threads: 7, User: "SYSTEM", ResOK: true,
 		Enrich: &Enrichment{
 			Country: "United States", City: "Norwell", ISP: "Edgecast",
 			Org: "Edgecast", ASN: "AS15133 Edgecast", DNS: "example.com",
@@ -68,6 +69,7 @@ func TestRowsTemplateExecutes(t *testing.T) {
 		Details: &ProcDetails{
 			PPID: 4, ParentName: "services.exe", Cmdline: "suspicious.exe --run",
 			CreateTime: "2026-08-11 10:00:00", IORead: 4096, IOWrite: 8192, IOok: true,
+			DiskRead: 1024, DiskWrite: 2048, DiskOK: true,
 			Conns:      []ProcConn{{"192.168.1.10", 49812, "93.184.216.34", 443}},
 			TotalConns: 1,
 		},
@@ -101,7 +103,8 @@ func TestRowsTemplateExecutes(t *testing.T) {
 		out := sb.String()
 		for _, want := range []string{
 			"suspicious.exe", "UDP", "UDP-BOUND", "Cobalt Strike",
-			`class="udp"`, // the bound-UDP row must get its own state class
+			`class="udp"`,                // the bound-UDP row must get its own state class
+			"12.5 %", "150 MB", "SYSTEM", // the resource column and its detail line
 		} {
 			if !strings.Contains(out, want) {
 				t.Errorf("rows.html [%s] missing %q", lang, want)

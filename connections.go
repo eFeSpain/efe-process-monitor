@@ -44,6 +44,9 @@ type ProcDetails struct {
 	IORead     uint64
 	IOWrite    uint64
 	IOok       bool
+	DiskRead   uint64 // block-device bytes, Linux only (see getProcDetails)
+	DiskWrite  uint64
+	DiskOK     bool
 	Conns      []ProcConn
 	TotalConns int
 	Err        string
@@ -76,6 +79,11 @@ type Conn struct {
 	RateIn      float64 // bytes/sec inbound (see volume.go on what this measures)
 	RateOut     float64 // bytes/sec outbound
 	HighEgress  bool    // sustained outbound flow; informational unless combined
+	CPU         float64 // % of the whole machine over the last monitor interval (volume.go)
+	RSS         uint64  // resident memory in bytes (Windows: working set)
+	Threads     int32
+	User        string // owning account, "" if not resolvable
+	ResOK       bool   // CPU/RSS were readable for this PID
 	Sig         Signature
 	Whitelist   bool
 	IPWhitelist bool
@@ -121,6 +129,11 @@ func getProcDetails(pid int32, pidConns map[int32][]ProcConn) *ProcDetails {
 	}
 	if io, err := p.IOCounters(); err == nil {
 		d.IORead, d.IOWrite, d.IOok = io.ReadBytes, io.WriteBytes, true
+		if runtime.GOOS == "linux" {
+			// Only Linux separates block-device I/O from the syscall totals; on
+			// Windows the counters lump disk, network and devices together.
+			d.DiskRead, d.DiskWrite, d.DiskOK = io.DiskReadBytes, io.DiskWriteBytes, true
+		}
 	}
 	d.Conns = pidConns[pid]
 	d.TotalConns = len(d.Conns)
@@ -903,9 +916,10 @@ func analyzeConnections(hideSelf bool) []Conn {
 			conn.Enrich = enrichMap[conn.RemoteIP]
 		}
 		conn.Hostnames = hostMap[conn.RemoteIP]
-		if rate := rateFor(r.c.Pid); rate.In > 0 || rate.Out > 0 || rate.HighEgress {
-			conn.RateIn, conn.RateOut, conn.HighEgress = rate.In, rate.Out, rate.HighEgress
-		}
+		rate := rateFor(r.c.Pid)
+		conn.RateIn, conn.RateOut, conn.HighEgress = rate.In, rate.Out, rate.HighEgress
+		conn.CPU, conn.RSS, conn.Threads, conn.User, conn.ResOK =
+			rate.CPU, rate.RSS, rate.Threads, rate.User, rate.ResOK
 		if isLAN(conn.RemoteIP) {
 			conn.LAN = lanMap[conn.RemoteIP]
 		}

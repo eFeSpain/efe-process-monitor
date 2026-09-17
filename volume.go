@@ -54,20 +54,36 @@ const (
 	ioSampleTTL = 10 * time.Minute
 )
 
-// ioRate is the current traffic picture for one process.
+// ioRate is the current traffic and resource picture for one process.
 type ioRate struct {
 	In, Out    float64 // bytes/sec, averaged over the last sample interval
 	HighEgress bool    // Out has been over the threshold for egressHotSamples in a row
+
+	// Resource usage, read in the same pass (see procResources). Informational
+	// only: none of it scores, for the same reason volume does not — a compiler,
+	// a game and a video call all burn CPU and memory.
+	CPU     float64 // percent of the whole machine (100 = every core busy), last interval
+	RSS     uint64  // resident set in bytes (Windows: working set, shared pages included)
+	Threads int32
+	User    string // owning account, resolved once per PID
+	ResOK   bool   // CPU/RSS were readable for this process
 }
 
 type ioSample struct {
 	at        time.Time
-	in, out   uint64 // cumulative counters at `at`
+	in, out   uint64  // cumulative counters at `at`
+	cpu       float64 // cumulative CPU seconds (user+system) at `at`
 	rate      ioRate
 	hot       int
 	lastSeen  time.Time
 	haveFirst bool
+	userDone  bool // Username was attempted; it can legitimately fail for other users' processes
 }
+
+// numCPU normalizes the CPU figure so 100 % means the whole machine, the way the
+// Windows Task Manager shows it (top/htop count per core and can exceed 100). A
+// variable rather than a call so the arithmetic is testable with a fixed count.
+var numCPU = runtime.NumCPU()
 
 var (
 	ioMu      sync.Mutex
@@ -78,8 +94,8 @@ var (
 // the derived rate. Pure arithmetic on the struct, so the interesting cases —
 // first sample, counter reset, the sustained-vs-spike distinction — are testable
 // without a live process.
-func (s *ioSample) advance(now time.Time, in, out uint64) {
-	defer func() { s.at, s.in, s.out, s.haveFirst, s.lastSeen = now, in, out, true, now }()
+func (s *ioSample) advance(now time.Time, in, out uint64, cpu float64) {
+	defer func() { s.at, s.in, s.out, s.cpu, s.haveFirst, s.lastSeen = now, in, out, cpu, true, now }()
 
 	if !s.haveFirst {
 		return // one reading is not a rate
@@ -90,9 +106,10 @@ func (s *ioSample) advance(now time.Time, in, out uint64) {
 	}
 	// The counters are monotonic per process, so a decrease means this PID is a
 	// different process now (PID reuse). Start over instead of reporting a
-	// nonsensical rate from the difference of two unrelated processes.
-	if in < s.in || out < s.out {
-		s.rate, s.hot = ioRate{}, 0
+	// nonsensical rate from the difference of two unrelated processes. CPU time
+	// is monotonic too, and it also identifies the owner as stale.
+	if in < s.in || out < s.out || cpu < s.cpu {
+		s.rate, s.hot, s.userDone = ioRate{}, 0, false
 		return
 	}
 	s.rate.In = float64(in-s.in) / secs
@@ -103,6 +120,14 @@ func (s *ioSample) advance(now time.Time, in, out uint64) {
 		s.hot = 0
 	}
 	s.rate.HighEgress = s.hot >= egressHotSamples
+
+	// CPU seconds consumed per wall-clock second, spread over the cores. Clamped:
+	// the two clocks are read at slightly different instants, so a process that
+	// is genuinely pegging every core can compute to a hair over 100.
+	s.rate.CPU = (cpu - s.cpu) / secs * 100 / float64(max(numCPU, 1))
+	if s.rate.CPU > 100 {
+		s.rate.CPU = 100
+	}
 }
 
 // procEgressBytes returns the cumulative (inbound, outbound) byte counters used
@@ -129,8 +154,27 @@ func procEgressBytes(p *process.Process) (in, out uint64, ok bool) {
 	return c.ReadBytes, c.WriteBytes, true
 }
 
-// sampleProcessIO refreshes the rate for every process in the current snapshot.
-// Called once per monitor cycle, so only processes that hold a socket are polled.
+// procResources reads the cumulative CPU time and the current memory picture.
+// Times() is /proc/<pid>/stat on Linux and GetProcessTimes on Windows; MemoryInfo
+// is statm / the working set. Cheap, cgo-free calls on both platforms.
+func procResources(p *process.Process) (cpuSecs float64, rss uint64, threads int32, ok bool) {
+	t, err := p.Times()
+	if err != nil || t == nil {
+		return 0, 0, 0, false
+	}
+	cpuSecs = t.User + t.System
+	if m, err := p.MemoryInfo(); err == nil && m != nil {
+		rss = m.RSS
+	}
+	if n, err := p.NumThreads(); err == nil {
+		threads = n
+	}
+	return cpuSecs, rss, threads, true
+}
+
+// sampleProcessIO refreshes the rate and resource figures for every process in
+// the current snapshot. Called once per monitor cycle, so only processes that
+// hold a socket are polled.
 func sampleProcessIO(snap map[connKey]gnet.ConnectionStat) {
 	now := time.Now()
 	pids := map[int32]bool{}
@@ -145,8 +189,9 @@ func sampleProcessIO(snap map[connKey]gnet.ConnectionStat) {
 		if err != nil {
 			continue
 		}
-		in, out, ok := procEgressBytes(p)
-		if !ok {
+		in, out, ioOK := procEgressBytes(p)
+		cpu, rss, threads, resOK := procResources(p)
+		if !ioOK && !resOK {
 			continue
 		}
 
@@ -156,7 +201,22 @@ func sampleProcessIO(snap map[connKey]gnet.ConnectionStat) {
 			s = &ioSample{}
 			ioSamples[pid] = s
 		}
-		s.advance(now, in, out)
+		needUser := resOK && !s.userDone
+		ioMu.Unlock()
+
+		// The account lookup can touch the user database (Linux) or open the
+		// process token (Windows); it is done once per PID and outside the lock.
+		user := ""
+		if needUser {
+			user, _ = p.Username()
+		}
+
+		ioMu.Lock()
+		s.advance(now, in, out, cpu)
+		s.rate.RSS, s.rate.Threads, s.rate.ResOK = rss, threads, resOK
+		if needUser && !s.userDone { // advance may have reset on PID reuse; then retry next cycle
+			s.rate.User, s.userDone = user, true
+		}
 		ioMu.Unlock()
 	}
 

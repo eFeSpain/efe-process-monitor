@@ -64,6 +64,10 @@ no para atacar a otros.
   proveedores se atenúan para reducir falsas alarmas.
 
 **Monitorización en vivo**
+- **Consumo de recursos por proceso**: CPU (% de toda la máquina), memoria
+  residente, hilos y usuario, muestreados por el monitor y mostrados en una
+  columna ordenable y una línea de detalle. Solo informativo: nunca puntúa. En
+  Linux el detalle separa además el I/O a disco real del total de syscalls.
 - **Caudal de datos por proceso** (bytes/s, muestreado por el monitor) con marca
   cuando la salida es sostenida. Solo puntúa combinado con un motivo independiente
   para desconfiar del binario — el caudal por sí solo es lo que parece una descarga

@@ -61,6 +61,10 @@ attacking others.
   marked, and noisy reports on big providers are attenuated to cut false alarms.
 
 **Live monitoring**
+- **Resource usage per process**: CPU (% of the whole machine), resident memory,
+  threads and owning account, sampled by the monitor and shown as a sortable
+  column plus a detail line. Informational only — it never scores. On Linux the
+  details also split real disk I/O from the syscall totals.
 - **Data volume per process** (bytes/sec, sampled by the monitor) with a sustained
   outbound flow flagged. It scores only in combination with an independent reason
   to distrust the binary — volume alone is what a download or a backup looks like.

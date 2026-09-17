@@ -79,6 +79,7 @@ td { padding:6px 12px; border-bottom:1px solid #21262d; white-space:nowrap; vert
 .sig-ok{color:#3fb950;} .sig-bad{color:#f85149;font-weight:bold;} .sig-na{color:#484f58;}
 .badge-wl{color:#3fb950;}
 .vt-bad{color:#f85149;font-weight:bold;} .vt-ok{color:#3fb950;} .vt-na{color:#484f58;}
+.res-cpu{white-space:nowrap;} .res-mem{color:#8b949e;font-size:11px;white-space:nowrap;} .res-hot{color:#d29922;font-weight:bold;}
 .loading-cell{text-align:center;color:#8b949e;padding:28px;font-size:14px;}
 .live-panel{margin:8px;border:1px solid #30363d;border-radius:6px;background:#0d1117;}
 .live-head{display:flex;align-items:center;justify-content:space-between;gap:16px;padding:6px 12px;
@@ -218,16 +219,17 @@ select{background:#0d1117;color:#c9d1d9;border:1px solid #30363d;padding:3px 6px
     <th onclick="sortBy(2,'num')">{{ .T.col_pid }}</th>
     <th onclick="sortBy(3,'str')">{{ .T.col_state }}</th>
     <th onclick="sortBy(4,'str')">{{ .T.col_process }}</th>
-    <th onclick="sortBy(5,'str')">{{ .T.col_parent }}</th>
-    <th onclick="sortBy(6,'str')">{{ .T.col_proto }}</th>
-    <th onclick="sortBy(7,'num')">{{ .T.col_vt }}</th>
-    <th onclick="sortBy(8,'str')">{{ .T.col_sig }}</th>
-    <th onclick="sortBy(9,'str')">{{ .T.col_path }}</th>
+    <th onclick="sortBy(5,'num')" title="{{ .T.res_hint }}">{{ .T.col_res }}</th>
+    <th onclick="sortBy(6,'str')">{{ .T.col_parent }}</th>
+    <th onclick="sortBy(7,'str')">{{ .T.col_proto }}</th>
+    <th onclick="sortBy(8,'num')">{{ .T.col_vt }}</th>
+    <th onclick="sortBy(9,'str')">{{ .T.col_sig }}</th>
+    <th onclick="sortBy(10,'str')">{{ .T.col_path }}</th>
     <th></th>
 </tr>
 </thead>
 <tbody id="conn-tbody">
-<tr><td colspan="11" class="loading-cell">{{ .T.loading }}</td></tr>
+<tr><td colspan="12" class="loading-cell">{{ .T.loading }}</td></tr>
 </tbody>
 </table>
 

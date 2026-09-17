@@ -15,7 +15,7 @@ import (
 func TestIOSampleFirstReadingHasNoRate(t *testing.T) {
 	var s ioSample
 	t0 := time.Now()
-	s.advance(t0, 1<<30, 1<<30) // huge cumulative totals from a long-running process
+	s.advance(t0, 1<<30, 1<<30, 0) // huge cumulative totals from a long-running process
 	if s.rate.In != 0 || s.rate.Out != 0 || s.rate.HighEgress {
 		t.Errorf("a single reading cannot be a rate, got %+v", s.rate)
 	}
@@ -24,8 +24,8 @@ func TestIOSampleFirstReadingHasNoRate(t *testing.T) {
 func TestIOSampleComputesRate(t *testing.T) {
 	var s ioSample
 	t0 := time.Now()
-	s.advance(t0, 0, 0)
-	s.advance(t0.Add(2*time.Second), 2048, 4096)
+	s.advance(t0, 0, 0, 0)
+	s.advance(t0.Add(2*time.Second), 2048, 4096, 0)
 	if s.rate.In != 1024 {
 		t.Errorf("In = %v, want 1024 B/s", s.rate.In)
 	}
@@ -41,18 +41,18 @@ func TestIOSampleNeedsSustainedEgress(t *testing.T) {
 	t0 := time.Now()
 	big := uint64(highEgressBytesPerSec * 4)
 
-	s.advance(t0, 0, 0)
-	s.advance(t0.Add(time.Second), 0, big)
+	s.advance(t0, 0, 0, 0)
+	s.advance(t0.Add(time.Second), 0, big, 0)
 	if s.rate.HighEgress {
 		t.Fatalf("one sample over the threshold is a spike, not a transfer (hot=%d)", s.hot)
 	}
-	s.advance(t0.Add(2*time.Second), 0, big*2)
+	s.advance(t0.Add(2*time.Second), 0, big*2, 0)
 	if !s.rate.HighEgress {
 		t.Errorf("expected HighEgress after %d consecutive samples", egressHotSamples)
 	}
 
 	// Dropping back down clears it: the flag describes now, not history.
-	s.advance(t0.Add(3*time.Second), 0, big*2+10)
+	s.advance(t0.Add(3*time.Second), 0, big*2+10, 0)
 	if s.rate.HighEgress {
 		t.Error("HighEgress should clear once the rate falls")
 	}
@@ -63,9 +63,9 @@ func TestIOSampleNeedsSustainedEgress(t *testing.T) {
 func TestIOSampleHandlesCounterReset(t *testing.T) {
 	var s ioSample
 	t0 := time.Now()
-	s.advance(t0, 0, 0)
-	s.advance(t0.Add(time.Second), 1<<20, 1<<20)
-	s.advance(t0.Add(2*time.Second), 10, 10) // counters went backwards
+	s.advance(t0, 0, 0, 0)
+	s.advance(t0.Add(time.Second), 1<<20, 1<<20, 0)
+	s.advance(t0.Add(2*time.Second), 10, 10, 0) // counters went backwards
 	if s.rate.In != 0 || s.rate.Out != 0 {
 		t.Errorf("a counter reset must clear the rate, got %+v", s.rate)
 	}
@@ -73,7 +73,7 @@ func TestIOSampleHandlesCounterReset(t *testing.T) {
 		t.Error("rate must never be negative")
 	}
 	// And it recovers on the next pair of readings.
-	s.advance(t0.Add(3*time.Second), 10, 1034)
+	s.advance(t0.Add(3*time.Second), 10, 1034, 0)
 	if s.rate.Out != 1024 {
 		t.Errorf("expected the rate to resume after a reset, got %v", s.rate.Out)
 	}
@@ -82,10 +82,66 @@ func TestIOSampleHandlesCounterReset(t *testing.T) {
 func TestIOSampleZeroInterval(t *testing.T) {
 	var s ioSample
 	t0 := time.Now()
-	s.advance(t0, 0, 0)
-	s.advance(t0, 5000, 5000) // same timestamp: would divide by zero
+	s.advance(t0, 0, 0, 0)
+	s.advance(t0, 5000, 5000, 0) // same timestamp: would divide by zero
 	if s.rate.Out != 0 {
 		t.Errorf("a zero interval must not produce a rate, got %v", s.rate.Out)
+	}
+}
+
+// CPU is the one resource figure that needs arithmetic: two readings of
+// cumulative CPU seconds, spread over the wall-clock gap and over the cores.
+func TestProcSampleComputesCPU(t *testing.T) {
+	old := numCPU
+	numCPU = 4
+	t.Cleanup(func() { numCPU = old })
+
+	var s ioSample
+	t0 := time.Now()
+	s.advance(t0, 0, 0, 10)
+	if s.rate.CPU != 0 {
+		t.Fatalf("one reading is not a rate, got %v", s.rate.CPU)
+	}
+	// 2 CPU-seconds in 2 wall seconds: one core flat out, a quarter of the box.
+	s.advance(t0.Add(2*time.Second), 0, 0, 12)
+	if s.rate.CPU != 25 {
+		t.Errorf("CPU = %v, want 25 (one of four cores)", s.rate.CPU)
+	}
+	// Then mostly idle: 0.5 CPU-seconds in 2 wall seconds.
+	s.advance(t0.Add(4*time.Second), 0, 0, 12.5)
+	if s.rate.CPU != 6.25 {
+		t.Errorf("CPU = %v, want 6.25", s.rate.CPU)
+	}
+}
+
+// The process clock and the wall clock are read at different instants, so a
+// process pegging every core can compute to slightly over 100. Clamp, never
+// show "103 %".
+func TestProcSampleCPUClamped(t *testing.T) {
+	old := numCPU
+	numCPU = 1
+	t.Cleanup(func() { numCPU = old })
+
+	var s ioSample
+	t0 := time.Now()
+	s.advance(t0, 0, 0, 0)
+	s.advance(t0.Add(2*time.Second), 0, 0, 2.06)
+	if s.rate.CPU != 100 {
+		t.Errorf("CPU = %v, want 100 (clamped)", s.rate.CPU)
+	}
+}
+
+// PID reuse shows up as CPU time going backwards, exactly like the I/O counters.
+// The rate resets, and so does the owner, which belongs to the old process.
+func TestProcSampleCPUResetOnPIDReuse(t *testing.T) {
+	var s ioSample
+	t0 := time.Now()
+	s.advance(t0, 0, 0, 100)
+	s.advance(t0.Add(time.Second), 0, 0, 101)
+	s.rate.User, s.userDone = "alice", true
+	s.advance(t0.Add(2*time.Second), 0, 0, 0.2) // a fresh process under the same PID
+	if s.rate.CPU != 0 || s.rate.User != "" || s.userDone {
+		t.Errorf("PID reuse must clear the CPU rate and the owner, got %+v userDone=%v", s.rate, s.userDone)
 	}
 }
 

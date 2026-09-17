@@ -97,6 +97,10 @@ var funcMap = template.FuncMap{
 		return strings.Join(parts, sep)
 	},
 	"rate": humanRate,
+	// mem/pct format the resource column: memory in the compact "150 MB" shape
+	// humanRate already produces, CPU with one decimal.
+	"mem": func(n uint64) string { return humanRate(float64(n)) },
+	"pct": func(f float64) string { return fmt.Sprintf("%.1f", f) },
 	"humanBytes": func(n uint64) string {
 		f := float64(n)
 		for _, u := range []string{"B", "KB", "MB", "GB", "TB"} {

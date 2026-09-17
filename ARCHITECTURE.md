@@ -54,7 +54,11 @@ GOOS=darwin go build -o efemon .  # macOS
   runner: cross-compile all six release targets, and execute the test binary on Linux via WSL from a
   Windows checkout. `--quick` skips the last two. Keep the gosec arguments in sync with
   `.github/workflows/ci.yml` or the step stops meaning anything.
-- **volume.go** — per-process I/O rate sampled once per monitor cycle. On Linux the block-device
+- **volume.go** — per-process I/O rate **and resource usage** (CPU %, RSS, threads, owner) sampled
+  once per monitor cycle by `sampleProcessIO`; `rateFor(pid)` hands the last figures to
+  `analyzeConnections`. CPU is normalized by `numCPU` (100 % = whole machine) and, like the I/O
+  counters, resets on PID reuse (cumulative clock went backwards). Resources never score.
+  On Linux the block-device
   totals are subtracted from `rchar`/`wchar` to isolate non-disk traffic; on Windows
   `GetProcessIoCounters` cannot separate file from network I/O, so the figure is weaker and the UI
   says so. Not attributable to a connection. `wExfilCombo` only applies when an independent distrust
