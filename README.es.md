@@ -64,6 +64,11 @@ no para atacar a otros.
   proveedores se atenúan para reducir falsas alarmas.
 
 **Monitorización en vivo**
+- **DNS pasivo**: las respuestas DNS se leen en continuo (Linux como root vía
+  AF_PACKET + BPF, Windows vía la caché del resolver), así que una IP remota
+  muestra el nombre que pidió el proceso aunque no haya captura. DoH/DoT no es visible.
+- **Baseline de binarios por contenido** (ruta + SHA-256): un binario reemplazado
+  en su sitio se alerta como tal, no pasa desapercibido por conocer la ruta.
 - **Consumo de recursos por proceso**: CPU (% de toda la máquina), memoria
   residente, hilos y usuario, muestreados por el monitor y mostrados en una
   columna ordenable y una línea de detalle. Solo informativo: nunca puntúa. En

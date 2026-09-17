@@ -67,6 +67,12 @@ GOOS=darwin go build -o efemon .  # macOS
   private key. On Windows a 0600 mode is ignored by the OS, so an explicit ACL is applied; the
   principal set depends on `elevated`, because elevating does not change the user's SID and only the
   Administrators group distinguishes the two tokens. See the comment in `secure_windows.go`.
+- **dns.go / dns_linux.go / dns_windows.go** — passive DNS outside captures: a hand-written
+  response parser (`parseDNSAnswers`, `readDNSName`) feeding `recordHostname`; Linux as root reads
+  responses from an AF_PACKET socket with a classic BPF filter for UDP sport 53 (cooked frames, v4+v6);
+  Windows polls `Get-DnsClientCache` every 30 s. `passiveDNSStatus` is printed by the banner.
+- **timeline.go** — `buildTimeline` joins events + score_history + hostnames + block/whitelist state
+  into one record per (exe, remote IP) for `/export/timeline.json`; pure, tested with fixtures.
 - **hostnames.go** — `observeHostnames` harvests IP↔name bindings from each captured packet (TLS SNI
   and DNS answer records) into the `hostnames` table. SNI outranks DNS because the client declared
   it; both outrank reverse DNS, which the address owner controls. Only sees traffic while a capture
@@ -134,8 +140,10 @@ GOOS=darwin go build -o efemon .  # macOS
   `startupBanner`, `hasCmd`, `ensureNft`. (Relaunch handoff: the new process retries `net.Listen` ~10s
   while the old one frees the port.)
 - **db.go** — SQLite (modernc, `SetMaxOpenConns(1)`). Tables: hashes, events, signatures, baseline,
-  whitelist, ip_whitelist, blocked. **Pure persistence layer** (`db*` helpers: `dbAddWhitelist`,
-  `dbAllBlocked`, …) + `baselineSeen`. The session-aware public API is in store.go.
+  baseline_hash, whitelist, ip_whitelist, blocked, hostnames, score_history. **Pure persistence
+  layer** (`db*` helpers: `dbAddWhitelist`, `dbAllBlocked`, …) + `baselineSeen(exe, hash)` → `(seen,
+  changed)`: keyed by content, adopts pre-upgrade path-only rows silently. The session-aware public
+  API is in store.go.
 - **store.go** — **session state layer** for operator actions (whitelist / IP whitelist / blocked).
   In-memory maps are the source of truth for the running instance; `whitelist()`/`addWhitelist`/
   `saveBlocked`/`listBlocked`/… read/write them. `loadState()` (startup) seeds from the DB. When
@@ -181,7 +189,8 @@ GOOS=darwin go build -o efemon .  # macOS
 
 ## HTTP endpoints
 `/`, `/api/connections`, `/events` (SSE), `/api/interfaces`, `/capture` (SSE), `/capture.pcap`,
-`/login` (GET/POST), `/logout`, `/api/events`, `/export.csv|json`, `/api/settings` (GET/POST),
+`/login` (GET/POST), `/logout`, `/api/events` (DELETE needs `confirm=1`), `/export.csv|json`,
+`/export/timeline.json`, `/api/settings` (GET/POST),
 `/api/restart` (POST — relaunches the process to apply a new `LISTEN_ADDR`), `/api/whitelist` (GET/POST/DELETE),
 `/api/ip_whitelist` (GET/POST/DELETE), `/api/kill`, `/api/block_ip`, `/api/blocked`, `/api/unblock`,
 `/api/audit`, `/audit.json|txt`, `/static/`.

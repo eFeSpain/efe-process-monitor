@@ -6,6 +6,35 @@ Versions follow [Semantic Versioning](https://semver.org/).
 
 ---
 
+## [Unreleased] — passive DNS, content baseline, miner signal, timeline export
+
+### Added
+- **Passive DNS outside captures.** "What name did the process ask for?" was
+  only answered while a tshark capture ran. Now DNS answers are read all the
+  time: on Linux as root through an AF_PACKET socket with a BPF filter for
+  UDP source port 53 (no libpcap, no tshark; `dns_linux.go`), on Windows by
+  polling the resolver cache every 30 s (`Get-DnsClientCache`, no
+  privilege). Bindings land in the same hostnames table with the same
+  "observed DNS answer" label. DNS over HTTPS/TLS is not visible; the
+  tooltip says so.
+- **Baseline by content.** The new-binary baseline is keyed by (path,
+  sha256), so a binary replaced in place — the most common persistence move
+  — raises an alert with the reason and its own desktop notification. Rows
+  from earlier builds are adopted silently on first sighting.
+- **Cryptominer signal.** CPU over 50 % of the machine for 15 s is flagged
+  and scores (+25) only from a binary that is already suspect, the same rule
+  as the egress signal. Pinned in the corpus both ways.
+- **`/export/timeline.json`**: one entry per (binary, remote address) with
+  its events, risk changes (localized), names asked for and block/whitelist
+  state — the incident report as a single document, from the history modal.
+
+### Fixed
+- Persisted IP blocks are re-created in the firewall at startup on Linux
+  (iptables/nft rules do not survive a reboot; netsh ones do).
+- `DELETE /api/events` requires `confirm=1`; the UI already asked.
+- `tools/genoui` cut vendor names by byte and could split a multi-byte
+  character; now by rune, with the first test under `tools/`.
+
 ## [Unreleased] — Simplified Chinese, language-neutral score history
 
 ### Added

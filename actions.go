@@ -207,6 +207,11 @@ func startupBanner() {
 		log.Println("[-] tshark          not found — capture disabled")
 	}
 	log.Printf("[+] Live monitor    active (every %s)", monitorInterval)
+	if strings.HasPrefix(passiveDNSStatus, "activo") {
+		log.Printf("[+] DNS pasivo      %s", passiveDNSStatus)
+	} else {
+		log.Printf("[-] DNS pasivo      %s", passiveDNSStatus)
+	}
 	if listenExposed {
 		log.Printf("[!] Access          EXPOSED on %s over HTTPS — reachable from the network (login required)", listenAddr.Load())
 	} else {

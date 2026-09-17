@@ -61,6 +61,11 @@ attacking others.
   marked, and noisy reports on big providers are attenuated to cut false alarms.
 
 **Live monitoring**
+- **Passive DNS**: DNS answers are read continuously (Linux as root via
+  AF_PACKET + BPF, Windows via the resolver cache), so a remote address shows
+  the name the process asked for even outside a capture. DoH/DoT is not visible.
+- **New-binary baseline by content** (path + SHA-256): a binary replaced in
+  place is alerted as such, not missed because the path was known.
 - **Resource usage per process**: CPU (% of the whole machine), resident memory,
   threads and owning account, sampled by the monitor and shown as a sortable
   column plus a detail line. Informational only — it never scores. On Linux the

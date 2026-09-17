@@ -290,7 +290,7 @@ select{background:#0d1117;color:#c9d1d9;border:1px solid #30363d;padding:3px 6px
                 </select>
                 <button class="btn" onclick="toggleScoreHistory()" id="score-hist-btn">📈 {{ .T.score_hist }}</button>
                 <button class="btn btn-stop" onclick="deleteHistory()">🗑 {{ .T.hist_delete }}</button>
-                <a class="btn" href="/export.csv">⬇ CSV</a> <a class="btn" href="/export.json">⬇ JSON</a>
+                <a class="btn" href="/export.csv">⬇ CSV</a> <a class="btn" href="/export.json">⬇ JSON</a> <a class="btn" href="/export/timeline.json" title="{{ .T.export_timeline_t }}">⬇ {{ .T.export_timeline }}</a>
                 <a class="btn" href="/logs.txt" target="_blank" title="{{ .T.log_hint }}">📄 {{ .T.log_btn }}</a>
                 <button class="btn" onclick="closeHistory()">✕</button>
             </span>

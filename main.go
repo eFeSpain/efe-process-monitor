@@ -166,8 +166,9 @@ func main() {
 	tmpl = template.Must(template.New("").Funcs(funcMap).ParseFS(tmplFS, "web/templates/*.html"))
 	go primeIntel()
 	go monitorLoop()
-	go vtWorker()  // resolves VT hashes in the background at 4/min
-	go sigWorker() // resolves code signatures off the request path
+	startPassiveDNS() // DNS answers → hostnames table, outside captures (see dns.go)
+	go vtWorker()     // resolves VT hashes in the background at 4/min
+	go sigWorker()    // resolves code signatures off the request path
 
 	staticSub, _ := fs.Sub(staticFS, "web/static")
 	http.Handle("/static/", http.StripPrefix("/static/", http.FileServer(http.FS(staticSub))))
@@ -182,6 +183,7 @@ func main() {
 	http.HandleFunc("/api/events", handleAPIEvents)
 	http.HandleFunc("/export.csv", handleExportCSV)
 	http.HandleFunc("/export.json", handleExportJSON)
+	http.HandleFunc("/export/timeline.json", handleExportTimeline)
 	http.HandleFunc("/api/settings", handleSettings)
 	http.HandleFunc("/api/restart", handleRestart)
 	http.HandleFunc("/api/whitelist", handleWhitelist)
@@ -576,6 +578,19 @@ func handleAPIEvents(w http.ResponseWriter, r *http.Request) {
 func handleExportJSON(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Disposition", "attachment; filename=events.json")
 	writeJSON(w, queryEvents(5000, ""))
+}
+
+// handleExportTimeline is the incident view: every (binary, remote address)
+// pair with its events, risk changes, observed names and operator flags in one
+// document. See timeline.go.
+func handleExportTimeline(w http.ResponseWriter, r *http.Request) {
+	blocked := map[string]bool{}
+	for _, b := range listBlocked() {
+		blocked[b.IP] = true
+	}
+	w.Header().Set("Content-Disposition", "attachment; filename=timeline.json")
+	writeJSON(w, buildTimeline(langFrom(r), queryEvents(5000, ""), dbScoreHistory(2000),
+		dbAllHostnames(), blocked, whitelist(), ipWhitelist()))
 }
 
 func handleExportCSV(w http.ResponseWriter, r *http.Request) {
