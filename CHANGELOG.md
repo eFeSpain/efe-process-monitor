@@ -6,9 +6,34 @@ Versions follow [Semantic Versioning](https://semver.org/).
 
 ---
 
-## [Unreleased] — audit: every user's home, more persistence, new-since badge
+## [0.3.0] — 2026-09-17
 
-### Added
+Eight rounds of work since 0.2.0, each kept below with its own notes. The short
+version:
+
+- **Simplified Chinese UI** (#1) alongside Spanish and English; every string,
+  including the audit and the score breakdown, which is now stored
+  language-neutral and rendered in the reader's language.
+- **Per-process resources**: CPU, memory, threads and owner in a sortable
+  column; sustained CPU from a suspect binary scores as the miner shape.
+- **Passive DNS** without a capture (Linux as root, Windows always): a remote
+  address shows the name the process asked for.
+- **Baseline by content**: a binary replaced in place is alerted as such.
+- **Audit**: every user's home (not `/root` under sudo), reverse shells, traced
+  processes, system-level systemd units, Winlogon/IFEO/AppInit/services on
+  Windows, file permissions, real firewall rule counts; a **NEW** badge for
+  findings first seen in the last 24 h; four categories in parallel; every
+  parser tested. Known proprietary drivers and the monitor's own capture no
+  longer show as rootkit warnings.
+- **Root on Linux works as a desktop app**: tray icon, notifications and the
+  browser run as the logged-in user; IPv6 peers can be blocked; persisted
+  blocks are re-applied at boot.
+- **`/export/timeline.json`**: the incident report as one document.
+- Security: `.env` values can no longer inject a line that disables the login.
+
+### Audit: every user's home, more persistence, new-since badge
+
+#### Added
 - **Reverse-shell detection (Linux)**: a shell or interpreter whose stdin or
   stdout *is* a socket. Nothing legitimate wires a shell's standard streams to
   a socket; every reverse-shell one-liner does.
@@ -26,7 +51,7 @@ Versions follow [Semantic Versioning](https://semver.org/).
   in `audit.txt`. The first scan on a machine marks nothing. The panel also
   shows when the (cached) result was produced.
 
-### Fixed
+#### Fixed
 - **Run as root, the audit inspected the wrong home.** `~/.bashrc`, autostart
   entries, user systemd units and `authorized_keys` were read from `/root`
   under sudo. Every real account's home is now checked and each finding says
@@ -40,7 +65,7 @@ Versions follow [Semantic Versioning](https://semver.org/).
 - The hosts-file filter dropped any line containing "localhost", so
   `1.2.3.4 bank.com # localhost` passed as boilerplate.
 
-### Changed
+#### Changed
 - The four audit categories run concurrently; the scan takes as long as the
   slowest one. Checks are ordered by severity within each category.
 - Every parser the audit relies on (reg query, schtasks, driverquery, ss /
@@ -48,9 +73,9 @@ Versions follow [Semantic Versioning](https://semver.org/).
 - `/api/audit` returns `{at, checks}`; each check carries a stable `key`, its
   raw `items` and the `new` ones. `/audit.json` is unchanged.
 
-## [Unreleased] — passive DNS, content baseline, miner signal, timeline export
+### Passive DNS, content baseline, miner signal, timeline export
 
-### Added
+#### Added
 - **Passive DNS outside captures.** "What name did the process ask for?" was
   only answered while a tshark capture ran. Now DNS answers are read all the
   time: on Linux as root through an AF_PACKET socket with a BPF filter for
@@ -70,16 +95,16 @@ Versions follow [Semantic Versioning](https://semver.org/).
   its events, risk changes (localized), names asked for and block/whitelist
   state — the incident report as a single document, from the history modal.
 
-### Fixed
+#### Fixed
 - Persisted IP blocks are re-created in the firewall at startup on Linux
   (iptables/nft rules do not survive a reboot; netsh ones do).
 - `DELETE /api/events` requires `confirm=1`; the UI already asked.
 - `tools/genoui` cut vendor names by byte and could split a multi-byte
   character; now by rune, with the first test under `tools/`.
 
-## [Unreleased] — Simplified Chinese, language-neutral score history
+### Simplified Chinese, language-neutral score history
 
-### Added
+#### Added
 - **Simplified Chinese (zh-CN) UI**, requested in #1: every UI, login, gate,
   notification and audit string, selectable from the flag toggle. Translated
   from the English set with the industry's usual loanwords kept as they are
@@ -89,7 +114,7 @@ Versions follow [Semantic Versioning](https://semver.org/).
   and also pin the `%` verb count per key, so a translation that drops a `%s`
   cannot print `%!(EXTRA …)` into a tooltip.
 
-### Fixed
+#### Fixed
 - **Run as root on Linux: no tray icon, no desktop notifications, and the
   browser never opened.** All three had one cause: `sudo` strips the
   graphical session from the environment, and the session D-Bus only admits
@@ -111,7 +136,7 @@ Versions follow [Semantic Versioning](https://semver.org/).
   error (Windows `netsh` was fine). Linux now picks `ip6tables` and a second
   `ipv6_addr` set by address family.
 
-### Changed
+#### Changed
 - Legacy malware-port labels (`SubSeven (RAT, histórico)`…) carried a Spanish
   note inside the data. The label is now the name only, and the "legacy, never
   scores" note is rendered from i18n next to it with its own tooltip.
@@ -124,9 +149,9 @@ Versions follow [Semantic Versioning](https://semver.org/).
   a block, the "IP cannot be blocked" and "no firewall tool" messages follow the
   UI language too.
 
-## [Unreleased] — resource usage per process
+### Resource usage per process
 
-### Added
+#### Added
 - **CPU, memory, threads and owner per process**, sampled in the same monitor
   pass that already reads the I/O counters (`volume.go`), so it costs two extra
   cgo-free calls per socket-holding process every 3 s and nothing per render.
@@ -146,7 +171,7 @@ Versions follow [Semantic Versioning](https://semver.org/).
   two is what the throughput figure is built on, and now both are visible.
   Windows does not separate disk from network, so the line is Linux-only.
 
-### Fixed
+#### Fixed
 - **`.env` line injection from Settings.** `writeEnv` wrote values verbatim, so
   a settings request carrying `"x\nAUTH_HASH="` in an API-key field produced a
   second line — and godotenv keeps the last assignment, so on the next start the
@@ -158,9 +183,9 @@ Versions follow [Semantic Versioning](https://semver.org/).
 - `ancestryOf` opened each process in the chain twice; on Windows that is two
   `OpenProcess` calls per link, per PID, per render.
 
-## [Unreleased] — data-volume signal, real ACLs on the secrets
+### Data-volume signal, real ACLs on the secrets
 
-### Added
+#### Added
 - **`verify.sh`**: runs every CI gate locally in the same order, then cross-compiles
   all six release targets and executes the test binary on Linux through WSL. It
   exists because three separate CI failures had the same cause — a local run that
@@ -186,7 +211,7 @@ Versions follow [Semantic Versioning](https://semver.org/).
   is the actual exfiltration shape. Pinned in the corpus both ways: a signed app
   at 8 MB/s scores 0, an unsigned binary in Temp at 2 MB/s scores 65.
 
-### Security
+#### Security
 - **The token file and the TLS private key now get a real ACL on Windows.**
   `os.WriteFile(..., 0600)` is a no-op there — Go maps the mode to the read-only
   attribute and nothing else — so both files simply inherited the directory ACL
@@ -214,9 +239,9 @@ Versions follow [Semantic Versioning](https://semver.org/).
 
 ---
 
-## [Unreleased] — hostname correlation, risk timeline, release provenance, macOS
+### Hostname correlation, risk timeline, release provenance, macOS
 
-### Added
+#### Added
 - **Hostname correlation: what the process actually asked for.** Everything else
   the tool knew about a remote address was *about the address* — geo, ASN,
   reputation — and none of it answered the first question an analyst asks.
@@ -237,7 +262,7 @@ Versions follow [Semantic Versioning](https://semver.org/).
   about where they came from. Downloads can now be verified with
   `gh attestation verify <file> --repo eFeSpain/efe-process-monitor`.
 
-### Fixed
+#### Fixed
 - **The audit no longer claims to have run checks it cannot.** On macOS the
   process cross-view was a stub returning an empty list, and the deleted-binary
   check read `/proc`, which does not exist there — so both rendered as confident
@@ -248,7 +273,7 @@ Versions follow [Semantic Versioning](https://semver.org/).
 - Guarded the database helpers reachable from the capture path against a nil
   handle: a missing database should cost a row, not panic the capture goroutine.
 
-### Removed
+#### Removed
 - **macOS binaries are no longer published.** The badge claimed a platform that
   had never been tested, and the reason not to ship it is concrete rather than
   cautious: parts of the audit have no macOS implementation, so a user would be
@@ -258,9 +283,9 @@ Versions follow [Semantic Versioning](https://semver.org/).
 
 ---
 
-## [Unreleased] — logging, process ancestry, score calibration
+### Logging, process ancestry, score calibration
 
-### Added
+#### Added
 - **The application log now survives the shipped binary.** Release builds link
   with `-H=windowsgui`, so the process has no usable stderr and every log line —
   the whole operator audit trail (`KILL`, `BLOCK`, `UNBLOCK`, settings changed,
@@ -282,7 +307,7 @@ Versions follow [Semantic Versioning](https://semver.org/).
   ordering invariants that must hold through any re-tune. The headline feature had
   no way to tell a tuning fix from a regression.
 
-### Changed
+#### Changed
 - **Re-tuned the two locally-computed score signals, which were the main
   false-positive source.** Both were as loud as a curated C2 feed hit:
   - Path signals are now two tiers. Staging directories (temp, `\Users\Public`,
@@ -303,9 +328,9 @@ Versions follow [Semantic Versioning](https://semver.org/).
 
 ---
 
-## [Unreleased] — security & correctness review
+### Security & correctness review
 
-### Security
+#### Security
 - **Fixed a DNS-rebinding bypass.** The loopback check tested
   `strings.HasPrefix(host, "127.")`, so an attacker-owned name like
   `127.0.0.1.evil.com` passed both the Host allow-list and the same-origin CSRF
@@ -337,7 +362,7 @@ Versions follow [Semantic Versioning](https://semver.org/).
   *and rewrite* that project's `.env`.
 - `efemon.db` is created mode 0600 (it holds the forensic history).
 
-### Fixed
+#### Fixed
 - **UDP is visible again.** gopsutil never reports `LISTEN`/`ESTABLISHED` for
   datagram sockets (`NONE` on Linux, empty on Windows), so filtering on those two
   labels dropped *every* UDP socket from the table, the live monitor and the
@@ -379,7 +404,7 @@ Versions follow [Semantic Versioning](https://semver.org/).
   render a replacement diamond.
 - The language cookie has a `MaxAge`, so the choice survives a browser restart.
 
-### Changed
+#### Changed
 - Code-signature lookups moved off the request path into a background worker
   (like the VirusTotal hashes already were): PowerShell start-up on Windows, or
   one sequential `dpkg -S` per binary at 5s each on Linux, used to run inside the

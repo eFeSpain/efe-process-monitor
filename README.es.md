@@ -18,6 +18,15 @@ sobre el binario y la IP remota.
 
 > **Estado: estable.** Funciona y se usa a diario. La interfaz y los datos guardados pueden evolucionar entre versiones.
 
+**Novedades de la 0.3.0** — interfaz en chino simplificado · CPU/memoria por
+proceso con señal de criptominero · DNS pasivo sin captura · baseline de
+binarios por hash de contenido · una auditoría mucho más amplia (el home de
+cada usuario, reverse shells, unidades del sistema, Winlogon/IFEO/servicios,
+permisos) con marca **NUEVO** para lo visto por primera vez en 24 h · bandeja,
+notificaciones y navegador funcionando como root en Linux · bloqueo de IPv6 ·
+exportación de la línea temporal del incidente en un solo documento. Detalle
+completo en el [changelog](CHANGELOG.md).
+
 <div align="center">
 <img src="docs/screenshot-main.png" alt="Panel principal" width="880">
 </div>
@@ -129,7 +138,7 @@ no para atacar a otros.
 
 ## Instalación
 
-Descarga el binario para tu SO desde la página de [Releases](../../releases) y ejecútalo.
+Descarga el binario para tu SO desde la página de [Releases](../../releases) y ejecútalo. Lo que cambia en cada versión está en el [changelog](CHANGELOG.md).
 
 O compila desde el código (Go 1.26+, sin cgo):
 

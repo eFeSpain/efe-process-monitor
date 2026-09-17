@@ -18,6 +18,14 @@ sources say about the binary and the remote IP.
 
 > **Status: stable.** Works and is used day to day. Interfaces and stored data may evolve between versions.
 
+**What's new in 0.3.0** — Simplified Chinese UI · per-process CPU/memory with a
+cryptominer signal · passive DNS without a capture · new-binary baseline by
+content hash · a much wider audit (every user's home, reverse shells, system
+units, Winlogon/IFEO/services, permissions) with a **NEW** badge for findings
+first seen in the last 24 h · tray, notifications and browser working when run
+as root on Linux · IPv6 blocking · one-document incident timeline export.
+Full notes in the [changelog](CHANGELOG.md).
+
 <div align="center">
 <img src="docs/screenshot-main.png" alt="Main dashboard" width="880">
 </div>
@@ -122,7 +130,7 @@ attacking others.
 
 ## Install
 
-Download the binary for your OS from the [Releases](../../releases) page and run it.
+Download the binary for your OS from the [Releases](../../releases) page and run it. What changed in each version is in the [changelog](CHANGELOG.md).
 
 Or build from source (Go 1.26+, no cgo):
 
