@@ -162,6 +162,7 @@ func main() {
 	initDB()
 	loadState() // seed session whitelist/blocked from the DB
 	elevated = isElevated()
+	reapplyBlocks() // Linux: iptables/nft rules do not survive a reboot
 	tmpl = template.Must(template.New("").Funcs(funcMap).ParseFS(tmplFS, "web/templates/*.html"))
 	go primeIntel()
 	go monitorLoop()
@@ -551,6 +552,12 @@ func handleCapturePcap(w http.ResponseWriter, r *http.Request) {
 
 func handleAPIEvents(w http.ResponseWriter, r *http.Request) {
 	if r.Method == http.MethodDelete {
+		// With no filter this wipes the whole forensic history. The UI always
+		// confirms first; the API demands the same so a stray call can't.
+		if r.URL.Query().Get("confirm") != "1" {
+			http.Error(w, `{"ok":false,"error":"confirm=1 required"}`, http.StatusBadRequest)
+			return
+		}
 		older, _ := strconv.Atoi(r.URL.Query().Get("older"))
 		kind := r.URL.Query().Get("kind")
 		proc := r.URL.Query().Get("process")
@@ -712,6 +719,10 @@ func writeJSON(w http.ResponseWriter, v any) {
 
 // outboundIP reports the local address the OS would use to reach the internet.
 // detectCapture uses it to pick the tshark interface that matches.
+//
+// Dialing a UDP socket sends nothing: it only asks the kernel for the route and
+// binds the local side. No packet leaves for 8.8.8.8, so this is not an egress
+// and does not belong in the privacy modal.
 func outboundIP() string {
 	c, err := net.Dial("udp", "8.8.8.8:80")
 	if err != nil {

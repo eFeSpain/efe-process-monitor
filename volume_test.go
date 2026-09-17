@@ -114,6 +114,36 @@ func TestProcSampleComputesCPU(t *testing.T) {
 	}
 }
 
+// Like egress, CPU has to be sustained: one busy interval is a page render or
+// a build step, not a miner.
+func TestProcSampleNeedsSustainedCPU(t *testing.T) {
+	old := numCPU
+	numCPU = 1
+	t.Cleanup(func() { numCPU = old })
+
+	var s ioSample
+	t0 := time.Now()
+	cpu := 0.0
+	s.advance(t0, 0, 0, cpu)
+	for i := 1; i < cpuHotSamples; i++ {
+		cpu += 0.9 // 90 % of one core per second
+		s.advance(t0.Add(time.Duration(i)*time.Second), 0, 0, cpu)
+		if s.rate.HighCPU {
+			t.Fatalf("HighCPU after %d samples, threshold is %d", i, cpuHotSamples)
+		}
+	}
+	cpu += 0.9
+	s.advance(t0.Add(time.Duration(cpuHotSamples)*time.Second), 0, 0, cpu)
+	if !s.rate.HighCPU {
+		t.Errorf("expected HighCPU after %d consecutive hot samples (cpu=%v)", cpuHotSamples, s.rate.CPU)
+	}
+	// An idle interval clears it: the flag describes now.
+	s.advance(t0.Add(time.Duration(cpuHotSamples+1)*time.Second), 0, 0, cpu+0.01)
+	if s.rate.HighCPU {
+		t.Error("HighCPU should clear once the load drops")
+	}
+}
+
 // The process clock and the wall clock are read at different instants, so a
 // process pegging every core can compute to slightly over 100. Clamp, never
 // show "103 %".

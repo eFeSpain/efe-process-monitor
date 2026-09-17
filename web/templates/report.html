@@ -678,7 +678,8 @@ function esc(s) {
 function eventLabel(ev) {
     const proc = ev.process || 'N/A', pid = ev.pid || '—';
     let tags = ev.new_process ? ` [${T.tag_newproc}]` : '';
-    if (ev.anomaly) tags += ` [${T.tag_newbin}]`;
+    if (ev.changed) tags += ` [${T.tag_binchanged}]`;
+    else if (ev.anomaly) tags += ` [${T.tag_newbin}]`;
     if (ev.beacon) return `⚠ ${T.ev_beacon} ~${ev.beacon}s — ${proc} (${pid}) → ${ev.remote}${tags}`;
     switch (ev.kind) {
         case 'closed':  return `✕ ${T.ev_closed} — ${proc} (${pid})${ev.remote ? ' → ' + ev.remote : ''}`;
@@ -903,6 +904,7 @@ function deleteHistory() {
     if (kind) qs.set('kind', kind);
     if (proc) qs.set('process', proc);
     if (older && older !== '0') qs.set('older', older);
+    qs.set('confirm', '1'); // the server refuses a deletion without it
     fetch('/api/events?' + qs.toString(), { method: 'DELETE' })
         .then(r => r.json()).then(res => { openHistory(); })
         .catch(() => openHistory());

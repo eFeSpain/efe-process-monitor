@@ -82,6 +82,7 @@ type Conn struct {
 	RateOut       float64 // bytes/sec outbound
 	HighEgress    bool    // sustained outbound flow; informational unless combined
 	CPU           float64 // % of the whole machine over the last monitor interval (volume.go)
+	HighCPU       bool    // sustained high CPU; informational unless combined (miner shape)
 	RSS           uint64  // resident memory in bytes (Windows: working set)
 	Threads       int32
 	User          string // owning account, "" if not resolvable
@@ -620,6 +621,7 @@ const (
 	wUntrustedPath   = 8.0  // Downloads: weakly suspicious, extremely common
 	wMalwarePort     = 12.0 // a port still used by live tooling (Metasploit)
 	wExfilCombo      = 25.0 // sustained egress *from a binary already distrusted*
+	wMinerCombo      = 25.0 // sustained CPU *from a binary already distrusted*
 )
 
 func threatScore(c *Conn) int {
@@ -672,6 +674,12 @@ func threatScore(c *Conn) int {
 	if c.HighEgress && (c.Suspicious || c.SuspPort ||
 		(c.Details != nil && c.Details.BadSpawn != "")) {
 		add(wExfilCombo, "exfil", humanRate(c.RateOut))
+	}
+	// Same logic for CPU: sustained load is a compiler or a game on a healthy
+	// box, and the cryptominer shape only once the binary is suspect anyway.
+	if c.HighCPU && (c.Suspicious || c.SuspPort ||
+		(c.Details != nil && c.Details.BadSpawn != "")) {
+		add(wMinerCombo, "cpu", fmt.Sprintf("%.0f", c.CPU))
 	}
 	switch c.Sig.Status {
 	case "NotSigned":
@@ -1001,6 +1009,7 @@ func analyzeConnections(hideSelf bool) []Conn {
 		conn.RateIn, conn.RateOut, conn.HighEgress = rate.In, rate.Out, rate.HighEgress
 		conn.CPU, conn.RSS, conn.Threads, conn.User, conn.ResOK =
 			rate.CPU, rate.RSS, rate.Threads, rate.User, rate.ResOK
+		conn.HighCPU = rate.HighCPU
 		if isLAN(conn.RemoteIP) {
 			conn.LAN = lanMap[conn.RemoteIP]
 		}

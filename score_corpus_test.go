@@ -200,6 +200,34 @@ var scoreCorpus = []struct {
 		},
 	},
 
+	{
+		// Sustained CPU from a signed, well-known binary is a build, a game or
+		// an encoder. It must not move the needle.
+		name: "signed app pegging the CPU (compiler)",
+		want: benign,
+		conn: Conn{
+			VT: "0", Exe: `C:\Program Files\JetBrains\bin\idea64.exe`,
+			Sig:      Signature{Status: "Valid", Signer: "JetBrains s.r.o.", Trusted: true},
+			RemoteIP: "13.107.42.16",
+			Enrich:   &Enrichment{ISP: "Microsoft", Provider: "Microsoft"},
+			HighCPU:  true, CPU: 95,
+		},
+	},
+	{
+		// The same load from an unsigned binary in a staging directory is the
+		// cryptominer shape.
+		name: "unsigned binary in temp pegging the CPU",
+		want: suspicious,
+		conn: Conn{
+			VT: "NOT_IN_VT", Exe: `/tmp/.x/kdevtmpfsi`,
+			Suspicious: true,
+			Sig:        Signature{Status: "Unmanaged"},
+			RemoteIP:   "45.9.148.30",
+			Enrich:     &Enrichment{},
+			HighCPU:    true, CPU: 98,
+		},
+	},
+
 	// ── Malicious: treat as compromised ───────────────────────────────────────
 	{
 		name: "known Feodo C2",
@@ -283,6 +311,7 @@ func TestScoreOrdering(t *testing.T) {
 		{"web server spawned a shell (webshell)", "unmanaged binary in a staging directory, otherwise clean"},
 		{"unsigned binary in temp with a few VT detections", "development server on a legacy RAT port"},
 		{"IP in a Spamhaus DROP netblock with high abuse score", "cloud IP with noisy abuse reports"},
+		{"unsigned binary in temp pegging the CPU", "signed app pegging the CPU (compiler)"},
 	} {
 		hi, lo := scoreOf(p[0]), scoreOf(p[1])
 		if hi <= lo {

@@ -52,6 +52,14 @@ const (
 
 	// ioSampleTTL drops tracking state for processes that stopped showing up.
 	ioSampleTTL = 10 * time.Minute
+
+	// cpuHotPercent / cpuHotSamples define "sustained CPU": at least this share
+	// of the whole machine for this many consecutive samples (15 s at the
+	// monitor's 3 s cadence). Like egress, it is informational on its own —
+	// a compiler, a game and a video encoder all look like this — and scores
+	// only from a binary that is already suspect, which is the miner shape.
+	cpuHotPercent = 50.0
+	cpuHotSamples = 5
 )
 
 // ioRate is the current traffic and resource picture for one process.
@@ -63,6 +71,7 @@ type ioRate struct {
 	// only: none of it scores, for the same reason volume does not — a compiler,
 	// a game and a video call all burn CPU and memory.
 	CPU     float64 // percent of the whole machine (100 = every core busy), last interval
+	HighCPU bool    // CPU has been over cpuHotPercent for cpuHotSamples in a row
 	RSS     uint64  // resident set in bytes (Windows: working set, shared pages included)
 	Threads int32
 	User    string // owning account, resolved once per PID
@@ -74,7 +83,8 @@ type ioSample struct {
 	in, out   uint64  // cumulative counters at `at`
 	cpu       float64 // cumulative CPU seconds (user+system) at `at`
 	rate      ioRate
-	hot       int
+	hot       int // consecutive samples over the egress threshold
+	cpuHot    int // consecutive samples over the CPU threshold
 	lastSeen  time.Time
 	haveFirst bool
 	userDone  bool // Username was attempted; it can legitimately fail for other users' processes
@@ -109,7 +119,7 @@ func (s *ioSample) advance(now time.Time, in, out uint64, cpu float64) {
 	// nonsensical rate from the difference of two unrelated processes. CPU time
 	// is monotonic too, and it also identifies the owner as stale.
 	if in < s.in || out < s.out || cpu < s.cpu {
-		s.rate, s.hot, s.userDone = ioRate{}, 0, false
+		s.rate, s.hot, s.cpuHot, s.userDone = ioRate{}, 0, 0, false
 		return
 	}
 	s.rate.In = float64(in-s.in) / secs
@@ -128,6 +138,12 @@ func (s *ioSample) advance(now time.Time, in, out uint64, cpu float64) {
 	if s.rate.CPU > 100 {
 		s.rate.CPU = 100
 	}
+	if s.rate.CPU >= cpuHotPercent {
+		s.cpuHot++
+	} else {
+		s.cpuHot = 0
+	}
+	s.rate.HighCPU = s.cpuHot >= cpuHotSamples
 }
 
 // procEgressBytes returns the cumulative (inbound, outbound) byte counters used

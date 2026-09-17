@@ -21,6 +21,11 @@ CREATE INDEX IF NOT EXISTS idx_events_epoch ON events(epoch);
 CREATE TABLE IF NOT EXISTS hashes      (hash TEXT PRIMARY KEY, score TEXT, checked TEXT);
 CREATE TABLE IF NOT EXISTS signatures  (exe TEXT PRIMARY KEY, mtime INTEGER, status TEXT, signer TEXT, trusted INTEGER);
 CREATE TABLE IF NOT EXISTS baseline    (exe TEXT PRIMARY KEY, first_seen TEXT);
+-- Baseline keyed by content as well as path: a binary swapped in place is the
+-- most common persistence move, and a path-only baseline never noticed it.
+-- The path-only table is kept and still written, so a downgrade keeps working
+-- and pre-upgrade rows are adopted instead of re-announced as new.
+CREATE TABLE IF NOT EXISTS baseline_hash (exe TEXT, hash TEXT, first_seen TEXT, PRIMARY KEY (exe, hash));
 CREATE TABLE IF NOT EXISTS whitelist   (exe TEXT PRIMARY KEY, added TEXT);
 CREATE TABLE IF NOT EXISTS ip_whitelist(ip TEXT PRIMARY KEY, added TEXT);
 CREATE TABLE IF NOT EXISTS blocked     (ip TEXT PRIMARY KEY, at TEXT, report TEXT);
@@ -185,16 +190,41 @@ func dbSaveSignature(exe string, mtime int64, s Signature) {
 
 // ── Baseline ─────────────────────────────────────────────────────────────────
 
-func baselineSeen(exe string) bool {
+// baselineSeen reports whether this exact binary — path and content hash — has
+// been seen before, recording it if not. changed is true when the path was
+// already known with a different hash: the file was replaced on disk, which is
+// a stronger signal than a new binary. An unreadable file (hash "") falls back
+// to the path-only judgement, because "it changed" cannot be claimed.
+func baselineSeen(exe, hash string) (seen, changed bool) {
 	if exe == "" || exe == "N/A" || exe == "ACCESS_DENIED" {
-		return true
+		return true, false
+	}
+	if hash == "" {
+		hash = "?"
 	}
 	var x int
-	if db.QueryRow("SELECT 1 FROM baseline WHERE exe=?", exe).Scan(&x) == nil {
-		return true
+	if db.QueryRow("SELECT 1 FROM baseline_hash WHERE exe=? AND hash=?", exe, hash).Scan(&x) == nil {
+		return true, false
 	}
-	db.Exec("INSERT OR IGNORE INTO baseline VALUES (?,?)", exe, time.Now().Format("2006-01-02 15:04:05"))
-	return false
+	pathKnown := db.QueryRow("SELECT 1 FROM baseline_hash WHERE exe=?", exe).Scan(&x) == nil
+	if pathKnown && hash == "?" {
+		return true, false // known path, content unreadable now: no claim either way
+	}
+	// A row in the path-only table with nothing in baseline_hash is from before
+	// the upgrade: adopt the current content silently rather than announcing
+	// every binary on the machine as new once.
+	legacy := !pathKnown && db.QueryRow("SELECT 1 FROM baseline WHERE exe=?", exe).Scan(&x) == nil
+	now := time.Now().Format("2006-01-02 15:04:05")
+	db.Exec("INSERT OR IGNORE INTO baseline_hash VALUES (?,?,?)", exe, hash, now)
+	db.Exec("INSERT OR IGNORE INTO baseline VALUES (?,?)", exe, now)
+	switch {
+	case pathKnown:
+		return false, true
+	case legacy:
+		return true, false
+	default:
+		return false, false
+	}
 }
 
 // These are the pure SQLite persistence layer. The session-aware public API

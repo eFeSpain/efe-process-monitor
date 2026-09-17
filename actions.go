@@ -125,6 +125,33 @@ func unblockIP(ip string) error {
 	return fmt.Errorf("unsupported OS")
 }
 
+// reapplyBlocks re-creates the firewall rules for the persisted blocks. netsh
+// rules on Windows survive a reboot; iptables/nft rules do not, so on Linux a
+// "permanent" block was only permanent in the panel — the IP showed as blocked
+// while the traffic flowed. Called once at startup, after elevation is known.
+func reapplyBlocks() {
+	if runtime.GOOS != "linux" {
+		return
+	}
+	blocked := listBlocked()
+	if len(blocked) == 0 {
+		return
+	}
+	if !elevated {
+		log.Printf("[!] Bloqueos        %d IPs persistidas NO reaplicadas al firewall: requiere root", len(blocked))
+		return
+	}
+	ok := 0
+	for _, b := range blocked {
+		if err := blockIP(b.IP); err != nil {
+			log.Printf("[!] Bloqueos        no se pudo reaplicar %s: %v", b.IP, err)
+			continue
+		}
+		ok++
+	}
+	log.Printf("[+] Bloqueos        %d/%d IPs persistidas reaplicadas al firewall", ok, len(blocked))
+}
+
 // relaunchSelf starts a fresh copy of this executable (same args) with
 // RESTART_WAIT set so it waits for this process to release the port, then the
 // caller exits. Used by the "Restart now" action to apply a new listen address.

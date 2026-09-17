@@ -204,6 +204,10 @@ var translations = map[string]map[string]string{
 		"bd_spamhaus":       "Spamhaus DROP",
 		"bd_tor":            "Tor exit",
 		"bd_cves":           "%s CVEs (Shodan)",
+		"bd_cpu":            "CPU sostenida (%s %%) desde binario sospechoso",
+		"ev_binchanged":     "binario reemplazado en disco (hash distinto)",
+		"tag_binchanged":    "binario cambiado",
+		"notif_binchanged":  "⚠ Binario reemplazado en disco",
 	},
 	"en": {
 		"title":               "eFe Process Monitor",
@@ -399,6 +403,10 @@ var translations = map[string]map[string]string{
 		"bd_spamhaus":         "Spamhaus DROP",
 		"bd_tor":              "Tor exit",
 		"bd_cves":             "%s CVEs (Shodan)",
+		"bd_cpu":              "sustained CPU (%s %%) from a suspect binary",
+		"ev_binchanged":       "binary replaced on disk (different hash)",
+		"tag_binchanged":      "binary changed",
+		"notif_binchanged":    "⚠ Binary replaced on disk",
 	},
 	"zh": {
 		"title":               "eFe Process Monitor",
@@ -594,6 +602,10 @@ var translations = map[string]map[string]string{
 		"bd_spamhaus":         "Spamhaus DROP",
 		"bd_tor":              "Tor 出口节点",
 		"bd_cves":             "%s 个 CVE（Shodan）",
+		"bd_cpu":              "可疑程序持续占用 CPU（%s %%）",
+		"ev_binchanged":       "磁盘上的程序文件已被替换（哈希不同）",
+		"tag_binchanged":      "程序已更改",
+		"notif_binchanged":    "⚠ 磁盘上的程序文件已被替换",
 	},
 }
 

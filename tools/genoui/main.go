@@ -134,8 +134,11 @@ func main() {
 // cap length so the embedded table stays compact and the UI label stays short.
 func cleanVendor(s string) string {
 	s = strings.Join(strings.Fields(s), " ")
-	if len(s) > 48 {
-		s = strings.TrimSpace(s[:48])
+	// Cut by rune, not byte: a byte slice can land inside a multi-byte
+	// character ("Société…", "株式会社…") and the table then carries a
+	// replacement diamond into every UI that shows the vendor.
+	if r := []rune(s); len(r) > 48 {
+		s = strings.TrimSpace(string(r[:48]))
 	}
 	return s
 }

@@ -25,6 +25,7 @@ type Event struct {
 	NewProcess bool    `json:"new_process,omitempty"`
 	Anomaly    bool    `json:"anomaly,omitempty"`
 	Beacon     float64 `json:"beacon,omitempty"`
+	Changed    bool    `json:"changed,omitempty"` // known path, different content: replaced on disk
 	Detail     string  `json:"detail,omitempty"`
 }
 
@@ -232,7 +233,9 @@ func monitorLoop() {
 	seen := time.Now()
 	for _, c := range prev {
 		knownPIDs[c.Pid] = seen
-		baselineSeen(describe(c).Exe)
+		if exe := describe(c).Exe; exe != "" {
+			baselineSeen(exe, fileHash(exe))
+		}
 	}
 	lastPrune := time.Now()
 
@@ -271,8 +274,18 @@ func monitorLoop() {
 			if c.Pid > 0 && knownPIDs[c.Pid].IsZero() {
 				ev.NewProcess = true
 			}
-			if ev.Exe != "" && !baselineSeen(ev.Exe) {
-				ev.Anomaly = true
+			if ev.Exe != "" {
+				if seen, changed := baselineSeen(ev.Exe, fileHash(ev.Exe)); !seen {
+					ev.Anomaly = true
+					if changed {
+						// Same path, different bytes: the binary was replaced.
+						// That is what an in-place trojanization looks like, so
+						// it goes to the feed as an alert with the reason.
+						ev.Changed = true
+						ev.Kind = "alert"
+						ev.Detail = strings_(currentLang())["ev_binchanged"]
+					}
+				}
 			}
 			if remoteIP != "" && !isPrivateIP(remoteIP) {
 				if period := checkBeacon(ev.Exe, remoteIP, now); period > 0 {
@@ -296,6 +309,9 @@ func monitorLoop() {
 					notify(T["notif_c2"],
 						fmt.Sprintf("%s → %s %s ~%.0fs", ev.Process, remoteIP, T["notif_every"], ev.Beacon),
 						"beacon:"+ev.Exe+remoteIP)
+				case ev.Changed:
+					notify(T["notif_binchanged"],
+						fmt.Sprintf("%s (%d) — %s", ev.Process, ev.PID, ev.Exe), "changed:"+ev.Exe)
 				case ev.Kind == "alert":
 					notify(T["notif_susp"],
 						fmt.Sprintf("%s (%d) → %s", ev.Process, ev.PID, ev.Remote),
