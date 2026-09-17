@@ -123,13 +123,17 @@ attacking others.
 
 ## Screenshots
 
-| Connection details & IP intel | Packet capture |
-|---|---|
-| ![Details](docs/screenshot-details.png) | ![Capture](docs/screenshot-capture.png) |
-
-| Forensic history |
+| Connection details & IP intel |
 |---|
-| ![History](docs/screenshot-history.png) |
+| ![Details](docs/screenshot-details.png) |
+
+| Machine audit | Forensic history |
+|---|---|
+| ![Audit](docs/screenshot-audit.png) | ![History](docs/screenshot-history.png) |
+
+| Packet capture |
+|---|
+| ![Capture](docs/screenshot-capture.png) |
 
 ## Install
 

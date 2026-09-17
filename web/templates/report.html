@@ -37,6 +37,9 @@ td { padding:6px 12px; border-bottom:1px solid #21262d; white-space:nowrap; vert
 .detail-block { padding:10px 16px; }
 .detail-block h4 { color:#58a6ff; font-size:11px; text-transform:uppercase; margin-bottom:6px; }
 .detail-line { display:flex; gap:10px; padding:2px 0; }
+/* The value side must be allowed to shrink, or a row of hostname chips runs
+   past its column into the next block. */
+.detail-line > span:last-child { flex:1; min-width:0; overflow-wrap:anywhere; }
 .detail-label { color:#8b949e; min-width:90px; }
 .listen { color:#8b949e; } .established { color:#3fb950; } .remote-yes { color:#58a6ff; }
 .udp { color:#a371f7; } /* datagram socket with no peer (bound only) */

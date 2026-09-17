@@ -132,13 +132,17 @@ no para atacar a otros.
 
 ## Capturas
 
-| Detalle de conexión e intel de IP | Captura de paquetes |
-|---|---|
-| ![Detalle](docs/screenshot-details.png) | ![Captura](docs/screenshot-capture.png) |
-
-| Histórico forense |
+| Detalle de conexión e intel de IP |
 |---|
-| ![Histórico](docs/screenshot-history.png) |
+| ![Detalle](docs/screenshot-details.png) |
+
+| Auditoría del equipo | Histórico forense |
+|---|---|
+| ![Auditoría](docs/screenshot-audit.png) | ![Histórico](docs/screenshot-history.png) |
+
+| Captura de paquetes |
+|---|
+| ![Captura](docs/screenshot-capture.png) |
 
 ## Instalación
 
