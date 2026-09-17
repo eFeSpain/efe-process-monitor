@@ -94,6 +94,12 @@ var auditStrings = map[string]map[string]string{
 		"rk_modules":      "Módulos del kernel fuera de árbol (out-of-tree / unsigned)",
 		"modules_ok":      "Sin módulos fuera de árbol detectados.",
 		"modules_na":      "No se pudo leer /sys/module.",
+		"promisc_tool":    "En modo promiscuo (%s) mientras corre una herramienta de captura: %s",
+		"pl_auto_susp":    "Autostart de escritorio que ejecuta desde rutas sospechosas",
+		"pl_auto_susp_ok": "Ninguna entrada de autostart ejecuta desde temp, shm ni un home.",
+		"promisc_own":     "En modo promiscuo por la captura en curso de este monitor: %s",
+		"tainted_known":   "tainted=%s (%s): atribuible a módulos propietarios conocidos (%s).",
+		"modules_known":   "%d módulos fuera de árbol, todos de familias propietarias conocidas: %s",
 		"p_revshell":      "Shells con stdin/stdout en un socket (reverse shell)",
 		"p_revshell_ok":   "Ninguna shell ni intérprete tiene sus flujos estándar en un socket.",
 		"p_traced":        "Procesos bajo ptrace (depurador / inyección)",
@@ -182,6 +188,12 @@ var auditStrings = map[string]map[string]string{
 		"rk_modules":      "Out-of-tree / unsigned kernel modules",
 		"modules_ok":      "No out-of-tree modules detected.",
 		"modules_na":      "Could not read /sys/module.",
+		"promisc_tool":    "Promiscuous (%s) while a capture tool is running: %s",
+		"pl_auto_susp":    "Desktop autostart entries running from suspicious paths",
+		"pl_auto_susp_ok": "No autostart entry runs from temp, shm or a home directory.",
+		"promisc_own":     "Promiscuous because of this monitor's own capture in progress: %s",
+		"tainted_known":   "tainted=%s (%s): attributable to known proprietary modules (%s).",
+		"modules_known":   "%d out-of-tree modules, all from known proprietary families: %s",
 		"p_revshell":      "Shells with stdin/stdout on a socket (reverse shell)",
 		"p_revshell_ok":   "No shell or interpreter has its standard streams on a socket.",
 		"p_traced":        "Processes under ptrace (debugger / injection)",
@@ -269,6 +281,12 @@ var auditStrings = map[string]map[string]string{
 		"rk_modules":      "树外 / 未签名的内核模块",
 		"modules_ok":      "未检测到树外模块。",
 		"modules_na":      "无法读取 /sys/module。",
+		"promisc_tool":    "处于混杂模式（%s），同时有抓包工具在运行：%s",
+		"pl_auto_susp":    "从可疑路径运行的桌面自启动项",
+		"pl_auto_susp_ok": "没有自启动项从 temp、shm 或家目录运行。",
+		"promisc_own":     "因本监控器正在进行的抓包而处于混杂模式：%s",
+		"tainted_known":   "tainted=%s（%s）：可归因于已知的专有模块（%s）。",
+		"modules_known":   "%d 个树外模块，均属于已知的专有驱动家族：%s",
 		"p_revshell":      "标准输入/输出连接到套接字的 shell（反向 shell）",
 		"p_revshell_ok":   "没有 shell 或解释器的标准流连接到套接字。",
 		"p_traced":        "处于 ptrace 之下的进程（调试器 / 注入）",
@@ -516,6 +534,14 @@ func auditProcesses(lang string) []AuditCheck {
 		"csrss.exe": true, "winlogon.exe": true, "smss.exe": true, "wininit.exe": true,
 	}
 	procs, _ := process.Processes()
+	// Socket inodes of the network sockets, so a shell whose stdio is a *Unix*
+	// socket — every systemd service writes stdout to journald that way, and
+	// stdio-over-socketpair is how editors talk to language servers — is not
+	// mistaken for a reverse shell. A reverse shell needs the network.
+	var inet map[string]bool
+	if runtime.GOOS == "linux" {
+		inet = inetSocketInodes()
+	}
 	for _, p := range procs {
 		name, _ := p.Name()
 		exe, _ := p.Exe()
@@ -543,7 +569,7 @@ func auditProcesses(lang string) []AuditCheck {
 			if shellLike[procBase(name)] {
 				for _, fd := range []string{"0", "1"} {
 					if t, err := os.Readlink(fmt.Sprintf("/proc/%d/fd/%s", p.Pid, fd)); err == nil &&
-						strings.HasPrefix(t, "socket:") {
+						inet[socketInode(t)] {
 						revshell = append(revshell, fmt.Sprintf("%s (pid %d) fd%s → %s", name, p.Pid, fd, t))
 						break
 					}
@@ -584,6 +610,20 @@ func auditProcesses(lang string) []AuditCheck {
 var shellLike = map[string]bool{
 	"sh": true, "bash": true, "dash": true, "zsh": true, "ksh": true, "fish": true,
 	"python": true, "python3": true, "perl": true, "ruby": true, "php": true, "lua": true,
+}
+
+// inetSocketInodes returns the inode of every TCP/UDP socket on the system,
+// from /proc/net. Unix sockets are deliberately not included.
+func inetSocketInodes() map[string]bool {
+	set := map[string]bool{}
+	for _, f := range []string{"/proc/net/tcp", "/proc/net/tcp6", "/proc/net/udp", "/proc/net/udp6"} {
+		if b, err := os.ReadFile(f); err == nil { // #nosec G304 -- fixed /proc paths
+			for _, ino := range parseProcNetInodes(string(b)) {
+				set[ino] = true
+			}
+		}
+	}
+	return set
 }
 
 // tracerPid reads TracerPid from /proc/<pid>/status; 0 when not traced or unreadable.
@@ -721,9 +761,11 @@ func auditPersistenceLinux(lang string) []AuditCheck {
 	for _, f := range cronFiles {
 		if b, err := os.ReadFile(f); err == nil {
 			for _, ln := range strings.Split(string(b), "\n") {
-				if ln = strings.TrimSpace(ln); ln != "" && !strings.HasPrefix(ln, "#") {
-					cron = append(cron, filepath.Base(f)+": "+ln)
+				ln = strings.TrimSpace(ln)
+				if ln == "" || strings.HasPrefix(ln, "#") || cronEnvLine(ln) {
+					continue // SHELL=, PATH=, MAILTO= are settings, not jobs
 				}
+				cron = append(cron, filepath.Base(f)+": "+ln)
 			}
 		}
 	}
@@ -752,19 +794,34 @@ func auditPersistenceLinux(lang string) []AuditCheck {
 	}
 	out = append(out, finding(lang, cat, "pl_rc", "risk", rc, "pl_rc_ok"))
 
-	var autostart []string
-	if ents, err := os.ReadDir("/etc/xdg/autostart"); err == nil {
-		for _, e := range ents {
-			autostart = append(autostart, e.Name())
+	// /etc/xdg/autostart is the desktop's own three dozen entries and pure
+	// noise as a list; what matters from either directory is an entry whose
+	// Exec= runs something from a staging or home path. Per-user entries are
+	// listed: those are the ones an attacker (or the user) adds.
+	var autostart, autoSusp []string
+	scanAutostart := func(dir, label string, list bool) {
+		ents, err := os.ReadDir(dir)
+		if err != nil {
+			return
 		}
-	}
-	for _, u := range homes {
-		if ents, err := os.ReadDir(filepath.Join(u.home, ".config/autostart")); err == nil {
-			for _, e := range ents {
-				autostart = append(autostart, u.name+": "+e.Name())
+		for _, e := range ents {
+			if list {
+				autostart = append(autostart, label+e.Name())
+			}
+			b, err := os.ReadFile(filepath.Join(dir, e.Name())) // #nosec G304 -- .desktop files under a fixed directory
+			if err != nil {
+				continue
+			}
+			if ex := desktopExec(string(b)); ex != "" && suspiciousExecPath(ex) {
+				autoSusp = append(autoSusp, label+e.Name()+": "+ex)
 			}
 		}
 	}
+	scanAutostart("/etc/xdg/autostart", "xdg: ", false)
+	for _, u := range homes {
+		scanAutostart(filepath.Join(u.home, ".config/autostart"), u.name+": ", true)
+	}
+	out = append(out, finding(lang, cat, "pl_auto_susp", "risk", autoSusp, "pl_auto_susp_ok"))
 	out = append(out, finding(lang, cat, "pl_auto", "info", autostart, "pl_auto_ok"))
 
 	var units []string
@@ -959,16 +1016,20 @@ func auditHardeningLinux(lang string) []AuditCheck {
 		} else {
 			out = append(out, check(lang, cat, "hl_ufw", "ok", atr(lang, "ufw_on")))
 		}
-	case hasCmd("nft"):
-		if n := countNftRules(runCmd(6*time.Second, "nft", "list", "ruleset")); n > 0 {
-			out = append(out, check(lang, cat, "hl_fw", "ok", fmt.Sprintf(atr(lang, "fw_rules"), "nft", n)))
-		} else {
-			out = append(out, check(lang, cat, "hl_fw", "warn", atr(lang, "fw_none")))
+	case hasCmd("nft"), hasCmd("iptables"):
+		// Listing the ruleset needs root; without it the command fails, and
+		// an empty listing must read as "could not check", not "no rules".
+		tool, args, count := "nft", []string{"list", "ruleset"}, countNftRules
+		if !hasCmd("nft") {
+			tool, args, count = "iptables", []string{"-S"}, countIptablesRules
 		}
-	case hasCmd("iptables"):
-		if n := countIptablesRules(runCmd(6*time.Second, "iptables", "-S")); n > 0 {
-			out = append(out, check(lang, cat, "hl_fw", "ok", fmt.Sprintf(atr(lang, "fw_rules"), "iptables", n)))
-		} else {
+		raw, err := runCmdErr(6*time.Second, tool, args...)
+		switch n := count(raw); {
+		case err != nil && n == 0:
+			out = append(out, check(lang, cat, "hl_fw", "info", fmt.Sprintf(atr(lang, "check_failed"), err)))
+		case n > 0:
+			out = append(out, check(lang, cat, "hl_fw", "ok", fmt.Sprintf(atr(lang, "fw_rules"), tool, n)))
+		default:
 			out = append(out, check(lang, cat, "hl_fw", "warn", atr(lang, "fw_none")))
 		}
 	default:
@@ -1192,18 +1253,53 @@ func auditRootkit(lang string) []AuditCheck {
 		} else {
 			out = append(out, check(lang, cat, "rk_preload", "ok", atr(lang, "preload_ok")))
 		}
+		// Taint and out-of-tree modules are read together: on a desktop with
+		// the NVIDIA driver both fire on every machine, forever, and a warning
+		// that is always there is one nobody reads. When the taint is only
+		// O/E and every out-of-tree module is from a known proprietary family,
+		// both are reported as information with the attribution; anything
+		// else keeps the warning.
+		mods, modsErr := outOfTreeModules()
+		unknown := unknownModules(mods)
 		if b, err := os.ReadFile("/proc/sys/kernel/tainted"); err == nil {
 			t := strings.TrimSpace(string(b))
-			if t != "" && t != "0" {
-				out = append(out, check(lang, cat, "rk_tainted", "warn", fmt.Sprintf(atr(lang, "tainted_bad"), t)))
-			} else {
+			n, _ := strconv.Atoi(t)
+			flags := taintFlags(n)
+			switch {
+			case n == 0:
 				out = append(out, check(lang, cat, "rk_tainted", "ok", atr(lang, "tainted_ok")))
+			case strings.Trim(flags, "OE ") == "" && len(mods) > 0 && len(unknown) == 0:
+				out = append(out, check(lang, cat, "rk_tainted", "info",
+					fmt.Sprintf(atr(lang, "tainted_known"), t, flags, strings.Join(mods, ", "))))
+			default:
+				out = append(out, check(lang, cat, "rk_tainted", "warn", fmt.Sprintf(atr(lang, "tainted_bad"), t+" ("+flags+")")))
 			}
 		}
 		promisc, promiscRan := promiscIfaces()
-		out = append(out, findingOrSkipped(lang, cat, "rk_promisc", "warn", promisc, "promisc_ok", promiscRan))
+		pc := findingOrSkipped(lang, cat, "rk_promisc", "warn", promisc, "promisc_ok", promiscRan)
+		if len(promisc) > 0 {
+			// A capture tool explains promiscuous mode: our own tshark (which
+			// may belong to another instance of this monitor, e.g. the root one
+			// while this one runs as the user), or Wireshark/tcpdump run by hand.
+			// Name it rather than flag it.
+			if captureActive.Load() > 0 {
+				pc.Status, pc.Detail = "info", fmt.Sprintf(atr(lang, "promisc_own"), strings.Join(promisc, ", "))
+			} else if tools := captureToolsRunning(); len(tools) > 0 {
+				pc.Status, pc.Detail = "info", fmt.Sprintf(atr(lang, "promisc_tool"), strings.Join(promisc, ", "), strings.Join(tools, ", "))
+			}
+		}
+		out = append(out, pc)
 		out = append(out, auditEnvPreload(lang, cat))
-		out = append(out, auditKernelModules(lang, cat))
+		switch {
+		case modsErr != nil:
+			out = append(out, check(lang, cat, "rk_modules", "info", atr(lang, "modules_na")))
+		case len(mods) > 0 && len(unknown) == 0:
+			c := check(lang, cat, "rk_modules", "info", fmt.Sprintf(atr(lang, "modules_known"), len(mods), strings.Join(mods, ", ")))
+			c.Items = mods
+			out = append(out, c)
+		default:
+			out = append(out, finding(lang, cat, "rk_modules", "warn", mods, "modules_ok"))
+		}
 	}
 	if runtime.GOOS == "windows" {
 		out = append(out, auditWinDrivers(lang, cat))
@@ -1231,26 +1327,40 @@ func auditEnvPreload(lang, cat string) AuditCheck {
 	return check(lang, cat, "rk_env_preload", "ok", atr(lang, "preload_ok"))
 }
 
-// auditKernelModules lists out-of-tree or unsigned kernel modules via
-// /sys/module/<name>/taint. 'O' = out-of-tree, 'E' = unsigned out-of-tree.
-// Proprietary drivers (nvidia, vmware) legitimately show 'O'.
-func auditKernelModules(lang, cat string) AuditCheck {
+// captureToolsRunning lists running packet-capture processes ("name (pid)").
+func captureToolsRunning() []string {
+	var out []string
+	procs, _ := process.Processes()
+	for _, p := range procs {
+		if n, err := p.Name(); err == nil && captureTools[procBase(n)] {
+			out = append(out, fmt.Sprintf("%s (pid %d)", n, p.Pid))
+		}
+	}
+	return out
+}
+
+var captureTools = map[string]bool{
+	"dumpcap": true, "tshark": true, "wireshark": true, "tcpdump": true, "ettercap": true, "bettercap": true,
+}
+
+// outOfTreeModules lists the loaded modules whose /sys/module/<name>/taint
+// carries O (out-of-tree) or E (unsigned), as "name (flags)".
+func outOfTreeModules() ([]string, error) {
 	ents, err := os.ReadDir("/sys/module")
 	if err != nil {
-		return check(lang, cat, "rk_modules", "info", atr(lang, "modules_na"))
+		return nil, err
 	}
-	var suspicious []string
+	var mods []string
 	for _, e := range ents {
 		b, err := os.ReadFile(filepath.Join("/sys/module", e.Name(), "taint"))
 		if err != nil {
 			continue
 		}
-		t := strings.TrimSpace(string(b))
-		if strings.ContainsAny(t, "OE") {
-			suspicious = append(suspicious, e.Name()+" ("+t+")")
+		if t := strings.TrimSpace(string(b)); strings.ContainsAny(t, "OE") {
+			mods = append(mods, e.Name()+" ("+t+")")
 		}
 	}
-	return finding(lang, cat, "rk_modules", "warn", suspicious, "modules_ok")
+	return mods, nil
 }
 
 func auditHiddenPorts(lang, cat string) AuditCheck {

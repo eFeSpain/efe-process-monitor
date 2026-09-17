@@ -232,6 +232,89 @@ func suspiciousExecPath(cmd string) bool {
 	return isSuspiciousPath(bin) || strings.HasPrefix(bin, "/home/") || strings.HasPrefix(bin, "/root/")
 }
 
+// parseProcNetInodes returns the inode column of a /proc/net/{tcp,udp}[6] table.
+func parseProcNetInodes(content string) []string {
+	var out []string
+	for i, ln := range strings.Split(content, "\n") {
+		f := strings.Fields(ln)
+		if i == 0 || len(f) < 10 { // header, blanks
+			continue
+		}
+		out = append(out, f[9])
+	}
+	return out
+}
+
+// socketInode extracts N from a "socket:[N]" fd link; "" for anything else.
+func socketInode(link string) string {
+	if !strings.HasPrefix(link, "socket:[") || !strings.HasSuffix(link, "]") {
+		return ""
+	}
+	return link[len("socket:[") : len(link)-1]
+}
+
+// cronEnvLine reports a crontab settings line (SHELL=, PATH=, MAILTO=…), which
+// is not a job.
+func cronEnvLine(ln string) bool {
+	k, _, ok := strings.Cut(ln, "=")
+	if !ok || k == "" {
+		return false
+	}
+	for _, r := range k {
+		if !(r >= 'A' && r <= 'Z' || r >= 'a' && r <= 'z' || r >= '0' && r <= '9' || r == '_') {
+			return false
+		}
+	}
+	return true
+}
+
+// desktopExec returns the Exec= command of a .desktop file ("" if none).
+func desktopExec(content string) string {
+	for _, ln := range strings.Split(content, "\n") {
+		if v, ok := strings.CutPrefix(strings.TrimSpace(ln), "Exec="); ok {
+			return strings.TrimSpace(v)
+		}
+	}
+	return ""
+}
+
+// taintFlags decodes /proc/sys/kernel/tainted into the kernel's letter flags
+// (Documentation/admin-guide/tainted-kernels.rst), e.g. 12288 → "O E".
+func taintFlags(n int) string {
+	const letters = "PFSRMBUDAWCIOELKXT"
+	var f []string
+	for bit := 0; bit < len(letters); bit++ {
+		if n&(1<<bit) != 0 {
+			f = append(f, string(letters[bit]))
+		}
+	}
+	return strings.Join(f, " ")
+}
+
+// knownModuleFamilies are out-of-tree drivers that taint every machine they
+// are installed on and mean nothing by themselves.
+var knownModuleFamilies = []string{"nvidia", "vbox", "vmw", "vmmon", "vmnet", "zfs", "spl", "wl", "r8168", "evdi", "v4l2loopback", "openrazer", "xone", "xpad", "anbox", "ashmem", "binder"}
+
+// unknownModules returns the out-of-tree modules ("name (flags)") that are not
+// from a known proprietary family.
+func unknownModules(mods []string) []string {
+	var out []string
+	for _, m := range mods {
+		name := strings.ToLower(strings.Fields(m)[0])
+		known := false
+		for _, fam := range knownModuleFamilies {
+			if strings.HasPrefix(name, fam) {
+				known = true
+				break
+			}
+		}
+		if !known {
+			out = append(out, m)
+		}
+	}
+	return out
+}
+
 // countNftRules counts the rules of an `nft list ruleset` (lines inside chains
 // that are neither chain headers nor braces).
 func countNftRules(out string) int {

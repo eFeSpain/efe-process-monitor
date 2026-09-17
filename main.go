@@ -129,6 +129,7 @@ func main() {
 	// *and rewrite* that project's .env — writing AUTH_HASH and API keys into it.
 	appDir = exeDir()
 	initLogging() // before anything that logs, so the banner lands in the file too
+	ensureSbinPath()
 	envPath = filepath.Join(appDir, ".env")
 	candidates := []string{envPath}
 	if os.Getenv("EFEMON_DEV") == "1" {
@@ -548,6 +549,8 @@ func handleCapturePcap(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "tshark failed", 500)
 		return
 	}
+	captureActive.Add(1)
+	defer captureActive.Add(-1)
 	io.Copy(w, out)
 	cmd.Wait()
 }

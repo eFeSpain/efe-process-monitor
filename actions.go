@@ -16,6 +16,24 @@ func hasCmd(name string) bool {
 	return err == nil
 }
 
+// ensureSbinPath adds the sbin directories to this process's PATH on Linux.
+// nft, iptables, ss and ufw live there, and a user shell's PATH usually does
+// not include them — so the audit reported "ufw not installed, check
+// nft/iptables by hand" on a box where nft was one directory away, and the
+// hidden-ports check fell back to netstat. Affects only this process.
+func ensureSbinPath() {
+	if runtime.GOOS != "linux" {
+		return
+	}
+	path := os.Getenv("PATH")
+	for _, d := range []string{"/usr/local/sbin", "/usr/sbin", "/sbin"} {
+		if !strings.Contains(":"+path+":", ":"+d+":") {
+			path += ":" + d
+		}
+	}
+	os.Setenv("PATH", path)
+}
+
 // isIPv6 reports whether ip is an IPv6 literal. The Linux firewall tools are
 // split by family: iptables and an ipv4_addr nft set silently reject a v6
 // address, which used to make "Block IP" fail for every IPv6 peer.

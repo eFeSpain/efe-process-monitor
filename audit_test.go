@@ -1,6 +1,8 @@
 package main
 
 import (
+	"os"
+	"runtime"
 	"strings"
 	"testing"
 	"time"
@@ -188,6 +190,69 @@ func TestAuditDiff(t *testing.T) {
 	applyAuditDiff(fourth)
 	if len(fourth[0].New) != 0 {
 		t.Errorf("item older than the window must not be new: %v", fourth[0].New)
+	}
+}
+
+func TestProcNetAndSocketInodes(t *testing.T) {
+	tcp := "  sl  local_address rem_address   st tx_queue rx_queue tr tm->when retrnsmt   uid  timeout inode\n" +
+		"   0: 0100007F:1388 00000000:0000 0A 00000000:00000000 00:00000000 00000000  1000        0 123740 1 0000000000000000 100 0 0 10 0\n" +
+		"   1: 0F01A8C0:C2A6 11AFB814:01BB 01 00000000:00000000 00:00000000 00000000  1000        0 71798 1 0000000000000000 20 4 30 10 -1\n"
+	got := parseProcNetInodes(tcp)
+	if len(got) != 2 || got[0] != "123740" || got[1] != "71798" {
+		t.Errorf("inodes = %v", got)
+	}
+	if socketInode("socket:[6731]") != "6731" || socketInode("pipe:[99]") != "" || socketInode("/dev/pts/3") != "" {
+		t.Error("socketInode")
+	}
+}
+
+func TestCronEnvAndDesktopExec(t *testing.T) {
+	for ln, want := range map[string]bool{
+		"SHELL=/bin/sh": true, "PATH=/usr/bin:/bin": true, "MAILTO=root": true,
+		"17 * * * * root cd / && run-parts /etc/cron.hourly": false,
+		"@reboot /tmp/x": false, "=x": false,
+	} {
+		if got := cronEnvLine(ln); got != want {
+			t.Errorf("cronEnvLine(%q) = %v", ln, got)
+		}
+	}
+	d := "[Desktop Entry]\nName=x\nExec=/home/efe/.cache/.x/agent --quiet\nType=Application\n"
+	if got := desktopExec(d); got != "/home/efe/.cache/.x/agent --quiet" || !suspiciousExecPath(got) {
+		t.Errorf("desktopExec = %q", got)
+	}
+}
+
+func TestTaintAndKnownModules(t *testing.T) {
+	if got := taintFlags(12288); got != "O E" {
+		t.Errorf("taintFlags(12288) = %q, want \"O E\"", got)
+	}
+	if got := taintFlags(1 | 64); got != "P U" {
+		t.Errorf("taintFlags(65) = %q", got)
+	}
+	if taintFlags(0) != "" {
+		t.Error("taintFlags(0) should be empty")
+	}
+	mods := []string{"nvidia (OE)", "nvidia_drm (OE)", "vboxdrv (O)", "diamorphine (OE)"}
+	if got := unknownModules(mods); len(got) != 1 || got[0] != "diamorphine (OE)" {
+		t.Errorf("unknownModules = %v", got)
+	}
+}
+
+func TestEnsureSbinPath(t *testing.T) {
+	if runtime.GOOS != "linux" {
+		t.Skip("Linux only")
+	}
+	t.Setenv("PATH", "/usr/local/bin:/usr/bin:/bin")
+	ensureSbinPath()
+	got := os.Getenv("PATH")
+	for _, d := range []string{"/usr/local/sbin", "/usr/sbin", "/sbin"} {
+		if !strings.Contains(":"+got+":", ":"+d+":") {
+			t.Errorf("%s missing from PATH %q", d, got)
+		}
+	}
+	ensureSbinPath() // idempotent
+	if strings.Count(got+":", "/usr/sbin:") != 1 || os.Getenv("PATH") != got {
+		t.Errorf("PATH grew on a second call: %q", os.Getenv("PATH"))
 	}
 }
 

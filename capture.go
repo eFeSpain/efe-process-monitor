@@ -10,6 +10,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 )
 
 // ── Interface auto-detection ─────────────────────────────────────────────────
@@ -31,6 +32,12 @@ type CaptureInfo struct {
 var (
 	capMu   sync.Mutex
 	capInfo *CaptureInfo
+
+	// captureActive counts the tshark/dumpcap processes this monitor has
+	// running. The audit's promiscuous-mode check reads it: our own capture
+	// puts the interface in promiscuous mode, and reporting that as a rootkit
+	// indicator was the tool flagging itself.
+	captureActive atomic.Int32
 )
 
 var ifaceLineRe = regexp.MustCompile(`^(\d+)\.\s+(.+)$`)
@@ -195,6 +202,8 @@ func streamCapture(localIP, remoteIP, iface string, count int, emit func(map[str
 	if err := cmd.Start(); err != nil {
 		return err.Error()
 	}
+	captureActive.Add(1)
+	defer captureActive.Add(-1)
 
 	done := make(chan struct{})
 	go func() {
