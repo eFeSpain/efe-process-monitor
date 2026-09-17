@@ -18,7 +18,7 @@ sources say about the binary and the remote IP.
 
 > **Status: stable.** Works and is used day to day. Interfaces and stored data may evolve between versions.
 
-**What's new in 0.3.0** — Simplified Chinese UI · per-process CPU/memory with a
+**What's new in 0.3.x** — Simplified Chinese UI · per-process CPU/memory with a
 cryptominer signal · passive DNS without a capture · new-binary baseline by
 content hash · a much wider audit (every user's home, reverse shells, system
 units, Winlogon/IFEO/services, permissions) with a **NEW** badge for findings

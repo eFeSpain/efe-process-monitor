@@ -18,7 +18,7 @@ sobre el binario y la IP remota.
 
 > **Estado: estable.** Funciona y se usa a diario. La interfaz y los datos guardados pueden evolucionar entre versiones.
 
-**Novedades de la 0.3.0** — interfaz en chino simplificado · CPU/memoria por
+**Novedades de la 0.3.x** — interfaz en chino simplificado · CPU/memoria por
 proceso con señal de criptominero · DNS pasivo sin captura · baseline de
 binarios por hash de contenido · una auditoría mucho más amplia (el home de
 cada usuario, reverse shells, unidades del sistema, Winlogon/IFEO/servicios,

@@ -6,6 +6,21 @@ Versions follow [Semantic Versioning](https://semver.org/).
 
 ---
 
+## [0.3.1] — 2026-09-18
+
+### Fixed
+- **Details block layout**: the "asked for" hostname chips ran past their
+  column into the connections block. The value side of a detail line can now
+  shrink and wrap.
+
+### Documentation
+- Screenshots of the 0.3.x dashboard (main table with the CPU / Mem column,
+  details, history with the timeline export, and the new audit modal), with
+  addresses and machine-specific findings pixelated.
+- README: passive DNS, running as root on Linux (tray, notifications and
+  browser handed to the desktop user), timeline export, privacy note, and a
+  "what's new" summary linking to this changelog.
+
 ## [0.3.0] — 2026-09-17
 
 Eight rounds of work since 0.2.0, each kept below with its own notes. The short
