@@ -6,6 +6,7 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"sort"
 	"strconv"
 	"strings"
 	"sync"
@@ -17,10 +18,13 @@ import (
 
 // AuditCheck is one finding of the machine audit.
 type AuditCheck struct {
-	Category string `json:"category"`
-	Name     string `json:"name"`
-	Status   string `json:"status"` // ok | warn | risk | info
-	Detail   string `json:"detail"`
+	Category string   `json:"category"`
+	Key      string   `json:"key"` // stable id of the check (its i18n key); the diff is keyed on it
+	Name     string   `json:"name"`
+	Status   string   `json:"status"` // ok | warn | risk | info
+	Detail   string   `json:"detail"`
+	Items    []string `json:"items,omitempty"` // raw findings, language-neutral where possible
+	New      []string `json:"new,omitempty"`   // items first seen recently (see applyAuditDiff)
 }
 
 // auditStrings holds every user-facing audit string per language.
@@ -63,16 +67,13 @@ var auditStrings = map[string]map[string]string{
 		"rk_hidden": "Procesos ocultos (cross-view)", "rk_hidden_ok": "Sin discrepancias entre fuentes de procesos.",
 		"rk_ports":    "Puertos a la escucha ocultos (cross-view)",
 		"rk_ports_ok": "Sin discrepancias en puertos a la escucha.", "rk_ports_na": "No se pudo comparar con netstat/ss.",
-		"rk_port_item": "%d (en netstat/ss, no en la API)",
-		"rk_preload":   "/etc/ld.so.preload", "preload_bad": "Presente y no vacío (técnica de rootkit de usuario): %s",
+		"rk_preload": "/etc/ld.so.preload", "preload_bad": "Presente y no vacío (técnica de rootkit de usuario): %s",
 		"preload_ok":  "Ausente o vacío.",
 		"rk_tainted":  "Kernel tainted",
 		"tainted_bad": "tainted=%s (módulo fuera de árbol/sin firma; puede ser legítimo: drivers propietarios)",
 		"tainted_ok":  "tainted=0",
 		"rk_promisc":  "Interfaces en modo promiscuo", "promisc_ok": "Ninguna interfaz en modo promiscuo.",
 		"rk_drivers": "Drivers sin firma", "drivers_ok": "Todos los drivers están firmados.",
-		"rk_proc_proc": "PID %d responde a señal pero no aparece en /proc",
-		"rk_proc_only": "PID %d visible solo en %s", "src_api": "la API",
 		// Nuevos checks Linux
 		"hl_authkeys":     "Claves SSH autorizadas (~/.ssh/authorized_keys)",
 		"authkeys_ok":     "Sin claves SSH autorizadas.",
@@ -93,6 +94,28 @@ var auditStrings = map[string]map[string]string{
 		"rk_modules":      "Módulos del kernel fuera de árbol (out-of-tree / unsigned)",
 		"modules_ok":      "Sin módulos fuera de árbol detectados.",
 		"modules_na":      "No se pudo leer /sys/module.",
+		"p_revshell":      "Shells con stdin/stdout en un socket (reverse shell)",
+		"p_revshell_ok":   "Ninguna shell ni intérprete tiene sus flujos estándar en un socket.",
+		"p_traced":        "Procesos bajo ptrace (depurador / inyección)",
+		"p_traced_ok":     "Ningún proceso está siendo trazado.",
+		"pl_sysd_sys":     "Unidades systemd del sistema definidas localmente",
+		"pl_sysd_sys_ok":  "Sin unidades locales en /etc/systemd/system.",
+		"pl_sysd_susp":    "Unidades systemd que arrancan desde rutas sospechosas",
+		"pl_sysd_susp_ok": "Ninguna unidad del sistema arranca desde temp, shm ni un home.",
+		"pw_winlogon":     "Winlogon Shell / Userinit",
+		"winlogon_ok":     "Valores por defecto (explorer.exe / userinit.exe).",
+		"pw_ifeo":         "Depuradores IFEO (Image File Execution Options)",
+		"ifeo_ok":         "Sin valores Debugger en IFEO.",
+		"pw_appinit":      "AppInit_DLLs",
+		"appinit_ok":      "Vacío.",
+		"pw_services":     "Servicios cuyo binario está en rutas escribibles por el usuario",
+		"services_ok":     "Ningún servicio arranca desde Temp, AppData, Public o Downloads.",
+		"pw_unquoted":     "Servicios con ruta sin comillas y con espacios",
+		"unquoted_ok":     "Todas las rutas de servicio con espacios van entrecomilladas.",
+		"hl_shadow":       "Permisos de passwd / shadow / sudoers",
+		"shadow_ok":       "Correctos: shadow no legible por otros, passwd y sudoers no escribibles.",
+		"fw_rules":        "%s: %d reglas activas.",
+		"fw_none":         "Sin ufw y sin reglas en nft/iptables: el firewall no filtra nada.",
 	},
 	"en": {
 		"found_prefix": "%d found: ", "more": " … (+%d more)",
@@ -132,16 +155,13 @@ var auditStrings = map[string]map[string]string{
 		"rk_hidden": "Hidden processes (cross-view)", "rk_hidden_ok": "No discrepancies between process sources.",
 		"rk_ports":    "Hidden listening ports (cross-view)",
 		"rk_ports_ok": "No discrepancies in listening ports.", "rk_ports_na": "Could not compare with netstat/ss.",
-		"rk_port_item": "%d (in netstat/ss, not in the API)",
-		"rk_preload":   "/etc/ld.so.preload", "preload_bad": "Present and non-empty (user-mode rootkit technique): %s",
+		"rk_preload": "/etc/ld.so.preload", "preload_bad": "Present and non-empty (user-mode rootkit technique): %s",
 		"preload_ok":  "Absent or empty.",
 		"rk_tainted":  "Kernel tainted",
 		"tainted_bad": "tainted=%s (out-of-tree/unsigned module; may be legitimate: proprietary drivers)",
 		"tainted_ok":  "tainted=0",
 		"rk_promisc":  "Interfaces in promiscuous mode", "promisc_ok": "No interface in promiscuous mode.",
 		"rk_drivers": "Unsigned drivers", "drivers_ok": "All drivers are signed.",
-		"rk_proc_proc": "PID %d answers a signal but is absent from /proc",
-		"rk_proc_only": "PID %d visible only in %s", "src_api": "the API",
 		// New Linux checks
 		"hl_authkeys":     "Authorized SSH keys (~/.ssh/authorized_keys)",
 		"authkeys_ok":     "No authorized SSH keys.",
@@ -162,6 +182,28 @@ var auditStrings = map[string]map[string]string{
 		"rk_modules":      "Out-of-tree / unsigned kernel modules",
 		"modules_ok":      "No out-of-tree modules detected.",
 		"modules_na":      "Could not read /sys/module.",
+		"p_revshell":      "Shells with stdin/stdout on a socket (reverse shell)",
+		"p_revshell_ok":   "No shell or interpreter has its standard streams on a socket.",
+		"p_traced":        "Processes under ptrace (debugger / injection)",
+		"p_traced_ok":     "No process is being traced.",
+		"pl_sysd_sys":     "System-level systemd units defined locally",
+		"pl_sysd_sys_ok":  "No local units in /etc/systemd/system.",
+		"pl_sysd_susp":    "systemd units starting from suspicious paths",
+		"pl_sysd_susp_ok": "No system unit starts from temp, shm or a home directory.",
+		"pw_winlogon":     "Winlogon Shell / Userinit",
+		"winlogon_ok":     "Default values (explorer.exe / userinit.exe).",
+		"pw_ifeo":         "IFEO debuggers (Image File Execution Options)",
+		"ifeo_ok":         "No Debugger values under IFEO.",
+		"pw_appinit":      "AppInit_DLLs",
+		"appinit_ok":      "Empty.",
+		"pw_services":     "Services whose binary is in a user-writable path",
+		"services_ok":     "No service starts from Temp, AppData, Public or Downloads.",
+		"pw_unquoted":     "Services with an unquoted path containing spaces",
+		"unquoted_ok":     "Every service path with spaces is quoted.",
+		"hl_shadow":       "passwd / shadow / sudoers permissions",
+		"shadow_ok":       "Correct: shadow not readable by others, passwd and sudoers not writable.",
+		"fw_rules":        "%s: %d active rules.",
+		"fw_none":         "No ufw and no nft/iptables rules: the firewall filters nothing.",
 	},
 	"zh": {
 		"found_prefix": "发现 %d 项：", "more": " …（另有 %d 项）",
@@ -201,16 +243,13 @@ var auditStrings = map[string]map[string]string{
 		"rk_hidden": "隐藏进程（交叉比对）", "rk_hidden_ok": "各进程来源之间没有差异。",
 		"rk_ports":    "隐藏的监听端口（交叉比对）",
 		"rk_ports_ok": "监听端口没有差异。", "rk_ports_na": "无法与 netstat/ss 比对。",
-		"rk_port_item": "%d（存在于 netstat/ss，API 中不存在）",
-		"rk_preload":   "/etc/ld.so.preload", "preload_bad": "存在且非空（用户态 rootkit 技术）：%s",
+		"rk_preload": "/etc/ld.so.preload", "preload_bad": "存在且非空（用户态 rootkit 技术）：%s",
 		"preload_ok":  "不存在或为空。",
 		"rk_tainted":  "内核 tainted",
 		"tainted_bad": "tainted=%s（树外/未签名模块；可能是合法的：专有驱动）",
 		"tainted_ok":  "tainted=0",
 		"rk_promisc":  "处于混杂模式的接口", "promisc_ok": "没有接口处于混杂模式。",
 		"rk_drivers": "未签名驱动", "drivers_ok": "所有驱动均已签名。",
-		"rk_proc_proc": "PID %d 能响应信号但未出现在 /proc 中",
-		"rk_proc_only": "PID %d 仅在 %s 中可见", "src_api": "API",
 		"hl_authkeys":     "已授权的 SSH 密钥（~/.ssh/authorized_keys）",
 		"authkeys_ok":     "没有已授权的 SSH 密钥。",
 		"hl_sudo":         "sudoers 中的 NOPASSWD 条目",
@@ -230,6 +269,28 @@ var auditStrings = map[string]map[string]string{
 		"rk_modules":      "树外 / 未签名的内核模块",
 		"modules_ok":      "未检测到树外模块。",
 		"modules_na":      "无法读取 /sys/module。",
+		"p_revshell":      "标准输入/输出连接到套接字的 shell（反向 shell）",
+		"p_revshell_ok":   "没有 shell 或解释器的标准流连接到套接字。",
+		"p_traced":        "处于 ptrace 之下的进程（调试器 / 注入）",
+		"p_traced_ok":     "没有进程正在被跟踪。",
+		"pl_sysd_sys":     "本地定义的系统级 systemd 单元",
+		"pl_sysd_sys_ok":  "/etc/systemd/system 中没有本地单元。",
+		"pl_sysd_susp":    "从可疑路径启动的 systemd 单元",
+		"pl_sysd_susp_ok": "没有系统单元从 temp、shm 或家目录启动。",
+		"pw_winlogon":     "Winlogon Shell / Userinit",
+		"winlogon_ok":     "默认值（explorer.exe / userinit.exe）。",
+		"pw_ifeo":         "IFEO 调试器（Image File Execution Options）",
+		"ifeo_ok":         "IFEO 下没有 Debugger 值。",
+		"pw_appinit":      "AppInit_DLLs",
+		"appinit_ok":      "为空。",
+		"pw_services":     "程序文件位于用户可写路径的服务",
+		"services_ok":     "没有服务从 Temp、AppData、Public 或 Downloads 启动。",
+		"pw_unquoted":     "路径未加引号且含空格的服务",
+		"unquoted_ok":     "所有含空格的服务路径均已加引号。",
+		"hl_shadow":       "passwd / shadow / sudoers 权限",
+		"shadow_ok":       "正确：shadow 不可被其他用户读取，passwd 与 sudoers 不可写。",
+		"fw_rules":        "%s：%d 条活动规则。",
+		"fw_none":         "没有 ufw，也没有 nft/iptables 规则：防火墙未过滤任何流量。",
 	},
 }
 
@@ -287,20 +348,85 @@ func auditCached(lang string, refresh bool) []AuditCheck {
 	}
 
 	res := Audit(lang)
+	applyAuditDiff(res)
 	auditMu.Lock()
 	auditCache[lang], auditAt[lang] = res, time.Now()
 	auditMu.Unlock()
 	return res
 }
 
-// Audit runs all checks for the current OS in the given language.
+// auditTime is when the cached result for lang was produced (zero if none).
+func auditTime(lang string) time.Time {
+	auditMu.Lock()
+	defer auditMu.Unlock()
+	return auditAt[lang]
+}
+
+// Audit runs all checks for the current OS in the given language. The four
+// categories are independent and each is bounded by its own command timeouts,
+// so they run concurrently: the scan takes as long as the slowest one, not the
+// sum — `find` over a large /home alone can use its full 20 s.
 func Audit(lang string) []AuditCheck {
+	cats := []func(string) []AuditCheck{auditProcesses, auditPersistence, auditHardening, auditRootkit}
+	parts := make([][]AuditCheck, len(cats))
+	var wg sync.WaitGroup
+	for i, f := range cats {
+		wg.Add(1)
+		go func(i int, f func(string) []AuditCheck) {
+			defer wg.Done()
+			parts[i] = f(lang)
+		}(i, f)
+	}
+	wg.Wait()
 	var c []AuditCheck
-	c = append(c, auditProcesses(lang)...)
-	c = append(c, auditPersistence(lang)...)
-	c = append(c, auditHardening(lang)...)
-	c = append(c, auditRootkit(lang)...)
+	for _, p := range parts {
+		c = append(c, sortBySeverity(p)...)
+	}
 	return c
+}
+
+// sortBySeverity orders a category's checks risk → warn → info → ok, keeping
+// the original order within a level.
+func sortBySeverity(in []AuditCheck) []AuditCheck {
+	rank := map[string]int{"risk": 0, "warn": 1, "info": 2, "ok": 3}
+	out := append([]AuditCheck(nil), in...)
+	sort.SliceStable(out, func(i, j int) bool { return rank[out[i].Status] < rank[out[j].Status] })
+	return out
+}
+
+// auditNewWindow is how long an item stays marked as new after it was first
+// seen by a scan. "New since the last scan" would vanish on the very next
+// re-scan, which is when the operator is looking; a day keeps it visible.
+const auditNewWindow = 24 * time.Hour
+
+// applyAuditDiff marks the items of each check that were not seen by earlier
+// scans, and records everything seen now. The very first scan on a machine
+// marks nothing: with no history, "everything is new" is noise.
+func applyAuditDiff(checks []AuditCheck) {
+	if db == nil {
+		return
+	}
+	seen, hadHistory := dbAuditSeen()
+	now := time.Now()
+	// Items of the first scan ever are the baseline: recorded as seen "at the
+	// beginning of time", so they never come up as new on the scans after it.
+	mark := now
+	if !hadHistory {
+		mark = time.Unix(0, 0)
+	}
+	for i := range checks {
+		c := &checks[i]
+		for _, it := range c.Items {
+			first, ok := seen[c.Key][it]
+			if !ok {
+				dbAuditMarkSeen(c.Key, it, mark)
+				first = mark
+			}
+			if now.Sub(first) < auditNewWindow {
+				c.New = append(c.New, it)
+			}
+		}
+	}
 }
 
 // runCmd returns the command's stdout and discards any error. Only use it where
@@ -327,38 +453,53 @@ func runCmdErr(timeout time.Duration, name string, args ...string) (string, erro
 	return string(out), err
 }
 
-// finding builds one check from a list of offending items (cat/name/ok already translated).
-func finding(lang, cat, name, status string, items []string, ok string) AuditCheck {
+// check builds one result with a fixed detail. key is the check's i18n key
+// and doubles as its stable identity across scans and languages.
+func check(lang, cat, key, status, detail string) AuditCheck {
+	return AuditCheck{Category: cat, Key: key, Name: atr(lang, key), Status: status, Detail: detail}
+}
+
+// finding builds one check from a list of offending items. okKey is the text
+// for the empty case ("" for none). The items are kept on the check as data:
+// that is what the previous-scan diff compares, so they should be raw (paths,
+// pids, entries) rather than prose that changes with the language.
+func finding(lang, cat, key, status string, items []string, okKey string) AuditCheck {
+	c := AuditCheck{Category: cat, Key: key, Name: atr(lang, key), Items: items}
 	if len(items) == 0 {
-		return AuditCheck{cat, name, "ok", ok}
+		c.Status = "ok"
+		if okKey != "" {
+			c.Detail = atr(lang, okKey)
+		}
+		return c
 	}
 	shown, extra := items, ""
 	if len(shown) > 12 {
 		shown = shown[:12]
 		extra = fmt.Sprintf(atr(lang, "more"), len(items)-12)
 	}
-	return AuditCheck{cat, name, status,
-		fmt.Sprintf(atr(lang, "found_prefix"), len(items)) + strings.Join(shown, " | ") + extra}
+	c.Status = status
+	c.Detail = fmt.Sprintf(atr(lang, "found_prefix"), len(items)) + strings.Join(shown, " | ") + extra
+	return c
 }
 
 // findingOrSkipped is finding() for probes that may not exist on this platform.
 // When the probe did not run it reports "not available here" instead of "ok" — a
 // stub returning an empty list must never render as a clean pass.
-func findingOrSkipped(lang, cat, name, status string, items []string, ok string, ran bool) AuditCheck {
+func findingOrSkipped(lang, cat, key, status string, items []string, okKey string, ran bool) AuditCheck {
 	if !ran {
-		return AuditCheck{cat, name, "info", atr(lang, "check_skipped")}
+		return check(lang, cat, key, "info", atr(lang, "check_skipped"))
 	}
-	return finding(lang, cat, name, status, items, ok)
+	return finding(lang, cat, key, status, items, okKey)
 }
 
 // findingOrUnknown is finding() for checks backed by an external command: when
 // that command failed it reports "couldn't check" instead of "ok", and when it
 // produced partial output it keeps the findings but says so.
-func findingOrUnknown(lang, cat, name, status string, items []string, ok string, err error) AuditCheck {
+func findingOrUnknown(lang, cat, key, status string, items []string, okKey string, err error) AuditCheck {
 	if err != nil && len(items) == 0 {
-		return AuditCheck{cat, name, "info", fmt.Sprintf(atr(lang, "check_failed"), err)}
+		return check(lang, cat, key, "info", fmt.Sprintf(atr(lang, "check_failed"), err))
 	}
-	c := finding(lang, cat, name, status, items, ok)
+	c := finding(lang, cat, key, status, items, okKey)
 	if err != nil {
 		c.Detail += atr(lang, "check_partial")
 	}
@@ -369,7 +510,7 @@ func findingOrUnknown(lang, cat, name, status string, items []string, ok string,
 
 func auditProcesses(lang string) []AuditCheck {
 	cat := atr(lang, "cat_proc")
-	var susPath, masq, deleted []string
+	var susPath, masq, deleted, revshell, traced []string
 	sysNames := map[string]bool{
 		"svchost.exe": true, "lsass.exe": true, "services.exe": true,
 		"csrss.exe": true, "winlogon.exe": true, "smss.exe": true, "wininit.exe": true,
@@ -394,21 +535,70 @@ func auditProcesses(lang string) []AuditCheck {
 				strings.Contains(link, "(deleted)") {
 				deleted = append(deleted, fmt.Sprintf("%s (pid %d) %s", name, p.Pid, link))
 			}
+			// A shell or interpreter whose stdin or stdout *is* a socket is the
+			// reverse-shell shape: `bash -i >& /dev/tcp/…`, `python -c 'pty.spawn'`
+			// after a connect, and every one-liner in every cheat sheet. Nothing
+			// legitimate wires a shell's standard streams straight to a socket —
+			// an ssh session gets a pty, a CGI script gets pipes.
+			if shellLike[procBase(name)] {
+				for _, fd := range []string{"0", "1"} {
+					if t, err := os.Readlink(fmt.Sprintf("/proc/%d/fd/%s", p.Pid, fd)); err == nil &&
+						strings.HasPrefix(t, "socket:") {
+						revshell = append(revshell, fmt.Sprintf("%s (pid %d) fd%s → %s", name, p.Pid, fd, t))
+						break
+					}
+				}
+			}
+			// TracerPid != 0: something has ptrace-attached. A debugger during
+			// development is the benign case, hence warn; on a server it is
+			// injection or credential scraping.
+			if tp := tracerPid(p.Pid); tp > 0 {
+				tname := "?"
+				if tr, err := process.NewProcess(int32(tp)); err == nil { // #nosec G115 -- pid from /proc, < pid_max
+					if n, err := tr.Name(); err == nil {
+						tname = n
+					}
+				}
+				traced = append(traced, fmt.Sprintf("%s (pid %d) ← %s (pid %d)", name, p.Pid, tname, tp))
+			}
 		}
 	}
 	out := []AuditCheck{
-		finding(lang, cat, atr(lang, "p_suspath"), "risk", susPath, atr(lang, "p_suspath_ok")),
+		finding(lang, cat, "p_suspath", "risk", susPath, "p_suspath_ok"),
 	}
 	switch runtime.GOOS {
 	case "windows":
-		out = append(out, finding(lang, cat, atr(lang, "p_masq"), "risk", masq, atr(lang, "p_masq_ok")))
+		out = append(out, finding(lang, cat, "p_masq", "risk", masq, "p_masq_ok"))
 	case "linux":
-		out = append(out, finding(lang, cat, atr(lang, "p_deleted"), "risk", deleted, atr(lang, "p_deleted_ok")))
+		out = append(out, finding(lang, cat, "p_deleted", "risk", deleted, "p_deleted_ok"))
+		out = append(out, finding(lang, cat, "p_revshell", "risk", revshell, "p_revshell_ok"))
+		out = append(out, finding(lang, cat, "p_traced", "warn", traced, "p_traced_ok"))
 	default:
-		out = append(out, findingOrSkipped(lang, cat, atr(lang, "p_deleted"), "risk",
-			nil, atr(lang, "p_deleted_ok"), false))
+		out = append(out, findingOrSkipped(lang, cat, "p_deleted", "risk", nil, "p_deleted_ok", false))
 	}
 	return out
+}
+
+// shellLike are the processes whose standard streams should never be a socket.
+// nc/socat are deliberately absent: a socket is their whole job.
+var shellLike = map[string]bool{
+	"sh": true, "bash": true, "dash": true, "zsh": true, "ksh": true, "fish": true,
+	"python": true, "python3": true, "perl": true, "ruby": true, "php": true, "lua": true,
+}
+
+// tracerPid reads TracerPid from /proc/<pid>/status; 0 when not traced or unreadable.
+func tracerPid(pid int32) int {
+	b, err := os.ReadFile(fmt.Sprintf("/proc/%d/status", pid))
+	if err != nil {
+		return 0
+	}
+	for _, ln := range strings.Split(string(b), "\n") {
+		if v, ok := strings.CutPrefix(ln, "TracerPid:"); ok {
+			n, _ := strconv.Atoi(strings.TrimSpace(v))
+			return n
+		}
+	}
+	return 0
 }
 
 // ── Persistence ──────────────────────────────────────────────────────────────
@@ -431,35 +621,14 @@ func auditPersistenceWindows(lang string) []AuditCheck {
 		`HKLM\Software\Microsoft\Windows\CurrentVersion\RunOnce`,
 		`HKCU\Software\Microsoft\Windows\CurrentVersion\RunOnce`,
 	} {
-		for _, ln := range strings.Split(runCmd(8*time.Second, "reg", "query", hive), "\n") {
-			ln = strings.TrimSpace(ln)
-			if ln == "" || strings.HasPrefix(ln, "HKEY") {
-				continue
-			}
-			if i := strings.Index(ln, "REG_"); i > 0 {
-				name := strings.TrimSpace(ln[:i])
-				val := ""
-				if j := strings.Index(ln[i:], "    "); j >= 0 {
-					val = strings.TrimSpace(ln[i+j:])
-				}
-				entry := name + " → " + val
-				runEntries = append(runEntries, entry)
-				lv := strings.ToLower(val)
-				for _, sig := range []string{`\temp\`, `\downloads\`, "-enc", "-encodedcommand",
-					"mshta", "frombase64string", "downloadstring", "-w hidden",
-					"-windowstyle hidden", "iex(", "javascript:", "regsvr32 /s /n /u /i"} {
-					if strings.Contains(lv, sig) {
-						runSusp = append(runSusp, entry)
-						break
-					}
-				}
-			}
-		}
+		e, su := parseRegRunLines(runCmd(8*time.Second, "reg", "query", hive))
+		runEntries = append(runEntries, e...)
+		runSusp = append(runSusp, su...)
 	}
 	if len(runSusp) > 0 {
-		out = append(out, finding(lang, cat, atr(lang, "pw_run_susp"), "risk", runSusp, ""))
+		out = append(out, finding(lang, cat, "pw_run_susp", "risk", runSusp, ""))
 	} else {
-		out = append(out, finding(lang, cat, atr(lang, "pw_run"), "info", runEntries, atr(lang, "pw_run_ok")))
+		out = append(out, finding(lang, cat, "pw_run", "info", runEntries, "pw_run_ok"))
 	}
 
 	var startup []string
@@ -475,21 +644,64 @@ func auditPersistenceWindows(lang string) []AuditCheck {
 			}
 		}
 	}
-	out = append(out, finding(lang, cat, atr(lang, "pw_startup"), "warn", startup, atr(lang, "pw_startup_ok")))
+	out = append(out, finding(lang, cat, "pw_startup", "warn", startup, "pw_startup_ok"))
 
-	var tasks []string
 	schtasksOut, schtasksErr := runCmdErr(30*time.Second, "schtasks", "/query", "/v", "/fo", "csv")
-	for _, ln := range strings.Split(schtasksOut, "\n") {
-		l := strings.ToLower(ln)
-		if strings.Contains(l, `\temp\`) || strings.Contains(l, `\appdata\`) ||
-			strings.Contains(l, "powershell -enc") || strings.Contains(l, "mshta") {
-			if f := strings.Split(ln, ","); len(f) > 1 {
-				tasks = append(tasks, strings.Trim(f[0], `"`))
+	out = append(out, findingOrUnknown(lang, cat, "pw_tasks", "risk", parseSchtasksSuspicious(schtasksOut),
+		"pw_tasks_ok", schtasksErr))
+
+	// Winlogon Shell / Userinit: the two values every user logon executes.
+	// Malware appends itself ("userinit.exe,evil.exe"); anything but the
+	// defaults is worth a look.
+	var winlogon []string
+	for name, want := range map[string][]string{
+		"Shell":    {"explorer.exe"},
+		"Userinit": {`c:\windows\system32\userinit.exe,`, `c:\windows\system32\userinit.exe`},
+	} {
+		got := regValue(runCmd(6*time.Second, "reg", "query",
+			`HKLM\SOFTWARE\Microsoft\Windows NT\CurrentVersion\Winlogon`, "/v", name))
+		if got == "" {
+			continue
+		}
+		okv := false
+		for _, w := range want {
+			if strings.EqualFold(strings.TrimSpace(got), w) {
+				okv = true
 			}
 		}
+		if !okv {
+			winlogon = append(winlogon, name+" = "+got)
+		}
 	}
-	out = append(out, findingOrUnknown(lang, cat, atr(lang, "pw_tasks"), "risk", tasks,
-		atr(lang, "pw_tasks_ok"), schtasksErr))
+	out = append(out, finding(lang, cat, "pw_winlogon", "risk", winlogon, "winlogon_ok"))
+
+	// Image File Execution Options: a Debugger value under <exe> makes Windows
+	// launch that "debugger" instead — a silent hijack of any program.
+	ifeo := parseIFEO(runCmd(10*time.Second, "reg", "query",
+		`HKLM\SOFTWARE\Microsoft\Windows NT\CurrentVersion\Image File Execution Options`, "/s", "/v", "Debugger"))
+	out = append(out, finding(lang, cat, "pw_ifeo", "risk", ifeo, "ifeo_ok"))
+
+	// AppInit_DLLs: loaded into every process that links user32. Empty on a
+	// healthy machine.
+	var appinit []string
+	for _, k := range []string{
+		`HKLM\SOFTWARE\Microsoft\Windows NT\CurrentVersion\Windows`,
+		`HKLM\SOFTWARE\WOW6432Node\Microsoft\Windows NT\CurrentVersion\Windows`,
+	} {
+		if v := regValue(runCmd(6*time.Second, "reg", "query", k, "/v", "AppInit_DLLs")); v != "" {
+			appinit = append(appinit, v)
+		}
+	}
+	out = append(out, finding(lang, cat, "pw_appinit", "risk", appinit, "appinit_ok"))
+
+	// Services: the persistence that also runs as SYSTEM. Two shapes matter —
+	// a binary in a user-writable directory, and an unquoted path with spaces
+	// (Windows tries "C:\Program.exe" first: whoever can write there wins).
+	svcOut, svcErr := runCmdErr(30*time.Second, "powershell", "-NoProfile", "-NonInteractive", "-Command",
+		"Get-CimInstance Win32_Service | ForEach-Object { \"$($_.Name)`t$($_.State)`t$($_.PathName)\" }")
+	susp, unquoted := parseWinServices(svcOut)
+	out = append(out, findingOrUnknown(lang, cat, "pw_services", "risk", susp, "services_ok", svcErr))
+	out = append(out, findingOrUnknown(lang, cat, "pw_unquoted", "warn", unquoted, "unquoted_ok", svcErr))
 	return out
 }
 
@@ -515,63 +727,119 @@ func auditPersistenceLinux(lang string) []AuditCheck {
 			}
 		}
 	}
-	out = append(out, finding(lang, cat, atr(lang, "pl_cron"), "info", cron, atr(lang, "pl_cron_ok")))
+	out = append(out, finding(lang, cat, "pl_cron", "info", cron, "pl_cron_ok"))
 
+	// Per-user files are checked for every real account, not "the current
+	// home": run as root through sudo, HOME is /root, and the audit used to
+	// inspect root's .bashrc and autostart while the logged-in user's — the
+	// ones an attacker actually plants in — went unread. Homes we cannot read
+	// (unprivileged run) are skipped silently.
 	var rc []string
-	home, _ := os.UserHomeDir()
-	rcFiles := []string{
-		"/etc/rc.local",
-		"/etc/bash.bashrc",
-		filepath.Join(home, ".bashrc"),
-		filepath.Join(home, ".bash_profile"),
-		filepath.Join(home, ".profile"),
-		filepath.Join(home, ".zshrc"),
-		filepath.Join(home, ".zprofile"),
-		filepath.Join(home, ".config/fish/config.fish"),
-	}
+	rcFiles := []string{"/etc/rc.local", "/etc/bash.bashrc"}
 	if ents, err := os.ReadDir("/etc/profile.d"); err == nil {
 		for _, e := range ents {
 			rcFiles = append(rcFiles, filepath.Join("/etc/profile.d", e.Name()))
 		}
 	}
 	for _, f := range rcFiles {
-		if b, err := os.ReadFile(f); err == nil {
-			for _, ln := range strings.Split(string(b), "\n") {
-				l := strings.ToLower(strings.TrimSpace(ln))
-				if strings.HasPrefix(l, "#") {
-					continue
-				}
-				if strings.Contains(l, "curl ") || strings.Contains(l, "wget ") ||
-					strings.Contains(l, "base64") || strings.Contains(l, "/dev/tcp/") ||
-					strings.Contains(l, "nc ") || strings.Contains(l, "ncat") ||
-					strings.Contains(l, "ld_preload") || strings.Contains(l, "ld_library_path") {
-					rc = append(rc, filepath.Base(f)+": "+strings.TrimSpace(ln))
-				}
-			}
+		rc = append(rc, suspiciousRCLines(f, filepath.Base(f))...)
+	}
+	homes := userHomes()
+	for _, u := range homes {
+		for _, rel := range []string{".bashrc", ".bash_profile", ".profile", ".zshrc", ".zprofile", ".config/fish/config.fish"} {
+			rc = append(rc, suspiciousRCLines(filepath.Join(u.home, rel), u.name+": ~/"+rel)...)
 		}
 	}
-	out = append(out, finding(lang, cat, atr(lang, "pl_rc"), "risk", rc, atr(lang, "pl_rc_ok")))
+	out = append(out, finding(lang, cat, "pl_rc", "risk", rc, "pl_rc_ok"))
 
 	var autostart []string
-	for _, d := range []string{filepath.Join(home, ".config/autostart"), "/etc/xdg/autostart"} {
-		if ents, err := os.ReadDir(d); err == nil {
+	if ents, err := os.ReadDir("/etc/xdg/autostart"); err == nil {
+		for _, e := range ents {
+			autostart = append(autostart, e.Name())
+		}
+	}
+	for _, u := range homes {
+		if ents, err := os.ReadDir(filepath.Join(u.home, ".config/autostart")); err == nil {
 			for _, e := range ents {
-				autostart = append(autostart, e.Name())
+				autostart = append(autostart, u.name+": "+e.Name())
 			}
 		}
 	}
-	out = append(out, finding(lang, cat, atr(lang, "pl_auto"), "info", autostart, atr(lang, "pl_auto_ok")))
+	out = append(out, finding(lang, cat, "pl_auto", "info", autostart, "pl_auto_ok"))
 
 	var units []string
-	if ents, err := os.ReadDir(filepath.Join(home, ".config/systemd/user")); err == nil {
-		for _, e := range ents {
-			if strings.HasSuffix(e.Name(), ".service") || strings.HasSuffix(e.Name(), ".timer") {
-				units = append(units, e.Name())
+	for _, u := range homes {
+		if ents, err := os.ReadDir(filepath.Join(u.home, ".config/systemd/user")); err == nil {
+			for _, e := range ents {
+				if strings.HasSuffix(e.Name(), ".service") || strings.HasSuffix(e.Name(), ".timer") {
+					units = append(units, u.name+": "+e.Name())
+				}
 			}
 		}
 	}
-	out = append(out, finding(lang, cat, atr(lang, "pl_systemd"), "warn", units, atr(lang, "pl_systemd_ok")))
+	out = append(out, finding(lang, cat, "pl_systemd", "warn", units, "pl_systemd_ok"))
+	out = append(out, auditSystemdSystem(lang, cat)...)
 	return out
+}
+
+// suspiciousRCLines returns the lines of a shell start-up file that download,
+// decode, open a raw TCP connection or preload a library — labelled with where
+// they were found.
+func suspiciousRCLines(path, label string) []string {
+	b, err := os.ReadFile(path) // #nosec G304 -- fixed list of shell start-up files
+	if err != nil {
+		return nil
+	}
+	var out []string
+	for _, ln := range strings.Split(string(b), "\n") {
+		l := strings.ToLower(strings.TrimSpace(ln))
+		if strings.HasPrefix(l, "#") {
+			continue
+		}
+		if strings.Contains(l, "curl ") || strings.Contains(l, "wget ") ||
+			strings.Contains(l, "base64") || strings.Contains(l, "/dev/tcp/") ||
+			strings.Contains(l, "nc ") || strings.Contains(l, "ncat") ||
+			strings.Contains(l, "ld_preload") || strings.Contains(l, "ld_library_path") {
+			out = append(out, label+": "+strings.TrimSpace(ln))
+		}
+	}
+	return out
+}
+
+// auditSystemdSystem looks at the system-level units — the most common Linux
+// persistence, and the one this audit did not cover. Units *defined* locally
+// (regular files in /etc/systemd/system, not the enable-symlinks into
+// /usr/lib) are listed as information; any whose Exec* line starts something
+// from a staging or home directory is a finding.
+func auditSystemdSystem(lang, cat string) []AuditCheck {
+	var local, susp []string
+	for _, dir := range []string{"/etc/systemd/system", "/usr/local/lib/systemd/system"} {
+		ents, err := os.ReadDir(dir)
+		if err != nil {
+			continue
+		}
+		for _, e := range ents {
+			n := e.Name()
+			if e.IsDir() || e.Type()&os.ModeSymlink != 0 ||
+				!(strings.HasSuffix(n, ".service") || strings.HasSuffix(n, ".timer")) {
+				continue
+			}
+			local = append(local, n)
+			b, err := os.ReadFile(filepath.Join(dir, n)) // #nosec G304 -- unit files under a fixed directory
+			if err != nil {
+				continue
+			}
+			for _, ex := range parseSystemdExec(string(b)) {
+				if suspiciousExecPath(ex) {
+					susp = append(susp, n+": "+ex)
+				}
+			}
+		}
+	}
+	return []AuditCheck{
+		finding(lang, cat, "pl_sysd_susp", "risk", susp, "pl_sysd_susp_ok"),
+		finding(lang, cat, "pl_sysd_sys", "info", local, "pl_sysd_sys_ok"),
+	}
 }
 
 // ── Hardening ────────────────────────────────────────────────────────────────
@@ -598,20 +866,20 @@ func auditHardeningWindows(lang string) []AuditCheck {
 			age = strings.TrimSpace(parts[1])
 		}
 		if strings.EqualFold(strings.TrimSpace(parts[0]), "True") {
-			out = append(out, AuditCheck{cat, atr(lang, "hw_def"), "ok", fmt.Sprintf(atr(lang, "def_on"), age)})
+			out = append(out, check(lang, cat, "hw_def", "ok", fmt.Sprintf(atr(lang, "def_on"), age)))
 		} else {
-			out = append(out, AuditCheck{cat, atr(lang, "hw_def"), "risk", atr(lang, "def_off")})
+			out = append(out, check(lang, cat, "hw_def", "risk", atr(lang, "def_off")))
 		}
 	} else {
-		out = append(out, AuditCheck{cat, atr(lang, "hw_def"), "info", atr(lang, "def_na")})
+		out = append(out, check(lang, cat, "hw_def", "info", atr(lang, "def_na")))
 	}
 
 	rdp := runCmd(6*time.Second, "reg", "query",
 		`HKLM\System\CurrentControlSet\Control\Terminal Server`, "/v", "fDenyTSConnections")
 	if strings.Contains(rdp, "0x0") {
-		out = append(out, AuditCheck{cat, atr(lang, "hw_rdp"), "warn", atr(lang, "rdp_on")})
+		out = append(out, check(lang, cat, "hw_rdp", "warn", atr(lang, "rdp_on")))
 	} else if strings.Contains(rdp, "0x1") {
-		out = append(out, AuditCheck{cat, atr(lang, "hw_rdp"), "ok", atr(lang, "rdp_off")})
+		out = append(out, check(lang, cat, "hw_rdp", "ok", atr(lang, "rdp_off")))
 	}
 
 	// Locale-independent: `net localgroup administrators` fails on a non-English
@@ -628,11 +896,11 @@ func auditHardeningWindows(lang string) []AuditCheck {
 	}
 	switch {
 	case len(admins) > 0:
-		out = append(out, AuditCheck{cat, atr(lang, "hw_admins"), statusFor(len(admins) > 3, "warn"),
-			strings.Join(admins, ", ")})
+		c := check(lang, cat, "hw_admins", statusFor(len(admins) > 3, "warn"), strings.Join(admins, ", "))
+		c.Items = admins // members are the raw items: a new administrator is what the NEW badge is for
+		out = append(out, c)
 	default:
-		out = append(out, AuditCheck{cat, atr(lang, "hw_admins"), "info",
-			fmt.Sprintf(atr(lang, "check_failed"), adminErr)})
+		out = append(out, check(lang, cat, "hw_admins", "info", fmt.Sprintf(atr(lang, "check_failed"), adminErr)))
 	}
 
 	out = append(out, auditHostsFile(lang, filepath.Join(os.Getenv("SystemRoot"), `System32\drivers\etc\hosts`)))
@@ -667,14 +935,13 @@ func auditWinFirewall(lang, cat string) AuditCheck {
 	}
 	switch {
 	case len(off) > 0:
-		return AuditCheck{cat, atr(lang, "hw_fw"), "risk",
-			fmt.Sprintf(atr(lang, "fw_off"), len(off)) + " (" + strings.Join(off, ", ") + ")"}
+		return check(lang, cat, "hw_fw", "risk", fmt.Sprintf(atr(lang, "fw_off"), len(off))+" ("+strings.Join(off, ", ")+")")
 	case len(on) > 0:
-		return AuditCheck{cat, atr(lang, "hw_fw"), "ok", atr(lang, "fw_on")}
+		return check(lang, cat, "hw_fw", "ok", atr(lang, "fw_on"))
 	case err != nil:
-		return AuditCheck{cat, atr(lang, "hw_fw"), "info", fmt.Sprintf(atr(lang, "check_failed"), err)}
+		return check(lang, cat, "hw_fw", "info", fmt.Sprintf(atr(lang, "check_failed"), err))
 	default:
-		return AuditCheck{cat, atr(lang, "hw_fw"), "info", atr(lang, "fw_unknown")}
+		return check(lang, cat, "hw_fw", "info", atr(lang, "fw_unknown"))
 	}
 }
 
@@ -682,14 +949,30 @@ func auditHardeningLinux(lang string) []AuditCheck {
 	cat := atr(lang, "cat_harden")
 	var out []AuditCheck
 
-	if hasCmd("ufw") {
+	// Without ufw the rules may still be there, written by hand or by a
+	// firewalld/nftables service; "check manually" was the answer for every
+	// Debian/Arch box. Count the active rules instead.
+	switch {
+	case hasCmd("ufw"):
 		if strings.Contains(strings.ToLower(runCmd(6*time.Second, "ufw", "status")), "inactive") {
-			out = append(out, AuditCheck{cat, atr(lang, "hl_ufw"), "risk", atr(lang, "ufw_off")})
+			out = append(out, check(lang, cat, "hl_ufw", "risk", atr(lang, "ufw_off")))
 		} else {
-			out = append(out, AuditCheck{cat, atr(lang, "hl_ufw"), "ok", atr(lang, "ufw_on")})
+			out = append(out, check(lang, cat, "hl_ufw", "ok", atr(lang, "ufw_on")))
 		}
-	} else {
-		out = append(out, AuditCheck{cat, atr(lang, "hl_fw"), "info", atr(lang, "ufw_na")})
+	case hasCmd("nft"):
+		if n := countNftRules(runCmd(6*time.Second, "nft", "list", "ruleset")); n > 0 {
+			out = append(out, check(lang, cat, "hl_fw", "ok", fmt.Sprintf(atr(lang, "fw_rules"), "nft", n)))
+		} else {
+			out = append(out, check(lang, cat, "hl_fw", "warn", atr(lang, "fw_none")))
+		}
+	case hasCmd("iptables"):
+		if n := countIptablesRules(runCmd(6*time.Second, "iptables", "-S")); n > 0 {
+			out = append(out, check(lang, cat, "hl_fw", "ok", fmt.Sprintf(atr(lang, "fw_rules"), "iptables", n)))
+		} else {
+			out = append(out, check(lang, cat, "hl_fw", "warn", atr(lang, "fw_none")))
+		}
+	default:
+		out = append(out, check(lang, cat, "hl_fw", "info", atr(lang, "ufw_na")))
 	}
 
 	if b, err := os.ReadFile("/etc/ssh/sshd_config"); err == nil {
@@ -703,7 +986,7 @@ func auditHardeningLinux(lang string) []AuditCheck {
 				issues = append(issues, "PasswordAuthentication yes")
 			}
 		}
-		out = append(out, finding(lang, cat, atr(lang, "hl_ssh"), "warn", issues, atr(lang, "ssh_ok")))
+		out = append(out, finding(lang, cat, "hl_ssh", "warn", issues, "ssh_ok"))
 	}
 
 	if b, err := os.ReadFile("/etc/passwd"); err == nil {
@@ -713,10 +996,11 @@ func auditHardeningLinux(lang string) []AuditCheck {
 				uid0 = append(uid0, f[0])
 			}
 		}
-		out = append(out, finding(lang, cat, atr(lang, "hl_uid0"), "risk", uid0, atr(lang, "uid0_ok")))
+		out = append(out, finding(lang, cat, "hl_uid0", "risk", uid0, "uid0_ok"))
 	}
 
 	out = append(out, auditSSHAuthorizedKeys(lang, cat))
+	out = append(out, auditShadowPerms(lang, cat))
 	out = append(out, auditSudoers(lang, cat))
 	out = append(out, auditSUID(lang, cat))
 	out = append(out, auditMAC(lang, cat))
@@ -725,30 +1009,56 @@ func auditHardeningLinux(lang string) []AuditCheck {
 	return out
 }
 
-// auditSSHAuthorizedKeys lists entries in ~/.ssh/authorized_keys so the operator
-// can spot unexpected backdoor keys.
+// auditSSHAuthorizedKeys lists the entries of every user's authorized_keys so
+// the operator can spot a backdoor key. A file we could not read is reported
+// as such: "no keys" and "not allowed to look" are different answers.
 func auditSSHAuthorizedKeys(lang, cat string) AuditCheck {
-	home, _ := os.UserHomeDir()
-	b, err := os.ReadFile(filepath.Join(home, ".ssh", "authorized_keys"))
-	if err != nil {
-		return AuditCheck{cat, atr(lang, "hl_authkeys"), "ok", atr(lang, "authkeys_ok")}
-	}
 	var keys []string
-	for _, ln := range strings.Split(string(b), "\n") {
-		ln = strings.TrimSpace(ln)
-		if ln == "" || strings.HasPrefix(ln, "#") {
+	var unreadable error
+	for _, u := range userHomes() {
+		p := filepath.Join(u.home, ".ssh", "authorized_keys")
+		b, err := os.ReadFile(p) // #nosec G304 -- fixed path under each user's home
+		if err != nil {
+			if !os.IsNotExist(err) && unreadable == nil {
+				unreadable = fmt.Errorf("%s: %w", p, err)
+			}
 			continue
 		}
-		// Format: <type> <base64> <comment>  — show comment if present, else key type
-		label := ln
-		if f := strings.Fields(ln); len(f) >= 3 {
-			label = f[0] + " … " + f[2]
-		} else if len(f) >= 1 {
-			label = f[0]
+		for _, ln := range strings.Split(string(b), "\n") {
+			ln = strings.TrimSpace(ln)
+			if ln == "" || strings.HasPrefix(ln, "#") {
+				continue
+			}
+			// Format: <type> <base64> <comment>  — show comment if present, else key type
+			label := ln
+			if f := strings.Fields(ln); len(f) >= 3 {
+				label = f[0] + " … " + f[2]
+			} else if len(f) >= 1 {
+				label = f[0]
+			}
+			keys = append(keys, u.name+": "+label)
 		}
-		keys = append(keys, label)
 	}
-	return finding(lang, cat, atr(lang, "hl_authkeys"), "warn", keys, atr(lang, "authkeys_ok"))
+	return findingOrUnknown(lang, cat, "hl_authkeys", "warn", keys, "authkeys_ok", unreadable)
+}
+
+// auditShadowPerms: /etc/shadow readable by others hands out every password
+// hash; /etc/passwd or sudoers writable by others hands out root.
+func auditShadowPerms(lang, cat string) AuditCheck {
+	var bad []string
+	for _, f := range []struct {
+		path string
+		mask os.FileMode
+	}{{"/etc/shadow", 0o004}, {"/etc/gshadow", 0o004}, {"/etc/passwd", 0o002}, {"/etc/sudoers", 0o002}, {"/etc/group", 0o002}} {
+		fi, err := os.Stat(f.path)
+		if err != nil {
+			continue
+		}
+		if fi.Mode().Perm()&f.mask != 0 {
+			bad = append(bad, f.path+" "+fi.Mode().Perm().String())
+		}
+	}
+	return finding(lang, cat, "hl_shadow", "risk", bad, "shadow_ok")
 }
 
 // auditSudoers reports NOPASSWD entries in /etc/sudoers and /etc/sudoers.d/*.
@@ -775,7 +1085,7 @@ func auditSudoers(lang, cat string) AuditCheck {
 			}
 		}
 	}
-	return finding(lang, cat, atr(lang, "hl_sudo"), "warn", hits, atr(lang, "sudo_ok"))
+	return finding(lang, cat, "hl_sudo", "warn", hits, "sudo_ok")
 }
 
 // auditSUID finds SUID/SGID binaries in paths where they should never appear.
@@ -799,7 +1109,7 @@ func auditSUID(lang, cat string) AuditCheck {
 			}
 		}
 	}
-	return findingOrUnknown(lang, cat, atr(lang, "hl_suid"), "risk", found, atr(lang, "suid_ok"), failed)
+	return findingOrUnknown(lang, cat, "hl_suid", "risk", found, "suid_ok", failed)
 }
 
 // auditMAC checks whether AppArmor or SELinux is active.
@@ -812,17 +1122,17 @@ func auditMAC(lang, cat string) AuditCheck {
 				n++
 			}
 		}
-		return AuditCheck{cat, atr(lang, "hl_mac"), "ok", fmt.Sprintf(atr(lang, "mac_aa_ok"), n)}
+		return check(lang, cat, "hl_mac", "ok", fmt.Sprintf(atr(lang, "mac_aa_ok"), n))
 	}
 	// SELinux: enforce = 1 → enforcing, 0 → permissive
 	if b, err := os.ReadFile("/sys/fs/selinux/enforce"); err == nil {
 		if strings.TrimSpace(string(b)) == "1" {
-			return AuditCheck{cat, atr(lang, "hl_mac"), "ok", atr(lang, "mac_se_ok")}
+			return check(lang, cat, "hl_mac", "ok", atr(lang, "mac_se_ok"))
 		}
-		return AuditCheck{cat, atr(lang, "hl_mac"), "warn", atr(lang, "mac_se_perm")}
+		return check(lang, cat, "hl_mac", "warn", atr(lang, "mac_se_perm"))
 	}
 	// Neither detected
-	return AuditCheck{cat, atr(lang, "hl_mac"), "info", atr(lang, "mac_na")}
+	return check(lang, cat, "hl_mac", "info", atr(lang, "mac_na"))
 }
 
 // auditPathWritable reports world-writable directories in $PATH; an attacker
@@ -841,27 +1151,21 @@ func auditPathWritable(lang, cat string) AuditCheck {
 			writables = append(writables, dir)
 		}
 	}
-	return finding(lang, cat, atr(lang, "hl_path_ww"), "risk", writables, atr(lang, "path_ww_ok"))
+	return finding(lang, cat, "hl_path_ww", "risk", writables, "path_ww_ok")
 }
 
 func auditHostsFile(lang, path string) AuditCheck {
 	cat := atr(lang, "cat_harden")
 	b, err := os.ReadFile(path)
 	if err != nil {
-		return AuditCheck{cat, atr(lang, "hosts"), "info", fmt.Sprintf(atr(lang, "hosts_unread"), path)}
+		return check(lang, cat, "hosts", "info", fmt.Sprintf(atr(lang, "hosts_unread"), path))
 	}
-	var custom []string
-	for _, ln := range strings.Split(string(b), "\n") {
-		t := strings.TrimSpace(ln)
-		if t == "" || strings.HasPrefix(t, "#") || strings.Contains(strings.ToLower(t), "localhost") {
-			continue
-		}
-		custom = append(custom, t)
-	}
+	hn, _ := os.Hostname()
+	custom := customHostsLines(string(b), hn)
 	if len(custom) == 0 {
-		return AuditCheck{cat, atr(lang, "hosts"), "ok", atr(lang, "hosts_clean")}
+		return check(lang, cat, "hosts", "ok", atr(lang, "hosts_clean"))
 	}
-	return finding(lang, cat, atr(lang, "hosts_custom"), "warn", custom, "")
+	return finding(lang, cat, "hosts_custom", "warn", custom, "")
 }
 
 // ── Rootkit / cross-view heuristics ─────────────────────────────────────────
@@ -874,29 +1178,30 @@ func auditRootkit(lang string) []AuditCheck {
 	if runtime.GOOS == "linux" {
 		hpStatus = "risk"
 	}
-	hidden, hpRan := hiddenProcs(lang)
-	out = append(out, findingOrSkipped(lang, cat, atr(lang, "rk_hidden"), hpStatus,
-		hidden, atr(lang, "rk_hidden_ok"), hpRan))
+	hidden, hpRan, hpPartial := hiddenProcs()
+	hp := findingOrSkipped(lang, cat, "rk_hidden", hpStatus, hidden, "rk_hidden_ok", hpRan)
+	if hpPartial {
+		hp.Detail += atr(lang, "check_partial")
+	}
+	out = append(out, hp)
 	out = append(out, auditHiddenPorts(lang, cat))
 
 	if runtime.GOOS == "linux" {
 		if b, err := os.ReadFile("/etc/ld.so.preload"); err == nil && strings.TrimSpace(string(b)) != "" {
-			out = append(out, AuditCheck{cat, atr(lang, "rk_preload"), "risk",
-				fmt.Sprintf(atr(lang, "preload_bad"), strings.TrimSpace(string(b)))})
+			out = append(out, check(lang, cat, "rk_preload", "risk", fmt.Sprintf(atr(lang, "preload_bad"), strings.TrimSpace(string(b)))))
 		} else {
-			out = append(out, AuditCheck{cat, atr(lang, "rk_preload"), "ok", atr(lang, "preload_ok")})
+			out = append(out, check(lang, cat, "rk_preload", "ok", atr(lang, "preload_ok")))
 		}
 		if b, err := os.ReadFile("/proc/sys/kernel/tainted"); err == nil {
 			t := strings.TrimSpace(string(b))
 			if t != "" && t != "0" {
-				out = append(out, AuditCheck{cat, atr(lang, "rk_tainted"), "warn", fmt.Sprintf(atr(lang, "tainted_bad"), t)})
+				out = append(out, check(lang, cat, "rk_tainted", "warn", fmt.Sprintf(atr(lang, "tainted_bad"), t)))
 			} else {
-				out = append(out, AuditCheck{cat, atr(lang, "rk_tainted"), "ok", atr(lang, "tainted_ok")})
+				out = append(out, check(lang, cat, "rk_tainted", "ok", atr(lang, "tainted_ok")))
 			}
 		}
 		promisc, promiscRan := promiscIfaces()
-		out = append(out, findingOrSkipped(lang, cat, atr(lang, "rk_promisc"), "warn",
-			promisc, atr(lang, "promisc_ok"), promiscRan))
+		out = append(out, findingOrSkipped(lang, cat, "rk_promisc", "warn", promisc, "promisc_ok", promiscRan))
 		out = append(out, auditEnvPreload(lang, cat))
 		out = append(out, auditKernelModules(lang, cat))
 	}
@@ -911,7 +1216,7 @@ func auditRootkit(lang string) []AuditCheck {
 func auditEnvPreload(lang, cat string) AuditCheck {
 	b, err := os.ReadFile("/etc/environment")
 	if err != nil {
-		return AuditCheck{cat, atr(lang, "rk_env_preload"), "ok", atr(lang, "preload_ok")}
+		return check(lang, cat, "rk_env_preload", "ok", atr(lang, "preload_ok"))
 	}
 	var hits []string
 	for _, ln := range strings.Split(string(b), "\n") {
@@ -921,10 +1226,9 @@ func auditEnvPreload(lang, cat string) AuditCheck {
 		}
 	}
 	if len(hits) > 0 {
-		return AuditCheck{cat, atr(lang, "rk_env_preload"), "risk",
-			fmt.Sprintf(atr(lang, "env_preload_bad"), strings.Join(hits, " | "))}
+		return check(lang, cat, "rk_env_preload", "risk", fmt.Sprintf(atr(lang, "env_preload_bad"), strings.Join(hits, " | ")))
 	}
-	return AuditCheck{cat, atr(lang, "rk_env_preload"), "ok", atr(lang, "preload_ok")}
+	return check(lang, cat, "rk_env_preload", "ok", atr(lang, "preload_ok"))
 }
 
 // auditKernelModules lists out-of-tree or unsigned kernel modules via
@@ -933,7 +1237,7 @@ func auditEnvPreload(lang, cat string) AuditCheck {
 func auditKernelModules(lang, cat string) AuditCheck {
 	ents, err := os.ReadDir("/sys/module")
 	if err != nil {
-		return AuditCheck{cat, atr(lang, "rk_modules"), "info", atr(lang, "modules_na")}
+		return check(lang, cat, "rk_modules", "info", atr(lang, "modules_na"))
 	}
 	var suspicious []string
 	for _, e := range ents {
@@ -946,7 +1250,7 @@ func auditKernelModules(lang, cat string) AuditCheck {
 			suspicious = append(suspicious, e.Name()+" ("+t+")")
 		}
 	}
-	return finding(lang, cat, atr(lang, "rk_modules"), "warn", suspicious, atr(lang, "modules_ok"))
+	return finding(lang, cat, "rk_modules", "warn", suspicious, "modules_ok")
 }
 
 func auditHiddenPorts(lang, cat string) AuditCheck {
@@ -973,36 +1277,20 @@ func auditHiddenPorts(lang, cat string) AuditCheck {
 		raw, err = runCmdErr(10*time.Second, "netstat", "-tuln")
 	}
 	if err != nil || strings.TrimSpace(raw) == "" {
-		return AuditCheck{cat, atr(lang, "rk_ports"), "info", atr(lang, "rk_ports_na")}
+		return check(lang, cat, "rk_ports", "info", atr(lang, "rk_ports_na"))
 	}
 	var diff []string
-	for _, ln := range strings.Split(raw, "\n") {
-		if runtime.GOOS == "windows" && !strings.Contains(strings.ToUpper(ln), "LISTENING") {
-			continue
-		}
-		for _, tok := range strings.Fields(ln) {
-			if i := strings.LastIndex(tok, ":"); i >= 0 && i < len(tok)-1 {
-				if p, err := strconv.Atoi(tok[i+1:]); err == nil && p > 0 && p <= 65535 {
-					if !gset[uint32(p)] {
-						diff = append(diff, fmt.Sprintf(atr(lang, "rk_port_item"), p))
-					}
-					break
-				}
-			}
+	for _, p := range parseListeningPorts(raw, runtime.GOOS == "windows") {
+		if !gset[uint32(p)] { // #nosec G115 -- parseListeningPorts bounds p to 1..65535
+			diff = append(diff, strconv.Itoa(p))
 		}
 	}
-	return finding(lang, cat, atr(lang, "rk_ports"), "warn", uniq(diff), atr(lang, "rk_ports_ok"))
+	return finding(lang, cat, "rk_ports", "warn", uniq(diff), "rk_ports_ok")
 }
 
 func auditWinDrivers(lang, cat string) AuditCheck {
-	var unsigned []string
 	out, err := runCmdErr(25*time.Second, "driverquery", "/si", "/fo", "csv")
-	for _, ln := range strings.Split(out, "\n") {
-		if f := strings.Split(ln, `","`); len(f) >= 3 && strings.EqualFold(strings.Trim(f[2], `"`), "FALSE") {
-			unsigned = append(unsigned, strings.Trim(f[0], `"`))
-		}
-	}
-	return findingOrUnknown(lang, cat, atr(lang, "rk_drivers"), "warn", unsigned, atr(lang, "drivers_ok"), err)
+	return findingOrUnknown(lang, cat, "rk_drivers", "warn", parseDriverQueryUnsigned(out), "drivers_ok", err)
 }
 
 func statusFor(bad bool, badStatus string) string {

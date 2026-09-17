@@ -15,7 +15,7 @@ import (
 // tasklist. Each discrepancy is re-verified to avoid timing false positives.
 // PIDs are kept as int32 end to end — the width the process API uses — so no
 // narrowing conversion is needed anywhere in this comparison.
-func hiddenProcs(lang string) ([]string, bool) {
+func hiddenProcs() (hidden []string, ran, partial bool) {
 	gset := map[int32]bool{}
 	pids, _ := process.Pids()
 	for _, p := range pids {
@@ -24,7 +24,7 @@ func hiddenProcs(lang string) ([]string, bool) {
 	tset := tasklistPids()
 	if len(tset) == 0 {
 		// tasklist failed: report "couldn't check", not "nothing found".
-		return nil, false
+		return nil, false, false
 	}
 	cand := map[int32]bool{}
 	for p := range tset {
@@ -37,7 +37,6 @@ func hiddenProcs(lang string) ([]string, bool) {
 			cand[p] = true
 		}
 	}
-	var hidden []string
 	for p := range cand {
 		// Re-check this specific PID in both sources; a transient process is now
 		// gone from both, so the discrepancy disappears (no false positive).
@@ -47,12 +46,12 @@ func hiddenProcs(lang string) ([]string, bool) {
 		if inApi != inTask {
 			src := "tasklist"
 			if inApi {
-				src = atr(lang, "src_api")
+				src = "api"
 			}
-			hidden = append(hidden, fmt.Sprintf(atr(lang, "rk_proc_only"), p, src))
+			hidden = append(hidden, fmt.Sprintf("pid %d: %s", p, src))
 		}
 	}
-	return hidden, true
+	return hidden, true, false
 }
 
 func tasklistPids() map[int32]bool {

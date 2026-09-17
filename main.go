@@ -659,7 +659,9 @@ func handleAudit(w http.ResponseWriter, r *http.Request) {
 	// Only re-scan when the operator asks (the "re-scan" button); opening the
 	// panel serves the cached result. Passing true unconditionally made the TTL
 	// dead code and turned every open into a full machine scan.
-	writeJSON(w, auditCached(langFrom(r), r.URL.Query().Get("refresh") == "1"))
+	lang := langFrom(r)
+	checks := auditCached(lang, r.URL.Query().Get("refresh") == "1")
+	writeJSON(w, map[string]any{"at": auditTime(lang).Format("15:04:05"), "checks": checks})
 }
 
 func handleAuditJSON(w http.ResponseWriter, r *http.Request) {
@@ -674,6 +676,9 @@ func handleAuditTxt(w http.ResponseWriter, r *http.Request) {
 	mark := map[string]string{"ok": "[ OK ]", "warn": "[WARN]", "risk": "[RISK]", "info": "[INFO]"}
 	for _, c := range auditCached(langFrom(r), false) {
 		fmt.Fprintf(w, "%s %-12s %s\n        %s\n", mark[c.Status], c.Category, c.Name, c.Detail)
+		if len(c.New) > 0 {
+			fmt.Fprintf(w, "        NEW: %s\n", strings.Join(c.New, " | "))
+		}
 	}
 }
 

@@ -87,9 +87,14 @@ no para atacar a otros.
 **Captura y auditoría**
 - **Captura de paquetes** por conexión con `tshark` (TLS SNI, host HTTP, DNS, flags;
   exportación a pcap), con detección automática de interfaz.
-- **Auditoría del equipo**: comprobaciones heurísticas de procesos sospechosos,
-  persistencia, hardening e indicios de rootkit (se ejecuta 100% en local — ver
-  *Privacidad*).
+- **Auditoría del equipo**: comprobaciones heurísticas de procesos sospechosos
+  (rutas de staging, reverse shells, procesos trazados), persistencia (claves
+  Run, Winlogon, IFEO, AppInit, servicios, tareas programadas; cron, ficheros rc,
+  autostart, unidades systemd de usuario y del sistema — en el home de cada
+  usuario, no solo el actual), hardening (firewall, Defender/RDP, SSH, sudoers,
+  SUID, MAC, permisos de ficheros) e indicios de rootkit (cross-view de procesos
+  y puertos, preload, kernel tainted). Lo visto por primera vez en las últimas
+  24 h se marca **NUEVO**. Se ejecuta 100% en local — ver *Privacidad*.
 
 **Acciones e histórico**
 - Matar un proceso, bloquear/desbloquear una IP en el firewall, whitelist de

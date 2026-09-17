@@ -38,6 +38,10 @@ CREATE TABLE IF NOT EXISTS hostnames (
 );
 CREATE INDEX IF NOT EXISTS idx_hostnames_ip ON hostnames(ip);
 
+-- Every audit item ever seen, with when it first appeared: the panel marks
+-- what is new against this, so "14 Run keys" becomes "one that wasn't there".
+CREATE TABLE IF NOT EXISTS audit_seen (key TEXT, item TEXT, first_seen REAL, PRIMARY KEY (key, item));
+
 -- Score change log: one row each time the risk of an (exe, remote ip) pair
 -- changes, so the history can answer "what did this look like on Tuesday".
 CREATE TABLE IF NOT EXISTS score_history (
@@ -372,6 +376,37 @@ func dbAllHostnames() map[string][]Hostname {
 		}
 	}
 	return out
+}
+
+// ── Audit history ────────────────────────────────────────────────────────────
+
+// dbAuditSeen loads every (check key, item) with its first-seen time. hadHistory
+// is false on a machine that has never been scanned, so the first scan can
+// avoid marking everything as new.
+func dbAuditSeen() (seen map[string]map[string]time.Time, hadHistory bool) {
+	seen = map[string]map[string]time.Time{}
+	rows, err := db.Query("SELECT key, item, first_seen FROM audit_seen")
+	if err != nil {
+		return seen, false
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var k, it string
+		var first float64
+		if rows.Scan(&k, &it, &first) != nil {
+			continue
+		}
+		if seen[k] == nil {
+			seen[k] = map[string]time.Time{}
+		}
+		seen[k][it] = time.Unix(0, int64(first*1e9))
+		hadHistory = true
+	}
+	return seen, hadHistory
+}
+
+func dbAuditMarkSeen(key, item string, at time.Time) {
+	db.Exec("INSERT OR IGNORE INTO audit_seen VALUES (?,?,?)", key, item, float64(at.UnixNano())/1e9)
 }
 
 // ── Score history ────────────────────────────────────────────────────────────

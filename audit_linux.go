@@ -3,24 +3,33 @@
 package main
 
 import (
-	"fmt"
 	"os"
 	"strconv"
 	"strings"
 	"syscall"
+	"time"
 )
 
+// hiddenSweepBudget bounds the kill(pid,0) sweep. pid_max is 4 194 304 on a
+// systemd box and the sweep used to stop at 500 000, so a hidden process with
+// a high PID — routine on a long-running machine — was simply never probed.
+// Now the whole range is walked and, if the budget runs out first, the check
+// says so instead of pretending it finished.
+const hiddenSweepBudget = 8 * time.Second
+
 // hiddenProcs (Linux): cross-view between /proc and a kill(pid,0) probe. A PID
-// that answers a signal but has no /proc entry is being hidden (classic LKM rootkit).
-func hiddenProcs(lang string) ([]string, bool) {
+// that answers a signal but has no /proc entry is being hidden (classic LKM
+// rootkit). Returns the findings, whether the probe ran, and whether it was
+// cut short.
+func hiddenProcs() (hidden []string, ran, partial bool) {
 	max := 32768
 	if b, err := os.ReadFile("/proc/sys/kernel/pid_max"); err == nil {
 		if m, err := strconv.Atoi(strings.TrimSpace(string(b))); err == nil {
 			max = m
 		}
 	}
-	if max > 500000 {
-		max = 500000
+	if max > 4194304 {
+		max = 4194304
 	}
 	listed := map[int]bool{}
 	if ents, err := os.ReadDir("/proc"); err == nil {
@@ -30,19 +39,28 @@ func hiddenProcs(lang string) ([]string, bool) {
 			}
 		}
 	}
-	var hidden []string
+	deadline := time.Now().Add(hiddenSweepBudget)
 	for pid := 2; pid < max; pid++ {
+		if pid&0x3fff == 0 && time.Now().After(deadline) {
+			return hidden, true, true
+		}
 		if listed[pid] {
 			continue
 		}
 		err := syscall.Kill(pid, 0)
-		if err == nil || err == syscall.EPERM { // exists (EPERM = exists, no perm)
-			if _, e := os.Stat("/proc/" + strconv.Itoa(pid)); os.IsNotExist(e) {
-				hidden = append(hidden, fmt.Sprintf(atr(lang, "rk_proc_proc"), pid))
-			}
+		if err != nil && err != syscall.EPERM { // ESRCH: nothing there
+			continue
+		}
+		if _, e := os.Stat("/proc/" + strconv.Itoa(pid)); !os.IsNotExist(e) {
+			continue // a process that appeared after the /proc listing
+		}
+		// Exists but absent from /proc — unless it exited between the two
+		// calls. Ask once more: a real hidden process still answers.
+		if e := syscall.Kill(pid, 0); e == nil || e == syscall.EPERM {
+			hidden = append(hidden, "pid "+strconv.Itoa(pid))
 		}
 	}
-	return hidden, true
+	return hidden, true, false
 }
 
 // promiscIfaces (Linux): interfaces with the IFF_PROMISC flag set (0x100).

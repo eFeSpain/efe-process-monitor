@@ -130,9 +130,14 @@ GOOS=darwin go build -o efemon .  # macOS
   **real app icon** (`notifyIcon()` extracts the embedded `icon.png` next to the exe once) + `<audio silent>`
   when sound off; Linux `notify-send` (with the same extracted app icon via `-i`). Flags `notifyDesktop`,
   `notifySound`. Titles localized via `currentLang()`.
-- **audit.go** — machine audit engine. `Audit(lang)` → processes / persistence / hardening / rootkit checks.
-  `AuditCheck{Category,Name,Status(ok|warn|risk|info),Detail}`. `auditStrings` = audit i18n (es/en/zh) via `atr(lang,key)`.
-  `auditCached(lang,refresh)` per-language cache.
+- **audit.go** — machine audit engine. `Audit(lang)` runs processes / persistence / hardening / rootkit
+  **concurrently**, each sorted by severity. `AuditCheck{Category,Key,Name,Status,Detail,Items,New}`:
+  `Key` is the i18n key (stable identity), `Items` the raw findings, `New` those first seen within
+  `auditNewWindow` (24 h) per the `audit_seen` table (`applyAuditDiff`; the first scan marks nothing).
+  Per-user files are checked for every real account (`userHomes`), not `$HOME` — under sudo that is /root.
+  `auditStrings` = audit i18n (es/en/zh) via `atr(lang,key)`. `auditCached(lang,refresh)` per-language cache.
+- **audit_parse.go** — the audit's pure parsers (reg query, IFEO, schtasks, services, driverquery,
+  ss/netstat, unit files, nft/iptables counts, hosts), each with a fixture test in `audit_test.go`.
 - **audit_windows.go / audit_linux.go / audit_other.go** — build-tagged `hiddenProcs(lang)` (cross-view:
   Linux kill-vs-/proc, Windows API-vs-tasklist) and `promiscIfaces()`.
 - **actions.go** — `blockIP`/`unblockIP` (Windows netsh, Linux iptables/nft fallback), `openBrowser`,

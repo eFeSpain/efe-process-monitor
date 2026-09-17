@@ -8,5 +8,5 @@ package main
 // clean result: returning a bare nil made the audit print "no discrepancies
 // between process sources", which is a confident pass for a check that never ran.
 // In a security audit that is the worst possible output.
-func hiddenProcs(lang string) ([]string, bool) { return nil, false }
-func promiscIfaces() ([]string, bool)          { return nil, false }
+func hiddenProcs() (hidden []string, ran, partial bool) { return nil, false, false }
+func promiscIfaces() ([]string, bool)                   { return nil, false }

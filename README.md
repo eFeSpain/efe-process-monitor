@@ -83,8 +83,14 @@ attacking others.
 **Capture & audit**
 - Per-connection **packet capture** via `tshark` (TLS SNI, HTTP host, DNS, flags;
   pcap export), with automatic interface detection.
-- **Machine audit**: heuristic checks for suspicious processes, persistence,
-  hardening and rootkit indicators (runs entirely locally — see *Privacy*).
+- **Machine audit**: heuristic checks for suspicious processes (staging paths,
+  reverse shells, traced processes), persistence (Run keys, Winlogon, IFEO,
+  AppInit, services, scheduled tasks; cron, shell rc files, autostart, user
+  and system systemd units — for every user's home, not just the current one),
+  hardening (firewall, Defender/RDP, SSH, sudoers, SUID, MAC, file permissions)
+  and rootkit indicators (process/port cross-view, preload, tainted kernel).
+  Findings first seen in the last 24 h are marked **NEW**. Runs entirely
+  locally — see *Privacy*.
 
 **Actions & history**
 - Kill a process, block/unblock an IP at the firewall, whitelist binaries or IPs.

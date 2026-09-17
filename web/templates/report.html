@@ -146,6 +146,8 @@ select{background:#0d1117;color:#c9d1d9;border:1px solid #30363d;padding:3px 6px
 .aud-risk{border-left-color:#f85149;} .aud-warn{border-left-color:#e3b341;}
 .notray-warn{background:#3a2e10;color:#e3b341;border:1px solid #9e7a16;border-radius:6px;margin:8px;padding:8px 16px;font-size:12px;display:flex;align-items:center;gap:14px;flex-wrap:wrap;}
 .aud-ok{border-left-color:#3fb950;} .aud-info{border-left-color:#58a6ff;}
+.aud-newbadge{background:#1f6feb;color:#fff;border-radius:10px;padding:1px 7px;font-size:10px;font-weight:600;margin-left:6px;vertical-align:middle;}
+.aud-newlist{color:#79c0ff;} .aud-at{color:#8b949e;font-size:11px;margin-left:8px;}
 .details-content, .details-content * { cursor: default; }
 .ports,.vt-bad[title]{border-bottom:1px dotted #484f58;}
 .provider-chip{background:#12261a;color:#3fb950;border:1px solid #238636;border-radius:8px;padding:1px 7px;font-size:10px;}
@@ -959,21 +961,26 @@ function openAudit(force) {
     const m = document.getElementById('audit-modal'), b = document.getElementById('audit-body');
     m.style.display = 'flex'; b.textContent = T.audit_running;
     document.getElementById('audit-sum').textContent = '';
-    fetch('/api/audit' + (force ? '?refresh=1' : '')).then(r => r.json()).then(list => {
+    fetch('/api/audit' + (force ? '?refresh=1' : '')).then(r => r.json()).then(res => {
+        const list = res && res.checks;
         if (!list || !list.length) { b.textContent = '—'; return; }
         const icon = { ok:'✅', warn:'⚠️', risk:'🔴', info:'ℹ️' };
         const n = { ok:0, warn:0, risk:0, info:0 };
-        list.forEach(x => n[x.status]++);
+        let newTotal = 0;
+        list.forEach(x => { n[x.status]++; newTotal += (x.new || []).length; });
         document.getElementById('audit-sum').innerHTML =
             `<span class="threat threat-high">🔴 ${n.risk}</span> ` +
             `<span class="threat threat-med">⚠️ ${n.warn}</span> ` +
-            `<span class="threat threat-min">✅ ${n.ok}</span>`;
-        // order: risk, warn, info, ok
+            `<span class="threat threat-min">✅ ${n.ok}</span>` +
+            (newTotal ? ` <span class="aud-newbadge">${esc(T.audit_new)} ${newTotal}</span>` : '') +
+            ` <span class="aud-at">${esc(T.audit_scanned)} ${esc(res.at || '')}</span>`;
+        // order: risk, warn, info, ok; anything with new items first within its level
         const ord = { risk:0, warn:1, info:2, ok:3 };
-        list.sort((a,b2) => ord[a.status] - ord[b2.status]);
+        list.sort((a,b2) => (ord[a.status] - ord[b2.status]) || ((b2.new||[]).length - (a.new||[]).length));
         b.innerHTML = `<div class="aud-note">${esc(T.audit_warn)}</div>` + list.map(x => `<div class="aud-row aud-${esc(x.status)}">
-            <div class="aud-h">${icon[x.status]||''} <b>${esc(x.name)}</b> <span class="t">${esc(x.category)}</span></div>
+            <div class="aud-h">${icon[x.status]||''} <b>${esc(x.name)}</b> <span class="t">${esc(x.category)}</span>${(x.new||[]).length ? ` <span class="aud-newbadge">${esc(T.audit_new)} ${x.new.length}</span>` : ''}</div>
             <div class="aud-d">${esc(x.detail)}</div>
+            ${(x.new||[]).length ? `<div class="aud-d aud-newlist">${esc(T.audit_new)}: ${x.new.map(esc).join(' | ')}</div>` : ''}
         </div>`).join('');
     }).catch(() => { b.textContent = 'error'; });
 }

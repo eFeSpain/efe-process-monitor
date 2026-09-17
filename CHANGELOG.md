@@ -6,6 +6,48 @@ Versions follow [Semantic Versioning](https://semver.org/).
 
 ---
 
+## [Unreleased] — audit: every user's home, more persistence, new-since badge
+
+### Added
+- **Reverse-shell detection (Linux)**: a shell or interpreter whose stdin or
+  stdout *is* a socket. Nothing legitimate wires a shell's standard streams to
+  a socket; every reverse-shell one-liner does.
+- **Traced processes (Linux)**: `TracerPid` set — a debugger, or an injection.
+- **System-level systemd units**: locally defined units/timers are listed, and
+  any whose `Exec*` starts something from temp, shm or a home directory is a
+  finding. This is the most common Linux persistence and was not covered.
+- **Windows persistence**: Winlogon `Shell`/`Userinit`, IFEO `Debugger`
+  hijacks, `AppInit_DLLs`, services whose binary sits in a user-writable
+  directory, and unquoted service paths with spaces.
+- **`/etc/passwd` / `shadow` / `sudoers` permissions** and, without ufw, the
+  actual nft/iptables rule count instead of "check manually".
+- **"NEW" badge**: every item a scan reports is remembered with its first
+  sighting; anything first seen in the last 24 h is marked, in the panel and
+  in `audit.txt`. The first scan on a machine marks nothing. The panel also
+  shows when the (cached) result was produced.
+
+### Fixed
+- **Run as root, the audit inspected the wrong home.** `~/.bashrc`, autostart
+  entries, user systemd units and `authorized_keys` were read from `/root`
+  under sudo. Every real account's home is now checked and each finding says
+  whose it is.
+- The hidden-process sweep stopped at PID 500 000 while `pid_max` is
+  4 194 304 on systemd machines; it now walks the whole range under a time
+  budget and reports when it was cut short. A process that exits between the
+  probe and the `/proc` check is re-verified instead of reported as hidden.
+- `authorized_keys` unreadable for permissions was reported as "no keys";
+  it is now "could not check".
+- The hosts-file filter dropped any line containing "localhost", so
+  `1.2.3.4 bank.com # localhost` passed as boilerplate.
+
+### Changed
+- The four audit categories run concurrently; the scan takes as long as the
+  slowest one. Checks are ordered by severity within each category.
+- Every parser the audit relies on (reg query, schtasks, driverquery, ss /
+  netstat, unit files, hosts) is a pure function with a fixture test.
+- `/api/audit` returns `{at, checks}`; each check carries a stable `key`, its
+  raw `items` and the `new` ones. `/audit.json` is unchanged.
+
 ## [Unreleased] — passive DNS, content baseline, miner signal, timeline export
 
 ### Added
