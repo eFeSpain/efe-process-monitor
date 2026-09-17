@@ -55,9 +55,10 @@ attacking others.
 **Reputation & threat intel**
 - Binary: SHA-256 lookup on **VirusTotal**, and code signature — **Authenticode**
   on Windows, **package ownership** (`dpkg`/`rpm`/`pacman`) on Linux.
-- **What the process actually asked for**: hostnames observed bound to an address
-  during a capture, from the TLS **SNI** (client-declared, the strongest binding
-  there is) and from **DNS answer records**. This is a different and better thing
+- **What the process actually asked for**: hostnames observed bound to an address,
+  from the TLS **SNI** (client-declared, the strongest binding there is) and from
+  **DNS answer records** — during a capture, and continuously through the passive
+  DNS listener (see *Live monitoring*). This is a different and better thing
   than reverse DNS, which is what the address *owner* claims — a malicious host
   controls its own PTR record but not what your browser writes into a handshake.
 - Remote IP: geolocation / ISP / ASN, reverse DNS, **VirusTotal**, **AbuseIPDB**,
@@ -84,7 +85,7 @@ attacking others.
   On Linux disk I/O is subtracted so it approximates network traffic; on Windows
   the OS does not allow that split and the figure includes disk.
 - SSE feed of new/closed connections and new processes, **beaconing/C2**
-  heuristics (regular connections to the same host), new-binary anomalies, and
+  heuristics (regular connections to the same host), new or replaced binaries, and
   optional **desktop notifications**.
 - **Pin** a connection to keep a frozen copy of its card even after it closes.
 
@@ -104,7 +105,9 @@ attacking others.
 - Kill a process, block/unblock an IP at the firewall, whitelist binaries or IPs.
 - **LAN host info**: NetBIOS / DNS / MAC, with offline **OUI vendor** lookup.
 - Forensic **history** in SQLite, exportable to CSV/JSON, with filtered deletion
-  (by process, type or age).
+  (by process, type or age). **Timeline export** (`/export/timeline.json`): one
+  record per (binary, remote IP) joining its events, risk changes, names asked
+  for and block/whitelist state — the incident report as a single document.
 - **Risk timeline**: one entry each time the verdict for a (binary, remote IP) pair
   changes, with the reasoning that produced it — so "what did this look like on
   Tuesday" has an answer, instead of the score existing only on the rendered page.
@@ -148,9 +151,15 @@ GOOS=darwin CGO_ENABLED=0 go build -o efemon .   # cross-compile for macOS
 ./efemon          # serves http://127.0.0.1:5000 and opens it in your browser
 ```
 
-- Run as **administrator / root** to see every process (name, exe, signature) and
-  to use *kill* / *block IP*. Without elevation it still runs, but some processes
+- Run as **administrator / root** to see every process (name, exe, signature),
+  to use *kill* / *block IP*, and — on Linux — for passive DNS and for the audit
+  to read every user's home. Without elevation it still runs, but some processes
   show `N/A` (it warns you).
+- On **Linux, run it with `sudo` from your desktop session** (a terminal in your
+  graphical login). Root has no session bus of its own, so the tray icon, the
+  desktop notifications and the browser are handed to the user who ran `sudo` —
+  that is why it has to be your session. Persisted IP blocks are re-created in
+  the firewall at every start.
 - **Packet capture** is optional and needs [tshark/Wireshark](https://www.wireshark.org/) on `PATH`.
 - Only **one instance** runs at a time; launching a second just opens the dashboard.
 - On **Windows** it lives in the **system tray** — right-click to open or quit;
@@ -159,7 +168,8 @@ GOOS=darwin CGO_ENABLED=0 go build -o efemon .   # cross-compile for macOS
   XFCE, MATE, Cinnamon…). On GNOME you need the
   [AppIndicator and KStatusNotifierItem Support](https://extensions.gnome.org/extension/615/appindicator-support/)
   extension; without it (or on any other unsupported desktop), no tray icon
-  appears — a **Stop** button is shown in the web dashboard instead.
+  appears — a **Stop** button is shown in the web dashboard instead. The
+  dashboard says which of the two cases it is.
 - **macOS is not supported and no macOS binary is published.** The code still
   cross-compiles for darwin and CI keeps proving it, so you can build from source
   — but be aware of *why* it isn't shipped: several audit probes have no macOS
@@ -227,13 +237,16 @@ queries external services for the IPs/hashes **you inspect**: ipwho.is, VirusTot
 AbuseIPDB and Shodan receive those values; the abuse.ch / Spamhaus / Tor lists are
 plain public downloads that reveal nothing about you. Results are cached so each
 binary/IP is queried at most once (hourly for IPs). The machine audit runs fully
-locally. The in-app **🛰 Privacy** panel spells out exactly what goes where.
+locally, and so does the passive DNS listener: it reads DNS answers on your own
+interfaces and stores name↔address pairs in `efemon.db`; nothing is sent
+anywhere. The in-app **🛰 Privacy** panel spells out exactly what goes where.
 
 ## Tech stack
 
 Go · [gopsutil](https://github.com/shirou/gopsutil) · `net/http` + `html/template`
 + `go:embed` · [modernc.org/sqlite](https://modernc.org/sqlite) (cgo-free) ·
-[fyne.io/systray](https://github.com/fyne-io/systray) · `tshark` for capture.
+[fyne.io/systray](https://github.com/fyne-io/systray) · `golang.org/x/sys`
+(AF_PACKET + classic BPF for passive DNS) · `tshark` for capture.
 
 ## License
 

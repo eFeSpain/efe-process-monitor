@@ -57,9 +57,10 @@ no para atacar a otros.
 **Reputación e inteligencia**
 - Binario: hash SHA-256 en **VirusTotal**, y firma de código — **Authenticode** en
   Windows, **pertenencia a paquete** (`dpkg`/`rpm`/`pacman`) en Linux.
-- **Lo que el proceso pidió de verdad**: nombres observados asociados a una IP
-  durante una captura, desde el **SNI** de TLS (declarado por el cliente, el
-  vínculo más fuerte que existe) y desde las **respuestas DNS**. Es algo distinto
+- **Lo que el proceso pidió de verdad**: nombres observados asociados a una IP,
+  desde el **SNI** de TLS (declarado por el cliente, el vínculo más fuerte que
+  existe) y desde las **respuestas DNS** — durante una captura y, en continuo, con
+  el DNS pasivo (ver *Monitorización en vivo*). Es algo distinto
   y mejor que el DNS inverso, que es lo que declara el *dueño* de la IP — un host
   malicioso controla su propio PTR, pero no lo que tu navegador escribe en un
   handshake.
@@ -88,7 +89,7 @@ no para atacar a otros.
   o una copia de seguridad. En Linux se descuenta el I/O a disco y se aproxima al
   tráfico de red; en Windows el sistema no permite separarlo e incluye disco.
 - Feed por SSE de conexiones nuevas/cerradas y procesos nuevos, heurísticas de
-  **beaconing/C2** (conexiones regulares al mismo host), anomalías de binario nuevo
+  **beaconing/C2** (conexiones regulares al mismo host), binarios nuevos o reemplazados
   y **notificaciones de escritorio** opcionales.
 - **Fija** una conexión para conservar una copia congelada de su tarjeta aunque se
   cierre.
@@ -111,7 +112,10 @@ no para atacar a otros.
 - **Info de host LAN**: NetBIOS / DNS / MAC, con búsqueda offline de **fabricante
   (OUI)**.
 - **Histórico** forense en SQLite, exportable a CSV/JSON, con borrado por filtros
-  (por proceso, tipo o antigüedad).
+  (por proceso, tipo o antigüedad). **Exportación de línea temporal**
+  (`/export/timeline.json`): una entrada por (binario, IP remota) con sus eventos,
+  cambios de riesgo, nombres pedidos y estado de bloqueo/whitelist — el informe
+  del incidente en un solo documento.
 - **Cronología de riesgo**: una entrada cada vez que cambia el veredicto de un par
   (binario, IP remota), con el razonamiento que lo produjo — así «¿qué pinta tenía
   esto el martes?» tiene respuesta, en vez de que el score exista solo en la página
@@ -157,8 +161,14 @@ GOOS=darwin CGO_ENABLED=0 go build -o efemon .   # compilar para macOS
 ```
 
 - Ejecútalo como **administrador / root** para ver todos los procesos (nombre, exe,
-  firma) y para usar *matar* / *bloquear IP*. Sin elevación también funciona, pero
-  algunos procesos salen como `N/A` (te avisa).
+  firma), para usar *matar* / *bloquear IP* y — en Linux — para el DNS pasivo y
+  para que la auditoría lea el home de todos los usuarios. Sin elevación también
+  funciona, pero algunos procesos salen como `N/A` (te avisa).
+- En **Linux, lánzalo con `sudo` desde tu sesión de escritorio** (una terminal
+  dentro de tu sesión gráfica). Root no tiene bus de sesión propio, así que el
+  icono de bandeja, las notificaciones y el navegador se delegan al usuario que
+  ejecutó `sudo` — por eso tiene que ser tu sesión. Los bloqueos de IP
+  persistidos se vuelven a aplicar en el firewall en cada arranque.
 - La **captura de paquetes** es opcional y necesita [tshark/Wireshark](https://www.wireshark.org/) en el `PATH`.
 - Solo corre **una instancia** a la vez; lanzar una segunda abre el panel existente.
 - En **Windows** vive en la **bandeja del sistema** — clic derecho para abrir o
@@ -167,7 +177,8 @@ GOOS=darwin CGO_ENABLED=0 go build -o efemon .   # compilar para macOS
   (KDE, XFCE, MATE, Cinnamon…). En GNOME necesitas la extensión
   [AppIndicator and KStatusNotifierItem Support](https://extensions.gnome.org/extension/615/appindicator-support/);
   sin ella (o en escritorios no compatibles), no aparece icono — en su lugar
-  se muestra un botón **Detener** en el panel web.
+  se muestra un botón **Detener** en el panel web. El panel indica cuál de los
+  dos casos es.
 - **macOS no está soportado y no se publica binario de macOS.** El código sigue
   compilando para darwin y la CI lo comprueba, así que puedes construirlo desde
   fuente — pero conviene saber *por qué* no se distribuye: varias sondas de la
@@ -238,14 +249,15 @@ información, la herramienta consulta servicios externos sobre las IPs/hashes qu
 **tú inspeccionas**: ipwho.is, VirusTotal, AbuseIPDB y Shodan reciben esos valores;
 las listas de abuse.ch / Spamhaus / Tor son descargas públicas que no revelan nada
 de ti. Los resultados se cachean, así que cada binario/IP se consulta como mucho
-una vez (cada hora las IPs). La auditoría del equipo corre 100% en local. El panel
+una vez (cada hora las IPs). La auditoría del equipo corre 100% en local, y el DNS pasivo también: lee las respuestas DNS en tus propias interfaces y guarda los pares nombre↔dirección en `efemon.db`; no envía nada a ningún sitio. El panel
 **🛰 Privacidad** de la app detalla exactamente qué sale y a dónde.
 
 ## Stack
 
 Go · [gopsutil](https://github.com/shirou/gopsutil) · `net/http` + `html/template`
 + `go:embed` · [modernc.org/sqlite](https://modernc.org/sqlite) (sin cgo) ·
-[fyne.io/systray](https://github.com/fyne-io/systray) · `tshark` para la captura.
+[fyne.io/systray](https://github.com/fyne-io/systray) · `golang.org/x/sys`
+(AF_PACKET + BPF clásico para el DNS pasivo) · `tshark` para la captura.
 
 ## Licencia
 
