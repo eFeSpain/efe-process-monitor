@@ -22,7 +22,7 @@ func testTemplates(t *testing.T) *template.Template {
 
 func TestReportTemplateExecutes(t *testing.T) {
 	tm := testTemplates(t)
-	for _, lang := range []string{"es", "en"} {
+	for _, lang := range testLangs {
 		data := map[string]any{
 			"T": strings_(lang), "Lang": lang, "Admin": true,
 			"RefreshSecs": int64(30), "NoTray": true,
@@ -91,7 +91,7 @@ func TestRowsTemplateExecutes(t *testing.T) {
 		Known: "mDNS", VT: "NOT_IN_VT", Sig: Signature{Status: "Packaged", Signer: "avahi", Trusted: true},
 	}
 
-	for _, lang := range []string{"es", "en"} {
+	for _, lang := range testLangs {
 		var sb strings.Builder
 		data := map[string]any{
 			"T":     strings_(lang),

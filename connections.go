@@ -8,6 +8,7 @@ import (
 	"io"
 	"net"
 	"os"
+	"regexp"
 	"runtime"
 	"sort"
 	"strconv"
@@ -58,42 +59,43 @@ type ProcDetails struct {
 
 // Conn is one analyzed connection row shown in the UI.
 type Conn struct {
-	Threat      int
-	Port        uint32
-	LocalIP     string
-	RPort       uint32
-	RemoteIP    string
-	PID         int32
-	Process     string
-	Status      string
-	Exe         string
-	Known       string
-	VT          string
-	Undetected  string
-	Cached      bool
-	Suspicious  bool // runs from a staging directory (temp, public, /dev/shm)
-	Untrusted   bool // runs from a downloads directory: weak signal
-	SuspPort    bool
-	Blockable   bool
-	Capturable  bool    // has a public remote peer, so tshark has something to filter on
-	RateIn      float64 // bytes/sec inbound (see volume.go on what this measures)
-	RateOut     float64 // bytes/sec outbound
-	HighEgress  bool    // sustained outbound flow; informational unless combined
-	CPU         float64 // % of the whole machine over the last monitor interval (volume.go)
-	RSS         uint64  // resident memory in bytes (Windows: working set)
-	Threads     int32
-	User        string // owning account, "" if not resolvable
-	ResOK       bool   // CPU/RSS were readable for this PID
-	Sig         Signature
-	Whitelist   bool
-	IPWhitelist bool
-	Partial     bool // key signals (VT/enrichment) couldn't be resolved → low score ≠ clean
-	Enrich      *Enrichment
-	Hostnames   []Hostname // names observed bound to RemoteIP (TLS SNI / DNS answers)
-	LAN         *LANInfo
-	Details     *ProcDetails
-	Breakdown   string
-	RemoteIPs   []string // unique blockable remote IPs of this connection's process
+	Threat        int
+	Port          uint32
+	LocalIP       string
+	RPort         uint32
+	RemoteIP      string
+	PID           int32
+	Process       string
+	Status        string
+	Exe           string
+	Known         string
+	VT            string
+	Undetected    string
+	Cached        bool
+	Suspicious    bool // runs from a staging directory (temp, public, /dev/shm)
+	Untrusted     bool // runs from a downloads directory: weak signal
+	SuspPort      bool
+	Blockable     bool
+	Capturable    bool    // has a public remote peer, so tshark has something to filter on
+	RateIn        float64 // bytes/sec inbound (see volume.go on what this measures)
+	RateOut       float64 // bytes/sec outbound
+	HighEgress    bool    // sustained outbound flow; informational unless combined
+	CPU           float64 // % of the whole machine over the last monitor interval (volume.go)
+	RSS           uint64  // resident memory in bytes (Windows: working set)
+	Threads       int32
+	User          string // owning account, "" if not resolvable
+	ResOK         bool   // CPU/RSS were readable for this PID
+	Sig           Signature
+	Whitelist     bool
+	IPWhitelist   bool
+	Partial       bool // key signals (VT/enrichment) couldn't be resolved → low score ≠ clean
+	Enrich        *Enrichment
+	Hostnames     []Hostname // names observed bound to RemoteIP (TLS SNI / DNS answers)
+	LAN           *LANInfo
+	Details       *ProcDetails
+	Breakdown     string   // the reasons, rendered in the UI language (see localizeBreakdown)
+	BreakdownCode string   // the same reasons, language-neutral; what score_history stores
+	RemoteIPs     []string // unique blockable remote IPs of this connection's process
 }
 
 // getProcDetails fills per-process info. The process's active connections come
@@ -620,40 +622,47 @@ const (
 )
 
 func threatScore(c *Conn) int {
+	// finish renders the reasons both ways: neutral for the history, localized
+	// for the tooltip. The language is the one of the request being served.
+	var rs []reason
+	finish := func(score float64) int {
+		c.BreakdownCode = encodeReasons(rs)
+		c.Breakdown = localizeBreakdown(currentLang(), c.BreakdownCode)
+		return int(score)
+	}
 	if c.Whitelist {
-		c.Breakdown = "binario en whitelist → 0"
-		return 0
+		rs = []reason{{key: "wl_exe"}}
+		return finish(0)
 	}
 	if c.IPWhitelist {
-		c.Breakdown = "IP en whitelist → 0"
-		return 0
+		rs = []reason{{key: "wl_ip"}}
+		return finish(0)
 	}
 	score := 0.0
-	var why []string
-	add := func(pts float64, reason string) {
+	add := func(pts float64, key string, args ...string) {
 		score += pts
-		why = append(why, fmt.Sprintf("%s (+%d)", reason, int(pts)))
+		rs = append(rs, reason{key: key, pts: int(pts), args: args})
 	}
 
 	if n, err := strconv.Atoi(c.VT); err == nil && n > 0 {
 		if n > vtDetectionCap {
 			n = vtDetectionCap
 		}
-		add(float64(n)*wVTPerDetection, fmt.Sprintf("VT %s detecciones", c.VT))
+		add(float64(n)*wVTPerDetection, "vt", c.VT)
 	}
 	switch {
 	case c.Suspicious:
-		add(wSuspiciousPath, "ruta de staging (temp/público)")
+		add(wSuspiciousPath, "path_staging")
 	case c.Untrusted:
-		add(wUntrustedPath, "ruta poco fiable (descargas)")
+		add(wUntrustedPath, "path_untrusted")
 	}
 	if c.SuspPort {
-		add(wMalwarePort, "puerto de malware ("+c.Known+")")
+		add(wMalwarePort, "port", c.Known)
 	}
 	// A spawn chain that should never happen is one of the few high-precision
 	// signals computable without any external service.
 	if c.Details != nil && c.Details.BadSpawn != "" {
-		add(wBadSpawn, "cadena anómala ("+c.Details.BadSpawn+")")
+		add(wBadSpawn, "spawn", c.Details.BadSpawn)
 	}
 	// Volume never scores on its own: a download, a backup and a video call all
 	// move data. It scores when the binary was already suspect for an independent
@@ -661,17 +670,16 @@ func threatScore(c *Conn) int {
 	// claim from "this process is busy". See volume.go.
 	if c.HighEgress && (c.Suspicious || c.SuspPort ||
 		(c.Details != nil && c.Details.BadSpawn != "")) {
-		add(wExfilCombo, fmt.Sprintf("volumen de salida sostenido (%s/s) desde binario sospechoso",
-			humanRate(c.RateOut)))
+		add(wExfilCombo, "exfil", humanRate(c.RateOut))
 	}
 	switch c.Sig.Status {
 	case "NotSigned":
-		add(wUnsigned, "binario sin firma")
+		add(wUnsigned, "unsigned")
 	// PENDING means "not resolved yet", so it must score 0 — it is reflected in
 	// coverageIncomplete instead, which marks the row as partial data.
 	case "Valid", "N/A", "Unknown", "", "Packaged", "Unmanaged", sigPendingStatus:
 	default:
-		add(wBadSignature, "firma "+c.Sig.Status)
+		add(wBadSignature, "sig", c.Sig.Status)
 	}
 	if e := c.Enrich; e != nil {
 		if e.VTMalicious != nil && *e.VTMalicious > 0 {
@@ -679,48 +687,119 @@ func threatScore(c *Conn) int {
 			if n > vtDetectionCap {
 				n = vtDetectionCap
 			}
-			add(float64(n)*wVTIPPerHit, fmt.Sprintf("VT-IP %d", *e.VTMalicious))
+			add(float64(n)*wVTIPPerHit, "vtip", strconv.Itoa(*e.VTMalicious))
 		}
 		if e.AbuseScore != nil && *e.AbuseScore > 0 {
-			w, note := wAbusePerPercent, ""
 			if e.Provider != "" {
-				w, note = wAbuseAttenuated, " atenuado: "+e.Provider
+				add(float64(*e.AbuseScore)*wAbuseAttenuated, "abuse_att", strconv.Itoa(*e.AbuseScore), e.Provider)
+			} else {
+				add(float64(*e.AbuseScore)*wAbusePerPercent, "abuse", strconv.Itoa(*e.AbuseScore))
 			}
-			add(float64(*e.AbuseScore)*w, fmt.Sprintf("AbuseIPDB %d%%%s", *e.AbuseScore, note))
 		}
 		if e.C2 {
-			add(wFeodoC2, "C2 Feodo")
+			add(wFeodoC2, "c2")
 		}
 		if e.ThreatFox != "" {
-			add(wThreatFox, "ThreatFox: "+e.ThreatFox)
+			add(wThreatFox, "threatfox", e.ThreatFox)
 		}
 		if e.Spamhaus {
-			add(wSpamhausDROP, "Spamhaus DROP")
+			add(wSpamhausDROP, "spamhaus")
 		}
 		if e.Tor {
-			add(wTorExit, "Tor exit")
+			add(wTorExit, "tor")
 		}
 		if len(e.Vulns) > 0 {
-			add(wShodanCVEs, fmt.Sprintf("%d CVEs (Shodan)", len(e.Vulns)))
+			add(wShodanCVEs, "cves", strconv.Itoa(len(e.Vulns)))
 		}
 	}
 	if score > 100 {
 		score = 100
 	}
-	if len(why) == 0 {
+	if len(rs) == 0 {
 		// A zero score is only "clean" if we actually managed to check the key
 		// signals. If VT has no real verdict, or a public IP wasn't enriched yet,
 		// the low score means "no data", not "safe" — flag it as partial coverage.
 		if coverageIncomplete(c) {
 			c.Partial = true
-			c.Breakdown = "sin señales (datos incompletos)"
+			rs = []reason{{key: "partial"}}
 		} else {
-			c.Breakdown = "limpio"
+			rs = []reason{{key: "clean"}}
 		}
-	} else {
-		c.Breakdown = strings.Join(why, " · ")
 	}
-	return int(score)
+	return finish(score)
+}
+
+// ── Score breakdown encoding ─────────────────────────────────────────────────
+//
+// The reasons behind a score are kept as keys plus arguments, not as prose: the
+// tooltip renders them in the operator's language, and score_history stores the
+// neutral form, so the timeline reads correctly in whichever language is active
+// when it is opened. Before this the breakdown was Spanish-only, in the UI and
+// in the database.
+
+// reason is one scored signal: a translation key (bd_<key>), the points it
+// added, and the arguments its text takes.
+type reason struct {
+	key  string
+	pts  int
+	args []string
+}
+
+// The encoding is `key/pts/arg|arg;key/pts;key`. Arguments are escaped so a
+// malware family or a spawn chain can never break the format.
+var (
+	reasonEscaper   = strings.NewReplacer("%", "%25", ";", "%3B", "/", "%2F", "|", "%7C")
+	reasonUnescaper = strings.NewReplacer("%3B", ";", "%2F", "/", "%7C", "|", "%25", "%")
+	breakdownCodeRe = regexp.MustCompile(`^[a-z0-9_]+(/-?\d+(/[^;]*)?)?(;[a-z0-9_]+(/-?\d+(/[^;]*)?)?)*$`)
+)
+
+func encodeReasons(rs []reason) string {
+	parts := make([]string, 0, len(rs))
+	for _, r := range rs {
+		p := r.key
+		if r.pts != 0 || len(r.args) > 0 {
+			p += "/" + strconv.Itoa(r.pts)
+		}
+		if len(r.args) > 0 {
+			esc := make([]string, len(r.args))
+			for i, a := range r.args {
+				esc[i] = reasonEscaper.Replace(a)
+			}
+			p += "/" + strings.Join(esc, "|")
+		}
+		parts = append(parts, p)
+	}
+	return strings.Join(parts, ";")
+}
+
+// localizeBreakdown renders an encoded breakdown in lang. Anything that is not
+// the encoding — rows written before it existed are free text — is returned as
+// it is, as is a code whose key this build does not know.
+func localizeBreakdown(lang, code string) string {
+	if code == "" || !breakdownCodeRe.MatchString(code) {
+		return code
+	}
+	T := strings_(lang)
+	var out []string
+	for _, p := range strings.Split(code, ";") {
+		f := strings.SplitN(p, "/", 3)
+		tmpl, ok := T["bd_"+f[0]]
+		if !ok {
+			return code
+		}
+		var args []any
+		if len(f) == 3 {
+			for _, a := range strings.Split(f[2], "|") {
+				args = append(args, reasonUnescaper.Replace(a))
+			}
+		}
+		s := fmt.Sprintf(tmpl, args...)
+		if len(f) >= 2 {
+			s += " (+" + f[1] + ")"
+		}
+		out = append(out, s)
+	}
+	return strings.Join(out, " · ")
 }
 
 // coverageIncomplete reports whether the key intel signals could NOT be resolved
@@ -981,11 +1060,13 @@ func recordScoreChange(c *Conn) {
 	if c.Partial {
 		return // don't record a verdict we already know is based on missing data
 	}
+	// Compared and stored in the neutral encoding, so switching the UI language
+	// does not register as the risk of every pair having changed.
 	if last, lastWhy, ok := dbLastScore(c.Exe, c.RemoteIP); ok &&
-		last == c.Threat && lastWhy == c.Breakdown {
+		last == c.Threat && lastWhy == c.BreakdownCode {
 		return
 	}
-	dbSaveScoreChange(c.Exe, c.RemoteIP, c.Threat, c.Breakdown)
+	dbSaveScoreChange(c.Exe, c.RemoteIP, c.Threat, c.BreakdownCode)
 }
 
 func orNA(s string) string {

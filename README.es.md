@@ -105,7 +105,7 @@ no para atacar a otros.
 **Otros**
 - **Login con contraseña** opcional, y exposición a la red por **HTTPS** opcional
   (desactivada por defecto — ver *Acceso*).
-- Interfaz bilingüe (inglés / español), icono en la bandeja del sistema en Windows y Linux (escritorios SNI), binario único.
+- Interfaz en español, inglés y chino simplificado, icono en la bandeja del sistema en Windows y Linux (escritorios SNI), binario único.
 
 ## Capturas
 

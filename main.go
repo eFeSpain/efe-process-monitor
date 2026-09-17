@@ -583,7 +583,7 @@ func handleBlockIP(w http.ResponseWriter, r *http.Request) {
 	var body struct{ IP string }
 	json.NewDecoder(r.Body).Decode(&body)
 	if !isBlockable(body.IP) {
-		writeJSON(w, map[string]any{"ok": false, "error": "IP no bloqueable (0.0.0.0/loopback/multicast)"})
+		writeJSON(w, map[string]any{"ok": false, "error": strings_(langFrom(r))["block_invalid"]})
 		return
 	}
 	if err := blockIP(body.IP); err != nil {
@@ -606,7 +606,13 @@ func handleScoreHistory(w http.ResponseWriter, r *http.Request) {
 	if n, err := strconv.Atoi(r.URL.Query().Get("limit")); err == nil && n > 0 && n <= 2000 {
 		limit = n
 	}
-	writeJSON(w, dbScoreHistory(limit))
+	// Stored language-neutral; rendered in the language of whoever is reading.
+	lang := langFrom(r)
+	list := dbScoreHistory(limit)
+	for i := range list {
+		list[i].Breakdown = localizeBreakdown(lang, list[i].Breakdown)
+	}
+	writeJSON(w, list)
 }
 
 // handleLogs serves the tail of the log. It's the only way to read the operator

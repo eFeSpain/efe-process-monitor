@@ -57,7 +57,7 @@ func blockIP(ip string) error {
 			// nft sets are inherently idempotent: adding a member twice is a no-op.
 			return command("nft", "add", "element", "inet", "efepm", "blocked", "{ "+ip+" }").Run()
 		}
-		return fmt.Errorf("ni iptables ni nft disponibles (¿root?)")
+		return fmt.Errorf("%s", strings_(currentLang())["no_fw_tool"])
 	case "darwin":
 		return fmt.Errorf("block not supported on macOS")
 	}
@@ -89,7 +89,7 @@ func unblockIP(ip string) error {
 		if hasCmd("nft") {
 			return command("nft", "delete", "element", "inet", "efepm", "blocked", "{ "+ip+" }").Run()
 		}
-		return fmt.Errorf("ni iptables ni nft disponibles (¿root?)")
+		return fmt.Errorf("%s", strings_(currentLang())["no_fw_tool"])
 	}
 	return fmt.Errorf("unsupported OS")
 }

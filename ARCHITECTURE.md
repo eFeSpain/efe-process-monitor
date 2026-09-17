@@ -125,7 +125,7 @@ GOOS=darwin go build -o efemon .  # macOS
   when sound off; Linux `notify-send` (with the same extracted app icon via `-i`). Flags `notifyDesktop`,
   `notifySound`. Titles localized via `currentLang()`.
 - **audit.go** — machine audit engine. `Audit(lang)` → processes / persistence / hardening / rootkit checks.
-  `AuditCheck{Category,Name,Status(ok|warn|risk|info),Detail}`. `auditStrings` = audit i18n (es/en) via `atr(lang,key)`.
+  `AuditCheck{Category,Name,Status(ok|warn|risk|info),Detail}`. `auditStrings` = audit i18n (es/en/zh) via `atr(lang,key)`.
   `auditCached(lang,refresh)` per-language cache.
 - **audit_windows.go / audit_linux.go / audit_other.go** — build-tagged `hiddenProcs(lang)` (cross-view:
   Linux kill-vs-/proc, Windows API-vs-tasklist) and `promiscIfaces()`.
@@ -159,7 +159,10 @@ GOOS=darwin go build -o efemon .  # macOS
 - **config.go** — `getSettings`/`updateSettings`/`setNotifyDesktop`/`setNotifySound`/`setPersistWhitelist`/
   `setPersistBlocks`/`setRefreshSecs`/`writeEnv`/`mask`. `refreshSecs` (table auto-refresh) lives here.
 - **ports.go** — `knownPorts` (services) + `suspiciousPorts` (malware/C2 defaults, feed threat score).
-- **i18n.go** — `translations` (es/en) for the UI, `langFrom(r)` (?lang or cookie), `strings_(lang)`.
+- **i18n.go** — `translations` (es/en/zh) for the UI, `langFrom(r)` (?lang or cookie), `strings_(lang)`.
+  Score breakdowns are **not prose in the code**: `threatScore` emits `reason{key, pts, args}`,
+  `encodeReasons` packs them as `key/pts/arg|arg;…` (what `score_history` stores) and
+  `localizeBreakdown(lang, code)` renders them through the `bd_*` keys at display time.
   `langFrom` also records `uiLang` (guarded global) so background goroutines can localize via
   `currentLang()` — the live monitor uses it to emit **desktop notifications in the selected language**.
 - **tray_windows.go / tray_other.go** — `runApp`: Windows = systray icon + menu (Open/Quit); else headless.
@@ -179,8 +182,9 @@ GOOS=darwin go build -o efemon .  # macOS
 `/api/audit`, `/audit.json|txt`, `/static/`.
 
 ## Conventions (follow these)
-- **Bilingual (ES/EN) — everything user-facing must have both.** UI strings: add the key to BOTH
-  `es` and `en` maps in `i18n.go`; use `{{ .T.key }}` (report.html) / `{{ $T.key }}` (rows.html) / `T.key`
+- **Every language (ES/EN/ZH) — everything user-facing must have all of them.** UI strings: add the key
+  to EVERY language map in `i18n.go` (`testLangs` in `i18n_test.go` lists them and the parity tests
+  fail on a missing key or a changed `%` verb count); use `{{ .T.key }}` (report.html) / `{{ $T.key }}` (rows.html) / `T.key`
   (JS, injected as `const T = {{ json .T }}`). Audit strings: add to `auditStrings` (es+en) in audit.go,
   use `atr(lang, key)`. Language comes from the ES|EN toggle (cookie).
 - **No AI co-authorship in commits.** Do NOT add `Co-Authored-By: Claude…`. Author = the user (eFeSpain).
@@ -209,7 +213,7 @@ offline OUI vendor name);
 system tray + embedded exe icon; single instance; configurable refresh interval; settings UI for API keys
 and notification toggles; optional login (single password) + Host/CSRF hardening + brute-force lockout;
 opt-in network exposure (`LISTEN_ADDR`) gated on login and served over self-signed HTTPS; privacy/egress
-disclosure modal; full ES/EN i18n.
+disclosure modal; full ES/EN/ZH i18n.
 
 ## Ideas / pending (not done)
 - (GreyNoise was evaluated and rejected: it classifies inbound scanners, not useful for an egress monitor.)

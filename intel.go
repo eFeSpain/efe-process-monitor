@@ -472,6 +472,7 @@ func primeIntel() {
 // ipReport builds a short human summary of an IP from its (cached) enrichment.
 func ipReport(ip string) string {
 	e := enrichIP(ip)
+	T := strings_(currentLang())
 	var p []string
 	if e.Country != "" && e.Country != "N/A" {
 		p = append(p, e.City+", "+e.Country)
@@ -480,7 +481,7 @@ func ipReport(ip string) string {
 		p = append(p, e.ISP)
 	}
 	if e.Provider != "" {
-		p = append(p, "proveedor: "+e.Provider)
+		p = append(p, T["rp_provider"]+": "+e.Provider)
 	}
 	if e.AbuseScore != nil && *e.AbuseScore > 0 {
 		p = append(p, fmt.Sprintf("AbuseIPDB %d%%", *e.AbuseScore))
@@ -501,7 +502,7 @@ func ipReport(ip string) string {
 		p = append(p, "Tor exit")
 	}
 	if len(p) == 0 {
-		return "sin datos de inteligencia"
+		return T["rp_none"]
 	}
 	return strings.Join(p, " · ")
 }

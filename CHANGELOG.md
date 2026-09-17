@@ -6,6 +6,28 @@ Versions follow [Semantic Versioning](https://semver.org/).
 
 ---
 
+## [Unreleased] — Simplified Chinese, language-neutral score history
+
+### Added
+- **Simplified Chinese (zh-CN) UI**, requested in #1: every UI, login, gate,
+  notification and audit string, selectable from the flag toggle. Translated
+  from the English set with the industry's usual loanwords kept as they are
+  (VT, SNI, rDNS, PID, C2); a native review is welcome — the parity tests
+  guarantee no key is missing, not that every phrase is idiomatic.
+- The translation tests now cover every language in the map, not just es/en,
+  and also pin the `%` verb count per key, so a translation that drops a `%s`
+  cannot print `%!(EXTRA …)` into a tooltip.
+
+### Changed
+- **The score breakdown is no longer Spanish-only.** `threatScore` emits
+  reason keys with arguments; the tooltip renders them in the active language
+  and `score_history` stores the neutral encoding, so the risk timeline reads
+  correctly whichever language is on when it is opened. Rows written by earlier
+  builds (free text) are shown unchanged. Switching the language no longer
+  registers as the risk of every pair having changed. The IP report attached to
+  a block, the "IP cannot be blocked" and "no firewall tool" messages follow the
+  UI language too.
+
 ## [Unreleased] — resource usage per process
 
 ### Added

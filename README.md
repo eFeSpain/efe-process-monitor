@@ -97,7 +97,7 @@ attacking others.
 **Other**
 - Optional **password login**, and optional network exposure over **HTTPS** (off
   by default — see *Access*).
-- Bilingual UI (English / Spanish), system-tray icon on Windows and Linux (SNI desktops), single binary.
+- UI in English, Spanish and Simplified Chinese, system-tray icon on Windows and Linux (SNI desktops), single binary.
 
 ## Screenshots
 
