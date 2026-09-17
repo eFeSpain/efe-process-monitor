@@ -146,6 +146,7 @@ select{background:#0d1117;color:#c9d1d9;border:1px solid #30363d;padding:3px 6px
 .aud-risk{border-left-color:#f85149;} .aud-warn{border-left-color:#e3b341;}
 .notray-warn{background:#3a2e10;color:#e3b341;border:1px solid #9e7a16;border-radius:6px;margin:8px;padding:8px 16px;font-size:12px;display:flex;align-items:center;gap:14px;flex-wrap:wrap;}
 .aud-ok{border-left-color:#3fb950;} .aud-info{border-left-color:#58a6ff;}
+.ver{color:#484f58;font-size:11px;font-weight:400;margin-left:6px;vertical-align:middle;}
 .aud-newbadge{background:#1f6feb;color:#fff;border-radius:10px;padding:1px 7px;font-size:10px;font-weight:600;margin-left:6px;vertical-align:middle;}
 .aud-newlist{color:#79c0ff;} .aud-at{color:#8b949e;font-size:11px;margin-left:8px;}
 .details-content, .details-content * { cursor: default; }
@@ -169,7 +170,7 @@ select{background:#0d1117;color:#c9d1d9;border:1px solid #30363d;padding:3px 6px
 <body>
 
 <div class="header">
-    <h1><img src="/static/icon.svg" alt="" class="logo"> {{ .T.title }}</h1>
+    <h1><img src="/static/icon.svg" alt="" class="logo"> {{ .T.title }} <span class="ver" title="v{{ .Version }}">v{{ .Version }}</span></h1>
     <div class="controls">
         <span id="cap-status" class="status-pill">{{ .T.detecting }}</span>
         <label style="color:#8b949e;font-size:12px;">{{ .T.iface_label }}

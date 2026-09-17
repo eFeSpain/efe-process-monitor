@@ -102,7 +102,7 @@ func runTray(open, quit func()) {
 	systray.Run(func() {
 		systray.SetIcon(trayIcon)
 		systray.SetTitle("eFe Process Monitor")
-		systray.SetTooltip("eFe Process Monitor")
+		systray.SetTooltip("eFe Process Monitor v" + appVersion)
 
 		mOpen := systray.AddMenuItem("Abrir panel / Open", "Abrir el panel en el navegador")
 		systray.AddSeparator()

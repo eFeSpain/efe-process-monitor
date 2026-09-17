@@ -27,7 +27,7 @@ func runApp(ln net.Listener, url string) {
 func trayReady(url string) {
 	systray.SetIcon(trayIcon)
 	systray.SetTitle("eFe Process Monitor")
-	systray.SetTooltip("eFe Process Monitor — " + url)
+	systray.SetTooltip("eFe Process Monitor v" + appVersion + " — " + url)
 
 	mOpen := systray.AddMenuItem("Abrir panel / Open", "Abrir el panel en el navegador")
 	systray.AddSeparator()

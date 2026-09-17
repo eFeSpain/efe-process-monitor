@@ -1,14 +1,25 @@
 {
   "FixedFileInfo": {
-    "FileVersion": {"Major": 1, "Minor": 0, "Patch": 0, "Build": 0},
-    "ProductVersion": {"Major": 1, "Minor": 0, "Patch": 0, "Build": 0}
+    "FileVersion": {
+      "Major": 0,
+      "Minor": 3,
+      "Patch": 0,
+      "Build": 0
+    },
+    "ProductVersion": {
+      "Major": 0,
+      "Minor": 3,
+      "Patch": 0,
+      "Build": 0
+    }
   },
   "StringFileInfo": {
     "ProductName": "eFe Process Monitor",
     "FileDescription": "eFe Process Monitor",
     "CompanyName": "eFe",
-    "ProductVersion": "1.0.0",
-    "OriginalFilename": "efemon.exe"
+    "ProductVersion": "0.3.0",
+    "OriginalFilename": "efemon.exe",
+    "FileVersion": "0.3.0"
   },
   "IconPath": "web/static/icon.ico"
 }

@@ -208,7 +208,7 @@ func openBrowser(url string) {
 }
 
 func startupBanner() {
-	log.Println("[+] eFe Process Monitor")
+	log.Printf("[+] eFe Process Monitor v%s", appVersion)
 	if getVTKey() != "" {
 		log.Println("[+] VirusTotal      configured")
 	} else {

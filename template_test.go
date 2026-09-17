@@ -25,7 +25,7 @@ func TestReportTemplateExecutes(t *testing.T) {
 	for _, lang := range testLangs {
 		data := map[string]any{
 			"T": strings_(lang), "Lang": lang, "Admin": true,
-			"RefreshSecs": int64(30), "NoTray": true,
+			"RefreshSecs": int64(30), "NoTray": true, "Version": appVersion,
 		}
 		var sb strings.Builder
 		if err := tm.ExecuteTemplate(&sb, "report.html", data); err != nil {

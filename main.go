@@ -249,7 +249,8 @@ func handleIndex(w http.ResponseWriter, r *http.Request) {
 			HttpOnly: true, Secure: listenTLS})
 	}
 	render(w, "report.html", map[string]any{"T": strings_(lang), "Lang": lang, "Admin": elevated,
-		"RefreshSecs": refreshSecs.Load(), "NoTray": noTrayMode, "NoTrayRoot": noTrayRoot})
+		"RefreshSecs": refreshSecs.Load(), "NoTray": noTrayMode, "NoTrayRoot": noTrayRoot,
+		"Version": appVersion})
 }
 
 func handleConnections(w http.ResponseWriter, r *http.Request) {
