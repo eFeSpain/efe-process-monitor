@@ -56,9 +56,23 @@ jobs:
         with:
           subject-path: dist/efemon-*
 
+      # The release body is the tag's section of CHANGELOG.md. GitHub's own
+      # generated notes are built from pull requests, and this repository commits
+      # straight to main, so on their own they were just the compare link.
+      - name: Release notes from CHANGELOG.md
+        run: |
+          v="${GITHUB_REF_NAME#v}"
+          awk -v v="$v" '$0 ~ "^## \\[" v "\\]" {f=1; next} /^## \[/ {if (f) exit} f' CHANGELOG.md > RELEASE_NOTES.md
+          if [ ! -s RELEASE_NOTES.md ]; then
+            echo "No CHANGELOG.md section for $v — add '## [$v] — <date>' before tagging" >&2
+            exit 1
+          fi
+          printf '\n---\n**Verify a download**: `gh attestation verify <file> --repo %s`\n' "$GITHUB_REPOSITORY" >> RELEASE_NOTES.md
+
       - name: Publish release
         uses: softprops/action-gh-release@v2
         with:
           files: dist/*
-          generate_release_notes: true
+          body_path: RELEASE_NOTES.md
+          generate_release_notes: true   # appended: contributors and the compare link
           prerelease: ${{ contains(github.ref_name, '-') }}   # v*-beta / -rc → marked as pre-release
