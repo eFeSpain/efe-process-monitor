@@ -102,7 +102,8 @@ th.sort-asc,th.sort-desc{color:#c9d1d9;} th.sort-asc::after{content:' ▲';font-
 .status-pill{font-size:11px;padding:3px 10px;border-radius:12px;border:1px solid #30363d;color:#8b949e;white-space:nowrap;}
 .status-on{color:#3fb950;border-color:#238636;} .status-off{color:#f85149;border-color:#8b1a1a;} .status-cap{color:#e3b341;border-color:#9e7a16;}
 select{background:#0d1117;color:#c9d1d9;border:1px solid #30363d;padding:3px 6px;border-radius:4px;font-family:inherit;font-size:12px;max-width:240px;}
-.details-content{display:flex;flex-wrap:wrap;gap:12px;padding:8px 16px;}
+/* white-space:normal — the block sits inside a <td>, which is nowrap for the table; without this no detail value could ever wrap and long ones ran into the next block. */
+.details-content{display:flex;flex-wrap:wrap;gap:12px;padding:8px 16px;white-space:normal;}
 .detail-block{flex:1;min-width:260px;}
 .cmdline-block{background:#161b22;border:1px solid #21262d;border-radius:4px;padding:6px 8px;
     color:#8b949e;font-size:11px;white-space:pre-wrap;word-break:break-all;max-height:80px;overflow:auto;}
