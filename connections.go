@@ -64,6 +64,12 @@ type ProcDetails struct {
 	TTY       string   // controlling terminal, "" = none (a daemon or a detached process)
 	Unit      string   // systemd unit the process belongs to (Linux)
 	Container string   // "docker:3f2a1b…" when it runs inside a container (Linux)
+
+	// What it touches (see procscan.go; Linux, root for other users' processes).
+	SensitiveFiles []string // sensitive files held by a process that is not their expected reader
+	CredFiles      int      // how many of those score
+	MediaFiles     []string // camera / microphone held open: context, never scored
+	ExecAnomalies  []string // executable memory from memfd, staging dirs or deleted files
 }
 
 // Conn is one analyzed connection row shown in the UI.
@@ -153,6 +159,9 @@ func getProcDetails(pid int32, pidConns map[int32][]ProcConn) *ProcDetails {
 			d.TTYKnown, d.TTY = true, strings.TrimPrefix(t, "/dev/")
 		}
 		d.Container, d.Unit = procCgroup(pid)
+		if s := scanProcess(pid, name); s != nil {
+			d.SensitiveFiles, d.CredFiles, d.MediaFiles, d.ExecAnomalies = s.files, s.scored, s.media, s.execMap
+		}
 	}
 	if io, err := p.IOCounters(); err == nil {
 		d.IORead, d.IOWrite, d.IOok = io.ReadBytes, io.WriteBytes, true
@@ -645,6 +654,8 @@ const (
 	wMalwarePort     = 12.0 // a port still used by live tooling (Metasploit)
 	wExfilCombo      = 25.0 // sustained egress *from a binary already distrusted*
 	wMinerCombo      = 25.0 // sustained CPU *from a binary already distrusted*
+	wCredAccess      = 25.0 // holds a credential store / input device it has no business with
+	wExecAnomaly     = 30.0 // executes code from memfd, a staging dir or a deleted file
 )
 
 func threatScore(c *Conn) int {
@@ -703,6 +714,16 @@ func threatScore(c *Conn) int {
 	if c.HighCPU && (c.Suspicious || c.SuspPort ||
 		(c.Details != nil && c.Details.BadSpawn != "")) {
 		add(wMinerCombo, "cpu", fmt.Sprintf("%.0f", c.CPU))
+	}
+	// These two score on their own: each category's expected readers are
+	// excluded up front, so what is left is a foreign process holding a
+	// credential store or an input device, or code running from somewhere no
+	// legitimate loader puts it. High precision, computed locally.
+	if c.Details != nil && c.Details.CredFiles > 0 {
+		add(wCredAccess, "creds", strconv.Itoa(c.Details.CredFiles))
+	}
+	if c.Details != nil && len(c.Details.ExecAnomalies) > 0 {
+		add(wExecAnomaly, "execmap", strconv.Itoa(len(c.Details.ExecAnomalies)))
 	}
 	switch c.Sig.Status {
 	case "NotSigned":

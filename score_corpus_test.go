@@ -228,6 +228,34 @@ var scoreCorpus = []struct {
 		},
 	},
 
+	{
+		// A process nobody knows holding Chrome's password store: the
+		// infostealer shape. On its own it is worth a look, not an incident —
+		// the reader allow-list already removed the browser itself.
+		name: "unknown process reading the browser's password store",
+		want: notable,
+		conn: Conn{
+			VT: "NOT_IN_VT", Exe: "/opt/helper/agent",
+			Sig:      Signature{Status: "Unmanaged"},
+			RemoteIP: "45.9.148.40", Enrich: &Enrichment{},
+			Details: &ProcDetails{CredFiles: 2, SensitiveFiles: []string{"browser: …/Login Data", "browser: …/Cookies"}},
+		},
+	},
+	{
+		// Same, from a staging directory and also executing code from memory:
+		// that is the whole infostealer, not a shape.
+		name: "temp binary executing from memfd and reading credentials",
+		want: malicious,
+		conn: Conn{
+			VT: "NOT_IN_VT", Exe: "/tmp/.x/svc",
+			Suspicious: true,
+			Sig:        Signature{Status: "Unmanaged"},
+			RemoteIP:   "45.9.148.41", Enrich: &Enrichment{},
+			Details: &ProcDetails{CredFiles: 1, SensitiveFiles: []string{"ssh: /home/efe/.ssh/id_ed25519"},
+				ExecAnomalies: []string{"memfd: /memfd:x (deleted) (r-xp)"}},
+		},
+	},
+
 	// ── Malicious: treat as compromised ───────────────────────────────────────
 	{
 		name: "known Feodo C2",
@@ -312,6 +340,7 @@ func TestScoreOrdering(t *testing.T) {
 		{"unsigned binary in temp with a few VT detections", "development server on a legacy RAT port"},
 		{"IP in a Spamhaus DROP netblock with high abuse score", "cloud IP with noisy abuse reports"},
 		{"unsigned binary in temp pegging the CPU", "signed app pegging the CPU (compiler)"},
+		{"temp binary executing from memfd and reading credentials", "unknown process reading the browser's password store"},
 	} {
 		hi, lo := scoreOf(p[0]), scoreOf(p[1])
 		if hi <= lo {

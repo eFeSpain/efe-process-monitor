@@ -73,8 +73,11 @@ func TestRowsTemplateExecutes(t *testing.T) {
 			Cwd: `C:\Users\efe\AppData\Local\Temp`, CwdSusp: true,
 			EnvHits:  []string{"LD_PRELOAD=/tmp/x.so", "http_proxy=http://***@proxy:3128"},
 			TTYKnown: true, TTY: "", Unit: "app-konsole-1.scope", Container: "docker:3f2a1b4c5d6e",
-			Conns:      []ProcConn{{"192.168.1.10", 49812, "93.184.216.34", 443}},
-			TotalConns: 1,
+			SensitiveFiles: []string{"browser: /home/efe/.config/google-chrome/Default/Login Data"}, CredFiles: 1,
+			MediaFiles:    []string{"media: /dev/video0"},
+			ExecAnomalies: []string{"memfd: /memfd:payload (deleted) (r-xp)"},
+			Conns:         []ProcConn{{"192.168.1.10", 49812, "93.184.216.34", 443}},
+			TotalConns:    1,
 		},
 	}
 	// A UDP row and a bare LISTEN row: both must render, and the UDP one is the
@@ -114,6 +117,7 @@ func TestRowsTemplateExecutes(t *testing.T) {
 			"12.5 %", "150 MB", "SYSTEM", // the resource column and its detail line
 			"Back Orifice (RAT) <span class=\"vt-na\"",                           // legacy port label plus the localized note
 			"LD_PRELOAD=/tmp/x.so", "docker:3f2a1b4c5d6e", "app-konsole-1.scope", // context lines
+			"Login Data", "/dev/video0", "memfd:payload", // access, media and memory lines
 		} {
 			if !strings.Contains(out, want) {
 				t.Errorf("rows.html [%s] missing %q", lang, want)

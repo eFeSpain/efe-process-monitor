@@ -9,6 +9,17 @@ Versions follow [Semantic Versioning](https://semver.org/).
 ## [Unreleased]
 
 ### Added
+- **What a process touches** (Linux; root for other users' processes), in
+  the details block and in the score. *Access*: sensitive files held open by
+  a process that is not their expected reader — browser password and cookie
+  stores, SSH keys, shadow/sudoers, keyrings and `.kdbx`, wallets, input
+  devices — with the legitimate readers (the browser with its own profile,
+  ssh, the compositor, backup tools) excluded up front; camera and
+  microphone are listed for context only. *Memory*: executable regions from
+  a memfd, a staging directory or a deleted file outside the system library
+  tree (a library replaced by an upgrade is not flagged; anonymous JIT
+  regions never count). Both score on their own (+25 / +30): they are
+  high-precision and computed locally. Reads are cached 60 s per PID.
 - **Process context** in the details block: working directory (red when it
   is a staging path), controlling terminal or "no terminal", the systemd
   unit and the container the process belongs to (from its cgroup; Linux),

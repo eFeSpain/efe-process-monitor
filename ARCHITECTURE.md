@@ -45,6 +45,10 @@ GOOS=darwin go build -o efemon .  # macOS
   `-H=windowsgui` and therefore have no usable stderr**, so `logging.go` tees the standard logger to
   a rotating file; without it the whole operator audit trail is discarded on the shipped binary.
   Served to the UI by `/logs.txt`.
+- **procscan.go / procscan_linux.go** — what a process touches: `sensitiveOpenFiles` (categories
+  with expected-reader allow-lists; camera/mic listed, not scored) and `anomalousExecMaps`
+  (memfd / staging / deleted-outside-system-libs executable regions; anonymous JIT ignored), read
+  from `/proc/<pid>/fd` and `maps` with a 60 s per-PID cache. Feed `wCredAccess` / `wExecAnomaly`.
 - **proccontext.go** — per-process context for the details block: `sensitiveEnv` (allow-list of
   injection/proxy variables, credentials masked), `parseCgroup` (container id + innermost systemd
   unit), read in `getProcDetails` together with `Cwd` and `Terminal`. Pure parsers, tested.
