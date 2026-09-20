@@ -49,6 +49,14 @@ Versions follow [Semantic Versioning](https://semver.org/).
   bundles… Only that short list is read; the rest of the environment is
   never shown, and proxy credentials are masked. Informational, no score.
 
+### Changed
+- **CPU is now per core, as `top`/`htop` show it** (a 4-thread process can
+  read 400 %), instead of a share of the whole machine: on a 20-core box the
+  old figure flattened every process to "0.x %" and hid the busy one. The
+  cryptominer threshold follows: 80 % of one core sustained for 15 s, which
+  a miner throttled to two threads reaches and a whole-machine threshold
+  never would.
+
 ### Fixed
 - The chosen column sort survives table refreshes, is shown with an arrow on
   the header and remembered per browser.

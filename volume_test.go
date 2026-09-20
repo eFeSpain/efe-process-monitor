@@ -102,15 +102,20 @@ func TestProcSampleComputesCPU(t *testing.T) {
 	if s.rate.CPU != 0 {
 		t.Fatalf("one reading is not a rate, got %v", s.rate.CPU)
 	}
-	// 2 CPU-seconds in 2 wall seconds: one core flat out, a quarter of the box.
+	// 2 CPU-seconds in 2 wall seconds: one core flat out, top's 100 %.
 	s.advance(t0.Add(2*time.Second), 0, 0, 12)
-	if s.rate.CPU != 25 {
-		t.Errorf("CPU = %v, want 25 (one of four cores)", s.rate.CPU)
+	if s.rate.CPU != 100 {
+		t.Errorf("CPU = %v, want 100 (one core)", s.rate.CPU)
 	}
 	// Then mostly idle: 0.5 CPU-seconds in 2 wall seconds.
 	s.advance(t0.Add(4*time.Second), 0, 0, 12.5)
-	if s.rate.CPU != 6.25 {
-		t.Errorf("CPU = %v, want 6.25", s.rate.CPU)
+	if s.rate.CPU != 25 {
+		t.Errorf("CPU = %v, want 25", s.rate.CPU)
+	}
+	// Four threads flat out on four cores: 400, not capped.
+	s.advance(t0.Add(6*time.Second), 0, 0, 20.5)
+	if s.rate.CPU != 400 {
+		t.Errorf("CPU = %v, want 400 (every core)", s.rate.CPU)
 	}
 }
 
@@ -126,7 +131,7 @@ func TestProcSampleNeedsSustainedCPU(t *testing.T) {
 	cpu := 0.0
 	s.advance(t0, 0, 0, cpu)
 	for i := 1; i < cpuHotSamples; i++ {
-		cpu += 0.9 // 90 % of one core per second
+		cpu += 0.9 // 90 % of one core per second: over cpuHotPercent
 		s.advance(t0.Add(time.Duration(i)*time.Second), 0, 0, cpu)
 		if s.rate.HighCPU {
 			t.Fatalf("HighCPU after %d samples, threshold is %d", i, cpuHotSamples)
@@ -145,19 +150,19 @@ func TestProcSampleNeedsSustainedCPU(t *testing.T) {
 }
 
 // The process clock and the wall clock are read at different instants, so a
-// process pegging every core can compute to slightly over 100. Clamp, never
-// show "103 %".
+// process pegging every core can compute to slightly over the maximum. Cap
+// at every core, never show "203 %" on a two-core box.
 func TestProcSampleCPUClamped(t *testing.T) {
 	old := numCPU
-	numCPU = 1
+	numCPU = 2
 	t.Cleanup(func() { numCPU = old })
 
 	var s ioSample
 	t0 := time.Now()
 	s.advance(t0, 0, 0, 0)
-	s.advance(t0.Add(2*time.Second), 0, 0, 2.06)
-	if s.rate.CPU != 100 {
-		t.Errorf("CPU = %v, want 100 (clamped)", s.rate.CPU)
+	s.advance(t0.Add(2*time.Second), 0, 0, 4.06)
+	if s.rate.CPU != 200 {
+		t.Errorf("CPU = %v, want 200 (capped at two cores)", s.rate.CPU)
 	}
 }
 

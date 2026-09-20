@@ -72,7 +72,7 @@ GOOS=darwin go build -o efemon .  # macOS
   `.github/workflows/ci.yml` or the step stops meaning anything.
 - **volume.go** — per-process I/O rate **and resource usage** (CPU %, RSS, threads, owner) sampled
   once per monitor cycle by `sampleProcessIO`; `rateFor(pid)` hands the last figures to
-  `analyzeConnections`. CPU is normalized by `numCPU` (100 % = whole machine) and, like the I/O
+  `analyzeConnections`. CPU is per core as in top (capped at `numCPU`×100) and, like the I/O
   counters, resets on PID reuse (cumulative clock went backwards). Resources never score.
   On Linux the block-device
   totals are subtracted from `rchar`/`wchar` to isolate non-disk traffic; on Windows

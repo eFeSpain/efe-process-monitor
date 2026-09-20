@@ -79,7 +79,7 @@ no para atacar a otros.
   muestra el nombre que pidió el proceso aunque no haya captura. DoH/DoT no es visible.
 - **Baseline de binarios por contenido** (ruta + SHA-256): un binario reemplazado
   en su sitio se alerta como tal, no pasa desapercibido por conocer la ruta.
-- **Consumo de recursos por proceso**: CPU (% de toda la máquina), memoria
+- **Consumo de recursos por proceso**: CPU (% de un núcleo, como `top`), memoria
   residente, hilos y usuario, muestreados por el monitor y mostrados en una
   columna ordenable y una línea de detalle. Solo informativo: nunca puntúa. En
   Linux el detalle separa además el I/O a disco real del total de syscalls.

@@ -75,7 +75,7 @@ attacking others.
   the name the process asked for even outside a capture. DoH/DoT is not visible.
 - **New-binary baseline by content** (path + SHA-256): a binary replaced in
   place is alerted as such, not missed because the path was known.
-- **Resource usage per process**: CPU (% of the whole machine), resident memory,
+- **Resource usage per process**: CPU (% of one core, as `top`), resident memory,
   threads and owning account, sampled by the monitor and shown as a sortable
   column plus a detail line. Informational only — it never scores. On Linux the
   details also split real disk I/O from the syscall totals.

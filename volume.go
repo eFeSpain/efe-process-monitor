@@ -54,11 +54,13 @@ const (
 	ioSampleTTL = 10 * time.Minute
 
 	// cpuHotPercent / cpuHotSamples define "sustained CPU": at least this share
-	// of the whole machine for this many consecutive samples (15 s at the
-	// monitor's 3 s cadence). Like egress, it is informational on its own —
-	// a compiler, a game and a video encoder all look like this — and scores
-	// only from a binary that is already suspect, which is the miner shape.
-	cpuHotPercent = 50.0
+	// of one core for this many consecutive samples (15 s at the monitor's 3 s
+	// cadence). Per core, not per machine: a miner throttled to two threads is
+	// 10 % of a 20-core box and would never trip a whole-machine threshold.
+	// Like egress, it is informational on its own — a compiler, a game and a
+	// video encoder all look like this — and scores only from a binary that
+	// is already suspect, which is the miner shape.
+	cpuHotPercent = 80.0
 	cpuHotSamples = 5
 )
 
@@ -70,7 +72,7 @@ type ioRate struct {
 	// Resource usage, read in the same pass (see procResources). Informational
 	// only: none of it scores, for the same reason volume does not — a compiler,
 	// a game and a video call all burn CPU and memory.
-	CPU     float64 // percent of the whole machine (100 = every core busy), last interval
+	CPU     float64 // percent of one core, as top/htop show it (a 4-thread process can read 400), last interval
 	HighCPU bool    // CPU has been over cpuHotPercent for cpuHotSamples in a row
 	RSS     uint64  // resident set in bytes (Windows: working set, shared pages included)
 	Threads int32
@@ -90,9 +92,10 @@ type ioSample struct {
 	userDone  bool // Username was attempted; it can legitimately fail for other users' processes
 }
 
-// numCPU normalizes the CPU figure so 100 % means the whole machine, the way the
-// Windows Task Manager shows it (top/htop count per core and can exceed 100). A
-// variable rather than a call so the arithmetic is testable with a fixed count.
+// numCPU caps the CPU figure: a process cannot use more than every core. The
+// figure itself is per core, as top/htop show it — on a 20-core machine a
+// whole-machine percentage flattened every process to "0.x %" and hid the
+// busy one. A variable rather than a call so the cap is testable.
 var numCPU = runtime.NumCPU()
 
 var (
@@ -131,12 +134,13 @@ func (s *ioSample) advance(now time.Time, in, out uint64, cpu float64) {
 	}
 	s.rate.HighEgress = s.hot >= egressHotSamples
 
-	// CPU seconds consumed per wall-clock second, spread over the cores. Clamped:
-	// the two clocks are read at slightly different instants, so a process that
-	// is genuinely pegging every core can compute to a hair over 100.
-	s.rate.CPU = (cpu - s.cpu) / secs * 100 / float64(max(numCPU, 1))
-	if s.rate.CPU > 100 {
-		s.rate.CPU = 100
+	// CPU seconds consumed per wall-clock second, as a percentage of one core.
+	// Capped at every core: the two clocks are read at slightly different
+	// instants, so a process pegging the whole machine can compute to a hair
+	// over the maximum.
+	s.rate.CPU = (cpu - s.cpu) / secs * 100
+	if limit := 100 * float64(max(numCPU, 1)); s.rate.CPU > limit {
+		s.rate.CPU = limit
 	}
 	if s.rate.CPU >= cpuHotPercent {
 		s.cpuHot++
