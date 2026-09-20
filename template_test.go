@@ -70,6 +70,9 @@ func TestRowsTemplateExecutes(t *testing.T) {
 			PPID: 4, ParentName: "services.exe", Cmdline: "suspicious.exe --run",
 			CreateTime: "2026-08-11 10:00:00", IORead: 4096, IOWrite: 8192, IOok: true,
 			DiskRead: 1024, DiskWrite: 2048, DiskOK: true,
+			Cwd: `C:\Users\efe\AppData\Local\Temp`, CwdSusp: true,
+			EnvHits:  []string{"LD_PRELOAD=/tmp/x.so", "http_proxy=http://***@proxy:3128"},
+			TTYKnown: true, TTY: "", Unit: "app-konsole-1.scope", Container: "docker:3f2a1b4c5d6e",
 			Conns:      []ProcConn{{"192.168.1.10", 49812, "93.184.216.34", 443}},
 			TotalConns: 1,
 		},
@@ -109,7 +112,8 @@ func TestRowsTemplateExecutes(t *testing.T) {
 			"suspicious.exe", "UDP", "UDP-BOUND", "Cobalt Strike",
 			`class="udp"`,                // the bound-UDP row must get its own state class
 			"12.5 %", "150 MB", "SYSTEM", // the resource column and its detail line
-			"Back Orifice (RAT) <span class=\"vt-na\"", // legacy port label plus the localized note
+			"Back Orifice (RAT) <span class=\"vt-na\"",                           // legacy port label plus the localized note
+			"LD_PRELOAD=/tmp/x.so", "docker:3f2a1b4c5d6e", "app-konsole-1.scope", // context lines
 		} {
 			if !strings.Contains(out, want) {
 				t.Errorf("rows.html [%s] missing %q", lang, want)

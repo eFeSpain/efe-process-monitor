@@ -45,6 +45,9 @@ GOOS=darwin go build -o efemon .  # macOS
   `-H=windowsgui` and therefore have no usable stderr**, so `logging.go` tees the standard logger to
   a rotating file; without it the whole operator audit trail is discarded on the shipped binary.
   Served to the UI by `/logs.txt`.
+- **proccontext.go** — per-process context for the details block: `sensitiveEnv` (allow-list of
+  injection/proxy variables, credentials masked), `parseCgroup` (container id + innermost systemd
+  unit), read in `getProcDetails` together with `Cwd` and `Terminal`. Pure parsers, tested.
 - **ancestry.go** — `ancestryOf` walks the parent chain (depth-capped, cycle-safe);
   `suspiciousAncestry` matches spawn patterns that should never occur (document/browser → script
   host, web server → shell) and feeds `wBadSpawn` into the score. Deliberately narrow: a broad rule

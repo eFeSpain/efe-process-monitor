@@ -55,6 +55,15 @@ type ProcDetails struct {
 	Ancestry    []Ancestor // parent chain, nearest first
 	AncestryStr string     // "proc ← parent ← grandparent", for display
 	BadSpawn    string     // non-empty when the chain matches a known-bad pattern
+
+	// Context (see proccontext.go): where it runs from and under what.
+	Cwd       string   // working directory ("" if unreadable)
+	CwdSusp   bool     // cwd is a staging directory
+	EnvHits   []string // sensitive environment variables, "KEY=value", credentials masked
+	TTYKnown  bool     // terminal state was determined (Linux)
+	TTY       string   // controlling terminal, "" = none (a daemon or a detached process)
+	Unit      string   // systemd unit the process belongs to (Linux)
+	Container string   // "docker:3f2a1b…" when it runs inside a container (Linux)
 }
 
 // Conn is one analyzed connection row shown in the UI.
@@ -130,6 +139,20 @@ func getProcDetails(pid int32, pidConns map[int32][]ProcConn) *ProcDetails {
 	}
 	if ct, err := p.CreateTime(); err == nil {
 		d.CreateTime = time.UnixMilli(ct).Format("2006-01-02 15:04:05")
+	}
+	if cwd, err := p.Cwd(); err == nil && cwd != "" {
+		d.Cwd, d.CwdSusp = cwd, isSuspiciousPath(cwd+string(os.PathSeparator))
+	}
+	// Only the variables that redirect code or traffic are read out; see
+	// sensitiveEnvKeys. Other users' environments need root, as with everything.
+	if env, err := p.Environ(); err == nil {
+		d.EnvHits = sensitiveEnv(env)
+	}
+	if runtime.GOOS == "linux" {
+		if t, err := p.Terminal(); err == nil {
+			d.TTYKnown, d.TTY = true, strings.TrimPrefix(t, "/dev/")
+		}
+		d.Container, d.Unit = procCgroup(pid)
 	}
 	if io, err := p.IOCounters(); err == nil {
 		d.IORead, d.IOWrite, d.IOok = io.ReadBytes, io.WriteBytes, true

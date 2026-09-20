@@ -6,6 +6,21 @@ Versions follow [Semantic Versioning](https://semver.org/).
 
 ---
 
+## [Unreleased]
+
+### Added
+- **Process context** in the details block: working directory (red when it
+  is a staging path), controlling terminal or "no terminal", the systemd
+  unit and the container the process belongs to (from its cgroup; Linux),
+  and any environment variable that redirects code or traffic —
+  `LD_PRELOAD`, `PYTHONPATH`, `NODE_OPTIONS`, `HTTP_PROXY`, custom CA
+  bundles… Only that short list is read; the rest of the environment is
+  never shown, and proxy credentials are masked. Informational, no score.
+
+### Fixed
+- The chosen column sort survives table refreshes, is shown with an arrow on
+  the header and remembered per browser.
+
 ## [0.3.1] — 2026-09-18
 
 ### Fixed
