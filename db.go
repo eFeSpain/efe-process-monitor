@@ -20,6 +20,7 @@ CREATE TABLE IF NOT EXISTS events (
 CREATE INDEX IF NOT EXISTS idx_events_epoch ON events(epoch);
 CREATE TABLE IF NOT EXISTS hashes      (hash TEXT PRIMARY KEY, score TEXT, checked TEXT);
 CREATE TABLE IF NOT EXISTS signatures  (exe TEXT PRIMARY KEY, mtime INTEGER, status TEXT, signer TEXT, trusted INTEGER);
+CREATE TABLE IF NOT EXISTS fileinfo    (exe TEXT PRIMARY KEY, mtime INTEGER, company TEXT, product TEXT, description TEXT, version TEXT);
 CREATE TABLE IF NOT EXISTS baseline    (exe TEXT PRIMARY KEY, first_seen TEXT);
 -- Baseline keyed by content as well as path: a binary swapped in place is the
 -- most common persistence move, and a path-only baseline never noticed it.
@@ -190,6 +191,23 @@ func dbSaveSignature(exe string, mtime int64, s Signature) {
 		t = 1
 	}
 	db.Exec("INSERT OR REPLACE INTO signatures VALUES (?,?,?,?,?)", exe, mtime, s.Status, s.Signer, t)
+}
+
+// ── Version resource cache (Windows) ─────────────────────────────────────────
+
+func dbCachedFileInfo(exe string, mtime int64) (FileInfo, bool) {
+	var fi FileInfo
+	var m int64
+	err := db.QueryRow("SELECT mtime, company, product, description, version FROM fileinfo WHERE exe=?", exe).
+		Scan(&m, &fi.Company, &fi.Product, &fi.Description, &fi.Version)
+	if err != nil || m != mtime {
+		return FileInfo{}, false
+	}
+	return fi, true
+}
+
+func dbSaveFileInfo(exe string, mtime int64, fi FileInfo) {
+	db.Exec("INSERT OR REPLACE INTO fileinfo VALUES (?,?,?,?,?,?)", exe, mtime, fi.Company, fi.Product, fi.Description, fi.Version)
 }
 
 // ── Baseline ─────────────────────────────────────────────────────────────────

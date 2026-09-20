@@ -45,6 +45,10 @@ GOOS=darwin go build -o efemon .  # macOS
   `-H=windowsgui` and therefore have no usable stderr**, so `logging.go` tees the standard logger to
   a rotating file; without it the whole operator audit trail is discarded on the shipped binary.
   Served to the UI by `/logs.txt`.
+- **fileinfo.go / services*.go** — Windows only: `parseAuthenticodeJSON` decodes the signature batch
+  that now also carries the version resource (`FileInfo`, cached in memory + `fileinfo` table by
+  path+mtime, read by `fileInfoFor`); `startServiceMap` refreshes pid → hosted services every 60 s
+  in the background (`parseServiceLines`), read by `servicesOf`. Stubs elsewhere return nothing.
 - **provenance.go** — `exeProvenance` (exe mtime + first-seen from `baseline_hash`), `childrenMap`
   (one `/proc` pass per render) + `summarizeChildren`, `humanAge` (localized via the template's `T`).
 - **procscan.go / procscan_linux.go** — what a process touches: `sensitiveOpenFiles` (categories

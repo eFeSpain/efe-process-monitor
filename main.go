@@ -175,6 +175,7 @@ func main() {
 	startPassiveDNS() // DNS answers → hostnames table, outside captures (see dns.go)
 	go vtWorker()     // resolves VT hashes in the background at 4/min
 	go sigWorker()    // resolves code signatures off the request path
+	startServiceMap() // Windows: pid → hosted services, refreshed every minute
 
 	staticSub, _ := fs.Sub(staticFS, "web/static")
 	http.Handle("/static/", http.StripPrefix("/static/", http.FileServer(http.FS(staticSub))))

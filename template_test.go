@@ -58,6 +58,7 @@ func TestRowsTemplateExecutes(t *testing.T) {
 		Breakdown: "ruta sospechosa (+25)",
 		RemoteIPs: []string{"93.184.216.34", "8.8.8.8"},
 		CPU:       12.5, RSS: 150 << 20, Threads: 7, User: "SYSTEM", ResOK: true,
+		Info: &FileInfo{Company: "Acme Ltd", Product: "Suspicious Suite", Description: "Helper", Version: "2.0"},
 		Enrich: &Enrichment{
 			Country: "United States", City: "Norwell", ISP: "Edgecast",
 			Org: "Edgecast", ASN: "AS15133 Edgecast", DNS: "example.com",
@@ -75,6 +76,7 @@ func TestRowsTemplateExecutes(t *testing.T) {
 			EnvHits:  []string{"LD_PRELOAD=/tmp/x.so", "http_proxy=http://***@proxy:3128"},
 			TTYKnown: true, TTY: "", Unit: "app-konsole-1.scope", Container: "docker:3f2a1b4c5d6e",
 			ExeModified: time.Now().Add(-20 * time.Minute), ExeYoung: true,
+			Services:  []string{"EvilSvc — Evil Service"},
 			FirstSeen: time.Now().Add(-19 * time.Minute), Children: "bash ×2 · curl",
 			SensitiveFiles: []string{"browser: /home/efe/.config/google-chrome/Default/Login Data"}, CredFiles: 1,
 			MediaFiles:    []string{"media: /dev/video0"},
@@ -122,6 +124,7 @@ func TestRowsTemplateExecutes(t *testing.T) {
 			"LD_PRELOAD=/tmp/x.so", "docker:3f2a1b4c5d6e", "app-konsole-1.scope", // context lines
 			"Login Data", "/dev/video0", "memfd:payload", // access, media and memory lines
 			"bash ×2 · curl", "20 " + strings_(lang)["unit_min"], // provenance lines
+			"Acme Ltd · Suspicious Suite · Helper · v2.0", "EvilSvc — Evil Service", // file info and services
 		} {
 			if !strings.Contains(out, want) {
 				t.Errorf("rows.html [%s] missing %q", lang, want)

@@ -9,6 +9,14 @@ Versions follow [Semantic Versioning](https://semver.org/).
 ## [Unreleased]
 
 ### Added
+- **Windows: version resource and hosted services.** What the executable
+  says about itself (company, product, description, version) is read in the
+  same PowerShell batch that resolves Authenticode, cached by path + mtime,
+  and shown as a *File* line and as the tooltip of the process name — so a
+  "Microsoft Corporation" without a Microsoft signature is visible. A
+  background map refreshed every minute lists the services each process
+  hosts, which turns `svchost.exe` into "Dhcp — DHCP Client · EventLog — …"
+  and shows a service registered on any other binary the same way.
 - **Provenance** in the details block: when the executable was last modified
   and how long ago (highlighted under 24 h — a binary written minutes ago
   that already holds sockets is the dropper shape), the first time this

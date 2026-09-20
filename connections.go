@@ -3,7 +3,6 @@ package main
 import (
 	"crypto/sha256"
 	"encoding/hex"
-	"encoding/json"
 	"fmt"
 	"io"
 	"net"
@@ -65,6 +64,9 @@ type ProcDetails struct {
 	Unit      string   // systemd unit the process belongs to (Linux)
 	Container string   // "docker:3f2a1b…" when it runs inside a container (Linux)
 
+	// Services this process hosts (Windows; see services_windows.go).
+	Services []string
+
 	// Provenance (see provenance.go).
 	ExeModified time.Time // executable's mtime; zero if unknown
 	ExeYoung    bool      // modified less than youngBinary ago
@@ -109,6 +111,7 @@ type Conn struct {
 	User          string // owning account, "" if not resolvable
 	ResOK         bool   // CPU/RSS were readable for this PID
 	Sig           Signature
+	Info          *FileInfo // Windows version resource; nil elsewhere or unknown
 	Whitelist     bool
 	IPWhitelist   bool
 	Partial       bool // key signals (VT/enrichment) couldn't be resolved → low score ≠ clean
@@ -140,6 +143,7 @@ func getProcDetails(pid int32, pidConns map[int32][]ProcConn, children map[int32
 		d.ExeYoung = !d.ExeModified.IsZero() && time.Since(d.ExeModified) < youngBinary
 	}
 	d.Children = summarizeChildren(children[pid])
+	d.Services = servicesOf(pid)
 	// Full chain, not just the immediate parent: cmd.exe under explorer.exe is a
 	// user at a terminal, the same cmd.exe under winword.exe is a macro payload.
 	d.Ancestry = ancestryOf(pid)
@@ -580,11 +584,12 @@ func queryProvenance(paths []string) map[string]Signature {
 	return out
 }
 
+// queryAuthenticode resolves signatures and version resources for a batch of
+// paths in one PowerShell start-up; the resources are stored as a side effect.
 func queryAuthenticode(paths []string) map[string]Signature {
-	out := map[string]Signature{}
 	tmp, err := os.CreateTemp("", "epm-*.txt")
 	if err != nil {
-		return out
+		return map[string]Signature{}
 	}
 	defer os.Remove(tmp.Name())
 	tmp.WriteString(strings.Join(paths, "\n"))
@@ -592,31 +597,24 @@ func queryAuthenticode(paths []string) map[string]Signature {
 
 	ps := fmt.Sprintf(`Get-Content -LiteralPath '%s' -Encoding UTF8 | ForEach-Object { `+
 		`$s = Get-AuthenticodeSignature -LiteralPath $_; `+
+		`$v = (Get-Item -LiteralPath $_ -ErrorAction SilentlyContinue).VersionInfo; `+
 		`[PSCustomObject]@{ path="$_"; status="$($s.Status)"; `+
-		`signer="$($s.SignerCertificate.Subject)" } } | ConvertTo-Json -Compress`, tmp.Name())
+		`signer="$($s.SignerCertificate.Subject)"; `+
+		`company="$($v.CompanyName)"; product="$($v.ProductName)"; `+
+		`desc="$($v.FileDescription)"; version="$($v.FileVersion)" } } | ConvertTo-Json -Compress`, tmp.Name())
 
 	cmd := command("powershell", "-NoProfile", "-NonInteractive", "-Command", ps)
 	stdout, err := cmd.Output()
 	if err != nil || len(stdout) == 0 {
-		return out
+		return map[string]Signature{}
 	}
-	var rows []struct{ Path, Status, Signer string }
-	trimmed := strings.TrimSpace(string(stdout))
-	if strings.HasPrefix(trimmed, "{") {
-		trimmed = "[" + trimmed + "]"
-	}
-	if json.Unmarshal([]byte(trimmed), &rows) != nil {
-		return out
-	}
-	for _, r := range rows {
-		signer := cnFromSubject(r.Signer)
-		out[r.Path] = Signature{
-			Status:  r.Status,
-			Signer:  signer,
-			Trusted: r.Status == "Valid" && signer != "",
+	sigs, infos := parseAuthenticodeJSON(stdout)
+	for p, fi := range infos {
+		if st, err := os.Stat(p); err == nil {
+			storeFileInfo(p, st.ModTime().UnixNano(), fi)
 		}
 	}
-	return out
+	return sigs
 }
 
 func cnFromSubject(s string) string {
@@ -1025,6 +1023,16 @@ func analyzeConnections(hideSelf bool) []Conn {
 	wg.Wait()
 
 	sigMap := checkSignatures(keys(exeSet))
+	infoMap := map[string]FileInfo{}
+	if runtime.GOOS == "windows" {
+		mtimes := map[string]int64{}
+		for _, e := range keys(exeSet) {
+			if st, err := os.Stat(e); err == nil {
+				mtimes[e] = st.ModTime().UnixNano()
+			}
+		}
+		infoMap = fileInfoFor(keys(exeSet), mtimes)
+	}
 	wl := whitelist()
 	ipwl := ipWhitelist()
 	hostMap := dbAllHostnames()            // one query, not one per row
@@ -1059,6 +1067,9 @@ func analyzeConnections(hideSelf bool) []Conn {
 		}
 		if conn.RemoteIP != "" && !isPrivateIP(conn.RemoteIP) {
 			conn.Enrich = enrichMap[conn.RemoteIP]
+		}
+		if fi, ok := infoMap[r.exe]; ok {
+			conn.Info = &fi
 		}
 		conn.Hostnames = hostMap[conn.RemoteIP]
 		rate := rateFor(r.c.Pid)
