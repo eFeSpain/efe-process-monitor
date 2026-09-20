@@ -50,6 +50,7 @@ td { padding:6px 12px; border-bottom:1px solid #21262d; white-space:nowrap; vert
 .hostchip-sni { color:#d2a8ff; border-color:#8957e5; }
 .ctxchip { display:inline-block; background:#161b22; border:1px solid #30363d; border-radius:8px; padding:0 6px; margin:1px 2px; color:#8b949e; font-size:11px; }
 .ctxchip-box { color:#79c0ff; border-color:#1f6feb; }
+.act-link { color:#58a6ff; text-decoration:none; font-size:11px; } .act-link:hover { text-decoration:underline; }
 .threat { display:inline-block; min-width:30px; text-align:center; padding:1px 7px; border-radius:10px; font-weight:bold; }
 .threat-high{background:#3d1c1c;color:#f85149;} .threat-med{background:#3a2e10;color:#e3b341;}
 .threat-low{background:#21262d;color:#d29922;} .threat-min{background:#12261a;color:#3fb950;}
@@ -289,8 +290,8 @@ select{background:#0d1117;color:#c9d1d9;border:1px solid #30363d;padding:3px 6px
     <div class="modal-box" style="max-width:1000px;max-height:80vh;display:flex;flex-direction:column">
         <div class="modal-head"><span>{{ .T.history }}</span>
             <span class="hist-tools">
-                <input type="text" id="hist-proc" class="hist-sel" placeholder="{{ .T.hist_proc_ph }}" style="width:120px">
-                <select id="hist-kind" class="hist-sel"><option value="">{{ .T.hist_kind_all }}</option></select>
+                <input type="text" id="hist-proc" class="hist-sel" placeholder="{{ .T.hist_proc_ph }}" style="width:120px" oninput="renderHistory()">
+                <select id="hist-kind" class="hist-sel" onchange="renderHistory()"><option value="">{{ .T.hist_kind_all }}</option></select>
                 <select id="hist-age" class="hist-sel">
                     <option value="0">{{ .T.hist_age_any }}</option>
                     <option value="3600">{{ .T.hist_age_1h }}</option>
@@ -886,6 +887,7 @@ function formatPacket(p) {
 }
 
 // ── History ───────────────────────────────────────────────────────────────
+let histEvents = [];
 function openHistory() {
     const m = document.getElementById('history-modal'), b = document.getElementById('history-body');
     showingScoreHistory = false; // always open on the event list, not the risk view
@@ -897,12 +899,27 @@ function openHistory() {
         sel.innerHTML = `<option value="">${esc(T.hist_kind_all)}</option>` +
             kinds.map(k => `<option value="${esc(k)}">${esc(k)}</option>`).join('');
         sel.value = kinds.includes(cur) ? cur : '';
-        if (!evs || !evs.length) { b.textContent = '—'; return; }
-        b.innerHTML = evs.map(e => `<div class="hist-row"><span class="t">${esc(e.ts||'')}</span>`+
-            `<span class="ev-${esc(e.kind||'')}">${esc(e.kind||'')}</span>`+
-            `<span>${esc(e.process||'')} (${e.pid||'—'})</span>`+
-            `<span>${esc(e.detail||e.remote||e.local||'')}</span></div>`).join('');
+        histEvents = evs || [];
+        renderHistory();
     }).catch(() => { b.textContent = 'error'; });
+}
+// The process and kind filters apply to the list as well as to deletion: the
+// details block opens the history already narrowed to one process.
+function renderHistory() {
+    if (showingScoreHistory) return;
+    const b = document.getElementById('history-body');
+    const proc = document.getElementById('hist-proc').value.trim().toLowerCase();
+    const kind = document.getElementById('hist-kind').value;
+    const evs = histEvents.filter(e => (!proc || (e.process || '').toLowerCase().includes(proc)) && (!kind || e.kind === kind));
+    if (!evs.length) { b.textContent = '—'; return; }
+    b.innerHTML = evs.map(e => `<div class="hist-row"><span class="t">${esc(e.ts||'')}</span>`+
+        `<span class="ev-${esc(e.kind||'')}">${esc(e.kind||'')}</span>`+
+        `<span>${esc(e.process||'')} (${e.pid||'—'})</span>`+
+        `<span>${esc(e.detail||e.remote||e.local||'')}</span></div>`).join('');
+}
+function openHistoryFor(name) {
+    document.getElementById('hist-proc').value = name || '';
+    openHistory();
 }
 function deleteHistory() {
     const kind = document.getElementById('hist-kind').value;

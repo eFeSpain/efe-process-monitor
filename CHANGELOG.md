@@ -9,6 +9,13 @@ Versions follow [Semantic Versioning](https://semver.org/).
 ## [Unreleased]
 
 ### Added
+- **Process network activity** block in the details: current connections and
+  distinct destinations with their countries and networks, listening ports,
+  the names the process asked for (across all its addresses), and its
+  history — destinations and events in the last 24 h, recorded risk changes,
+  first and last event — with a link that opens the history modal filtered
+  to that process. The history modal's process and kind filters now narrow
+  the list as you type, not only what gets deleted.
 - **Windows: version resource and hosted services.** What the executable
   says about itself (company, product, description, version) is read in the
   same PowerShell batch that resolves Authenticode, cached by path + mtime,

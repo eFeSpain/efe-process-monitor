@@ -76,7 +76,10 @@ func TestRowsTemplateExecutes(t *testing.T) {
 			EnvHits:  []string{"LD_PRELOAD=/tmp/x.so", "http_proxy=http://***@proxy:3128"},
 			TTYKnown: true, TTY: "", Unit: "app-konsole-1.scope", Container: "docker:3f2a1b4c5d6e",
 			ExeModified: time.Now().Add(-20 * time.Minute), ExeYoung: true,
-			Services:  []string{"EvilSvc — Evil Service"},
+			Services: []string{"EvilSvc — Evil Service"},
+			Activity: &ProcActivity{NowConns: 3, NowIPs: 2, Countries: []string{"United States"}, Networks: []string{"Google"},
+				Listening: []uint32{5000}, Names: []string{"www.google.com"}, DayIPs: 5, DayEvents: 12, Risk: 2,
+				FirstSeen: "2026-09-01 10:00:00", LastSeen: "2026-09-20 22:00:00"},
 			FirstSeen: time.Now().Add(-19 * time.Minute), Children: "bash ×2 · curl",
 			SensitiveFiles: []string{"browser: /home/efe/.config/google-chrome/Default/Login Data"}, CredFiles: 1,
 			MediaFiles:    []string{"media: /dev/video0"},
@@ -125,6 +128,7 @@ func TestRowsTemplateExecutes(t *testing.T) {
 			"Login Data", "/dev/video0", "memfd:payload", // access, media and memory lines
 			"bash ×2 · curl", "20 " + strings_(lang)["unit_min"], // provenance lines
 			"Acme Ltd · Suspicious Suite · Helper · v2.0", "EvilSvc — Evil Service", // file info and services
+			"openHistoryFor(", "www.google.com", "2026-09-01 10:00:00 → 2026-09-20 22:00:00", // activity block
 		} {
 			if !strings.Contains(out, want) {
 				t.Errorf("rows.html [%s] missing %q", lang, want)

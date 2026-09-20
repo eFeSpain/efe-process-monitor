@@ -157,6 +157,49 @@ func queryEvents(limit int, kind string) []Event {
 	return out
 }
 
+// eventStats summarizes the events of one binary.
+type eventStats struct {
+	ips, events int    // distinct public remotes / events since the cutoff
+	first, last string // bounds over the whole retained history
+}
+
+// dbEventStats counts a binary's activity: distinct public remote hosts and
+// events since `since`, and the first and last event ever retained. The
+// remote column is "ip:port"; the host is what is counted, so every port of
+// one address is one remote.
+func dbEventStats(exe string, since time.Time) eventStats {
+	var st eventStats
+	rows, err := db.Query("SELECT remote FROM events WHERE exe=? AND epoch>=? AND remote<>''",
+		exe, float64(since.UnixNano())/1e9)
+	if err != nil {
+		return st
+	}
+	hosts := map[string]bool{}
+	for rows.Next() {
+		var r string
+		if rows.Scan(&r) != nil {
+			continue
+		}
+		st.events++
+		if h := remoteHost(r); h != "" && !isPrivateIP(h) {
+			hosts[h] = true
+		}
+	}
+	rows.Close()
+	st.ips = len(hosts)
+	db.QueryRow("SELECT ts FROM events WHERE exe=? ORDER BY epoch ASC LIMIT 1", exe).Scan(&st.first)
+	db.QueryRow("SELECT ts FROM events WHERE exe=? ORDER BY epoch DESC LIMIT 1", exe).Scan(&st.last)
+	return st
+}
+
+// dbScoreChangeCount is how many times the recorded risk of this binary (any
+// remote) has moved.
+func dbScoreChangeCount(exe string) int {
+	var n int
+	db.QueryRow("SELECT count(*) FROM score_history WHERE exe=?", exe).Scan(&n)
+	return n
+}
+
 // ── VT hash score cache ──────────────────────────────────────────────────────
 
 func dbCachedHash(hash string) (string, bool) {

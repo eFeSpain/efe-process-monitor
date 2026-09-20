@@ -97,6 +97,17 @@
     </div>
     {{ end }}
 
+    {{ if and $okd $d.Activity }}{{ $a := $d.Activity }}
+    <div class="detail-block">
+        <h4 title="{{ $T.act_hint }}">{{ $T.act_title }}</h4>
+        <div class="detail-line"><span class="detail-label">{{ $T.act_now }}</span><span>{{ $a.NowConns }} {{ $T.act_conns }} · {{ $a.NowIPs }} {{ $T.act_ips }}{{ if $a.Countries }} · {{ join ", " $a.Countries }}{{ end }}{{ if $a.Networks }} · {{ join ", " $a.Networks }}{{ end }}</span></div>
+        {{ if $a.Listening }}<div class="detail-line"><span class="detail-label">{{ $T.act_listen }}</span><span>{{ $a.ListeningStr }}</span></div>{{ end }}
+        {{ if $a.Names }}<div class="detail-line"><span class="detail-label" title="{{ $T.asked_for_hint }}">{{ $T.asked_for }}</span><span>{{ range $a.Names }}<span class="hostchip">{{ . }}</span> {{ end }}</span></div>{{ end }}
+        {{ if $a.LastSeen }}<div class="detail-line"><span class="detail-label">{{ $T.act_day }}</span><span>{{ $a.DayIPs }} {{ $T.act_ips }} · {{ $a.DayEvents }} {{ $T.act_events }}{{ if $a.Risk }} · {{ $a.Risk }} {{ $T.act_risk }}{{ end }}</span></div>
+        <div class="detail-line"><span class="detail-label">{{ $T.act_span }}</span><span>{{ $a.FirstSeen }} → {{ $a.LastSeen }} &nbsp; <a href="#" class="act-link" onclick="event.preventDefault(); event.stopPropagation(); openHistoryFor('{{ $c.Process }}')">{{ $T.act_history }} ↗</a></span></div>{{ end }}
+    </div>
+    {{ end }}
+
     {{ if and $okd $d.Conns }}
     <div class="detail-block">
         <h4>{{ $T.detail_conns }}</h4>

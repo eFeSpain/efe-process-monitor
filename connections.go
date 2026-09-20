@@ -67,6 +67,10 @@ type ProcDetails struct {
 	// Services this process hosts (Windows; see services_windows.go).
 	Services []string
 
+	// Network activity of the whole process (see activity.go); filled by
+	// analyzeConnections once the enrichment is known.
+	Activity *ProcActivity
+
 	// Provenance (see provenance.go).
 	ExeModified time.Time // executable's mtime; zero if unknown
 	ExeYoung    bool      // modified less than youngBinary ago
@@ -924,6 +928,7 @@ func analyzeConnections(hideSelf bool) []Conn {
 	ipSet := map[string]bool{}
 	lanSet := map[string]bool{}
 	pidConns := map[int32][]ProcConn{} // built once for getProcDetails
+	listenByPID := map[int32][]uint32{}
 
 	// Process identity is per PID, not per socket: a browser with 60 sockets used
 	// to cost 60 × (NewProcess + Name + Exe), which on Windows is 60 handle opens
@@ -961,6 +966,9 @@ func analyzeConnections(hideSelf bool) []Conn {
 		if c.Status == "ESTABLISHED" && c.Raddr.IP != "" && c.Pid > 0 {
 			pidConns[c.Pid] = append(pidConns[c.Pid],
 				ProcConn{c.Laddr.IP, c.Laddr.Port, c.Raddr.IP, c.Raddr.Port})
+		}
+		if c.Status == "LISTEN" && c.Pid > 0 {
+			listenByPID[c.Pid] = append(listenByPID[c.Pid], c.Laddr.Port)
 		}
 		pi := lookupProc(c.Pid)
 		name, exe := pi.name, pi.exe
@@ -1087,6 +1095,7 @@ func analyzeConnections(hideSelf bool) []Conn {
 			d, ok := detailsMap[r.c.Pid]
 			if !ok {
 				d = getProcDetails(r.c.Pid, pidConns, children)
+				d.Activity = procActivity(r.exe, pidConns[r.c.Pid], uniqPorts(listenByPID[r.c.Pid]), enrichMap, hostMap)
 				detailsMap[r.c.Pid] = d
 			}
 			conn.Details = d
@@ -1152,6 +1161,18 @@ func orNA(s string) string {
 		return "N/A"
 	}
 	return s
+}
+
+func uniqPorts(in []uint32) []uint32 {
+	seen := map[uint32]bool{}
+	var out []uint32
+	for _, p := range in {
+		if !seen[p] {
+			seen[p] = true
+			out = append(out, p)
+		}
+	}
+	return out
 }
 
 func keys(m map[string]bool) []string {
