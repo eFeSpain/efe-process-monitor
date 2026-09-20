@@ -104,10 +104,11 @@ th.sort-asc,th.sort-desc{color:#c9d1d9;} th.sort-asc::after{content:' ▲';font-
 select{background:#0d1117;color:#c9d1d9;border:1px solid #30363d;padding:3px 6px;border-radius:4px;font-family:inherit;font-size:12px;max-width:240px;}
 /* white-space:normal — the block sits inside a <td>, which is nowrap for the table; without this no detail value could ever wrap and long ones ran into the next block. */
 .details-content{display:flex;flex-wrap:wrap;gap:12px;padding:8px 16px;white-space:normal;}
-.detail-block{flex:1;min-width:260px;}
+.detail-block{flex:1;min-width:260px;display:flex;flex-direction:column;}
 .cmdline-block{background:#161b22;border:1px solid #21262d;border-radius:4px;padding:6px 8px;
     color:#8b949e;font-size:11px;white-space:pre-wrap;word-break:break-all;max-height:80px;overflow:auto;}
-.conn-list{max-height:120px;overflow:auto;} .conn-entry{padding:2px 0;color:#8b949e;}
+/* The list fills whatever height its block gets (the blocks of a row stretch to the tallest), so a tall row shows more connections instead of a 120px window and a scrollbar. */
+.conn-list{flex:1;min-height:120px;max-height:420px;overflow:auto;} .conn-entry{padding:2px 0;color:#8b949e;}
 .actions-block{flex:0 0 auto;margin-left:auto;display:flex;flex-direction:column;align-items:flex-start;gap:8px;}
 .action-btns{display:flex;flex-direction:column;align-items:stretch;gap:6px;width:max-content;}
 .action-btns .btn{text-align:center;}
