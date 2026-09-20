@@ -9,6 +9,12 @@ Versions follow [Semantic Versioning](https://semver.org/).
 ## [Unreleased]
 
 ### Added
+- **Provenance** in the details block: when the executable was last modified
+  and how long ago (highlighted under 24 h — a binary written minutes ago
+  that already holds sockets is the dropper shape), the first time this
+  machine recorded exactly this binary, and the processes it has spawned,
+  grouped ("bash ×2 · curl"). Children come from one process-table pass per
+  render, not a scan per PID.
 - **What a process touches** (Linux; root for other users' processes), in
   the details block and in the score. *Access*: sensitive files held open by
   a process that is not their expected reader — browser password and cookie

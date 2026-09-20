@@ -101,7 +101,12 @@ var funcMap = template.FuncMap{
 	// mem/pct format the resource column: memory in the compact "150 MB" shape
 	// humanRate already produces, CPU with one decimal.
 	"mem": func(n uint64) string { return humanRate(float64(n)) },
-	"pct": func(f float64) string { return fmt.Sprintf("%.1f", f) },
+	// age renders "hace 20 min" in the page's language; the template hands it
+	// its own strings map so no global language state is needed.
+	"age":    func(t time.Time, T map[string]string) string { return humanAge(time.Since(t), T) },
+	"stamp":  func(t time.Time) string { return t.Format("2006-01-02 15:04") },
+	"isZero": func(t time.Time) bool { return t.IsZero() },
+	"pct":    func(f float64) string { return fmt.Sprintf("%.1f", f) },
 	"humanBytes": func(n uint64) string {
 		f := float64(n)
 		for _, u := range []string{"B", "KB", "MB", "GB", "TB"} {

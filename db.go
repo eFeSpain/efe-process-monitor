@@ -405,6 +405,35 @@ func dbAuditSeen() (seen map[string]map[string]time.Time, hadHistory bool) {
 	return seen, hadHistory
 }
 
+// dbBaselineFirstSeen returns when this exact binary (path + hash) was first
+// recorded, falling back to the path-only table for pre-upgrade rows. Zero
+// when never seen.
+func dbBaselineFirstSeen(exe, hash string) time.Time {
+	if hash == "" {
+		hash = "?"
+	}
+	var s string
+	err := db.QueryRow("SELECT first_seen FROM baseline_hash WHERE exe=? AND hash=?", exe, hash).Scan(&s)
+	if err != nil {
+		// The path-only table only answers for a path that has no content
+		// rows at all (written before the upgrade). A known path with a new
+		// hash is a different binary: its first sighting is not yet recorded.
+		var n int
+		if db.QueryRow("SELECT count(*) FROM baseline_hash WHERE exe=?", exe).Scan(&n) == nil && n > 0 {
+			return time.Time{}
+		}
+		err = db.QueryRow("SELECT first_seen FROM baseline WHERE exe=?", exe).Scan(&s)
+	}
+	if err != nil {
+		return time.Time{}
+	}
+	t, err := time.ParseInLocation("2006-01-02 15:04:05", s, time.Local)
+	if err != nil {
+		return time.Time{}
+	}
+	return t
+}
+
 func dbAuditMarkSeen(key, item string, at time.Time) {
 	db.Exec("INSERT OR IGNORE INTO audit_seen VALUES (?,?,?)", key, item, float64(at.UnixNano())/1e9)
 }

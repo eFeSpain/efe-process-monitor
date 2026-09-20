@@ -65,6 +65,12 @@ type ProcDetails struct {
 	Unit      string   // systemd unit the process belongs to (Linux)
 	Container string   // "docker:3f2a1b…" when it runs inside a container (Linux)
 
+	// Provenance (see provenance.go).
+	ExeModified time.Time // executable's mtime; zero if unknown
+	ExeYoung    bool      // modified less than youngBinary ago
+	FirstSeen   time.Time // first time this machine recorded this exact binary; zero if unknown
+	Children    string    // "bash ×2 · curl", "" if none
+
 	// What it touches (see procscan.go; Linux, root for other users' processes).
 	SensitiveFiles []string // sensitive files held by a process that is not their expected reader
 	CredFiles      int      // how many of those score
@@ -118,7 +124,7 @@ type Conn struct {
 // getProcDetails fills per-process info. The process's active connections come
 // from pidConns (built once from the global snapshot) — far cheaper than calling
 // p.Connections() per PID.
-func getProcDetails(pid int32, pidConns map[int32][]ProcConn) *ProcDetails {
+func getProcDetails(pid int32, pidConns map[int32][]ProcConn, children map[int32][]string) *ProcDetails {
 	d := &ProcDetails{ParentName: "N/A", Cmdline: "N/A", CreateTime: "N/A"}
 	p, err := process.NewProcess(pid)
 	if err != nil {
@@ -129,6 +135,11 @@ func getProcDetails(pid int32, pidConns map[int32][]ProcConn) *ProcDetails {
 	if n, err := p.Name(); err == nil {
 		name = n
 	}
+	if exe, err := p.Exe(); err == nil {
+		d.ExeModified, d.FirstSeen = exeProvenance(exe)
+		d.ExeYoung = !d.ExeModified.IsZero() && time.Since(d.ExeModified) < youngBinary
+	}
+	d.Children = summarizeChildren(children[pid])
 	// Full chain, not just the immediate parent: cmd.exe under explorer.exe is a
 	// user at a terminal, the same cmd.exe under winword.exe is a macro payload.
 	d.Ancestry = ancestryOf(pid)
@@ -1017,6 +1028,7 @@ func analyzeConnections(hideSelf bool) []Conn {
 	wl := whitelist()
 	ipwl := ipWhitelist()
 	hostMap := dbAllHostnames()            // one query, not one per row
+	children := childrenMap()              // one /proc pass, not one per PID
 	detailsMap := map[int32]*ProcDetails{} // deduped per PID
 
 	out := make([]Conn, 0, len(rows))
@@ -1063,7 +1075,7 @@ func analyzeConnections(hideSelf bool) []Conn {
 		if (r.c.Status == "ESTABLISHED" || isUDP(r.c)) && r.c.Pid > 0 {
 			d, ok := detailsMap[r.c.Pid]
 			if !ok {
-				d = getProcDetails(r.c.Pid, pidConns)
+				d = getProcDetails(r.c.Pid, pidConns, children)
 				detailsMap[r.c.Pid] = d
 			}
 			conn.Details = d

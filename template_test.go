@@ -4,6 +4,7 @@ import (
 	"html/template"
 	"strings"
 	"testing"
+	"time"
 )
 
 // The templates are parsed with template.Must at startup and executed per
@@ -73,6 +74,8 @@ func TestRowsTemplateExecutes(t *testing.T) {
 			Cwd: `C:\Users\efe\AppData\Local\Temp`, CwdSusp: true,
 			EnvHits:  []string{"LD_PRELOAD=/tmp/x.so", "http_proxy=http://***@proxy:3128"},
 			TTYKnown: true, TTY: "", Unit: "app-konsole-1.scope", Container: "docker:3f2a1b4c5d6e",
+			ExeModified: time.Now().Add(-20 * time.Minute), ExeYoung: true,
+			FirstSeen: time.Now().Add(-19 * time.Minute), Children: "bash ×2 · curl",
 			SensitiveFiles: []string{"browser: /home/efe/.config/google-chrome/Default/Login Data"}, CredFiles: 1,
 			MediaFiles:    []string{"media: /dev/video0"},
 			ExecAnomalies: []string{"memfd: /memfd:payload (deleted) (r-xp)"},
@@ -118,6 +121,7 @@ func TestRowsTemplateExecutes(t *testing.T) {
 			"Back Orifice (RAT) <span class=\"vt-na\"",                           // legacy port label plus the localized note
 			"LD_PRELOAD=/tmp/x.so", "docker:3f2a1b4c5d6e", "app-konsole-1.scope", // context lines
 			"Login Data", "/dev/video0", "memfd:payload", // access, media and memory lines
+			"bash ×2 · curl", "20 " + strings_(lang)["unit_min"], // provenance lines
 		} {
 			if !strings.Contains(out, want) {
 				t.Errorf("rows.html [%s] missing %q", lang, want)

@@ -45,6 +45,8 @@ GOOS=darwin go build -o efemon .  # macOS
   `-H=windowsgui` and therefore have no usable stderr**, so `logging.go` tees the standard logger to
   a rotating file; without it the whole operator audit trail is discarded on the shipped binary.
   Served to the UI by `/logs.txt`.
+- **provenance.go** — `exeProvenance` (exe mtime + first-seen from `baseline_hash`), `childrenMap`
+  (one `/proc` pass per render) + `summarizeChildren`, `humanAge` (localized via the template's `T`).
 - **procscan.go / procscan_linux.go** — what a process touches: `sensitiveOpenFiles` (categories
   with expected-reader allow-lists; camera/mic listed, not scored) and `anomalousExecMaps`
   (memfd / staging / deleted-outside-system-libs executable regions; anonymous JIT ignored), read
