@@ -95,6 +95,7 @@ td { padding:6px 12px; border-bottom:1px solid #21262d; white-space:nowrap; vert
 .live-ev{white-space:nowrap;} .live-ev .t{color:#484f58;}
 .ev-new{color:#3fb950;} .ev-remote{color:#58a6ff;} .ev-closed{color:#6e7681;} .ev-alert{color:#f85149;font-weight:bold;}
 th{cursor:pointer;user-select:none;} th:hover{color:#58a6ff;}
+th.sort-asc,th.sort-desc{color:#c9d1d9;} th.sort-asc::after{content:' ▲';font-size:9px;} th.sort-desc::after{content:' ▼';font-size:9px;}
 .status-pill{font-size:11px;padding:3px 10px;border-radius:12px;border:1px solid #30363d;color:#8b949e;white-space:nowrap;}
 .status-on{color:#3fb950;border-color:#238636;} .status-off{color:#f85149;border-color:#8b1a1a;} .status-cap{color:#e3b341;border-color:#9e7a16;}
 select{background:#0d1117;color:#c9d1d9;border:1px solid #30363d;padding:3px 6px;border-radius:4px;font-family:inherit;font-size:12px;max-width:240px;}
@@ -381,7 +382,7 @@ function loadConnections() {
     const self = document.getElementById('hide-self').checked ? '0' : '1';
     fetch('/api/connections?self=' + self)
         .then(r => r.text())
-        .then(html => { document.getElementById('conn-tbody').innerHTML = html; filterRows(); syncPinnedToggles(); })
+        .then(html => { document.getElementById('conn-tbody').innerHTML = html; applySort(); filterRows(); syncPinnedToggles(); })
         .catch(() => {});
 }
 
@@ -1025,12 +1026,28 @@ function removeIpWl(ip) {
 }
 
 // ── Sortable columns ──────────────────────────────────────────────────────
-let sortState = { col: 0, dir: -1 };
+// The table is re-rendered from the server on every refresh, which used to
+// throw the chosen order away. The choice is kept here, re-applied after each
+// load, shown on the header, and remembered per browser.
+// col 0 / dir -1 is the server's own order (risk descending).
+let sortState = { col: 0, type: 'num', dir: -1 };
+try {
+    const saved = JSON.parse(localStorage.getItem('sort') || 'null');
+    if (saved && Number.isInteger(saved.col) && (saved.dir === 1 || saved.dir === -1)) sortState = saved;
+} catch (e) {}
+
 function sortBy(col, type) {
-    const tb = document.getElementById('conn-tbody');
-    const mains = [...tb.querySelectorAll('tr.main-row')];
     sortState.dir = (sortState.col === col) ? -sortState.dir : 1;
     sortState.col = col;
+    sortState.type = type;
+    try { localStorage.setItem('sort', JSON.stringify(sortState)); } catch (e) {}
+    applySort();
+}
+
+function applySort() {
+    const tb = document.getElementById('conn-tbody');
+    const { col, type, dir } = sortState;
+    const mains = [...tb.querySelectorAll('tr.main-row')];
     const val = (tr) => {
         const cell = tr.children[col];
         const ds = cell && cell.getAttribute('data-sort');
@@ -1040,9 +1057,13 @@ function sortBy(col, type) {
     const pairs = mains.map(m => ({ m, d: m.nextElementSibling }));
     pairs.sort((a, b) => {
         const x = val(a.m), y = val(b.m);
-        return (x < y ? -1 : x > y ? 1 : 0) * sortState.dir;
+        return (x < y ? -1 : x > y ? 1 : 0) * dir;
     });
     pairs.forEach(p => { tb.appendChild(p.m); if (p.d) tb.appendChild(p.d); });
+    document.querySelectorAll('thead th').forEach((th, i) => {
+        th.classList.toggle('sort-asc', i === col && dir === 1);
+        th.classList.toggle('sort-desc', i === col && dir === -1);
+    });
 }
 
 loadConnections();
