@@ -18,12 +18,12 @@ sources say about the binary and the remote IP.
 
 > **Status: stable.** Works and is used day to day. Interfaces and stored data may evolve between versions.
 
-**What's new in 0.3.x** — Simplified Chinese UI · per-process CPU/memory with a
-cryptominer signal · passive DNS without a capture · new-binary baseline by
-content hash · a much wider audit (every user's home, reverse shells, system
-units, Winlogon/IFEO/services, permissions) with a **NEW** badge for findings
-first seen in the last 24 h · tray, notifications and browser working when run
-as root on Linux · IPv6 blocking · one-document incident timeline export.
+**What's new in 0.4.0** — the process details block grew up: working
+directory, terminal, systemd unit and container, injection/proxy environment
+variables, sensitive files held open and executable memory from memfd/temp
+(both score), binary age and first sighting, children, Windows version
+resource and hosted services, and an aggregated network-activity block with a
+link to the process's history. CPU is per core, as `top` shows it.
 Full notes in the [changelog](CHANGELOG.md).
 
 <div align="center">

@@ -18,14 +18,13 @@ sobre el binario y la IP remota.
 
 > **Estado: estable.** Funciona y se usa a diario. La interfaz y los datos guardados pueden evolucionar entre versiones.
 
-**Novedades de la 0.3.x** — interfaz en chino simplificado · CPU/memoria por
-proceso con señal de criptominero · DNS pasivo sin captura · baseline de
-binarios por hash de contenido · una auditoría mucho más amplia (el home de
-cada usuario, reverse shells, unidades del sistema, Winlogon/IFEO/servicios,
-permisos) con marca **NUEVO** para lo visto por primera vez en 24 h · bandeja,
-notificaciones y navegador funcionando como root en Linux · bloqueo de IPv6 ·
-exportación de la línea temporal del incidente en un solo documento. Detalle
-completo en el [changelog](CHANGELOG.md).
+**Novedades de la 0.4.0** — el desplegable de proceso ha crecido: directorio
+de trabajo, terminal, unidad systemd y contenedor, variables de entorno de
+inyección/proxy, ficheros sensibles abiertos y memoria ejecutable desde
+memfd/temp (ambos puntúan), antigüedad del binario y primera aparición, hijos,
+recurso de versión y servicios alojados en Windows, y un bloque de actividad
+de red agregada con enlace al historial del proceso. La CPU es por núcleo, como
+la muestra `top`. Detalle completo en el [changelog](CHANGELOG.md).
 
 <div align="center">
 <img src="docs/screenshot-main.png" alt="Panel principal" width="880">

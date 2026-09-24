@@ -6,7 +6,12 @@ Versions follow [Semantic Versioning](https://semver.org/).
 
 ---
 
-## [Unreleased]
+## [0.4.0] — 2026-09-24
+
+The details block now answers the questions an analyst asks next about a
+process — where it works from, under what, what it touches, how old it is,
+what it has spawned, and how much it talks — and two of those answers score.
+CPU is shown per core, as `top` does.
 
 ### Added
 - **Process network activity** block in the details: current connections and
