@@ -199,6 +199,41 @@ func getProcDetails(pid int32, pidConns map[int32][]ProcConn, children map[int32
 // ownPID is this process, so we can hide the monitor's own API traffic.
 var ownPID = int32(os.Getpid())
 
+// ownChild reports whether pid is a direct child of this process: the
+// nmblookup, arp, tshark or netsh we started ourselves. They open sockets, and
+// the monitor used to announce each as a new process — and the first time as
+// a new binary, with a desktop notification. Negative answers are cached for
+// a minute; a positive one is re-verified every time, because Windows reuses
+// PIDs quickly and a cached "ours" could hide a stranger.
+func ownChild(pid int32) bool {
+	if pid <= 0 || pid == ownPID {
+		return false
+	}
+	ownChildMu.Lock()
+	at, known := notOurChild[pid]
+	if len(notOurChild) > 8192 {
+		clear(notOurChild)
+	}
+	ownChildMu.Unlock()
+	if known && time.Since(at) < time.Minute {
+		return false
+	}
+	if p, err := process.NewProcess(pid); err == nil {
+		if pp, err := p.Ppid(); err == nil && pp == ownPID {
+			return true
+		}
+	}
+	ownChildMu.Lock()
+	notOurChild[pid] = time.Now()
+	ownChildMu.Unlock()
+	return false
+}
+
+var (
+	ownChildMu  sync.Mutex
+	notOurChild = map[int32]time.Time{} // pid -> when it was last found not to be ours
+)
+
 // Path signals come in two tiers, because lumping them together was the single
 // biggest false-positive source in the score.
 //
@@ -983,7 +1018,7 @@ func analyzeConnections(hideSelf bool) []Conn {
 		if !trackConn(c) {
 			continue
 		}
-		if hideSelf && c.Pid == ownPID {
+		if hideSelf && (c.Pid == ownPID || ownChild(c.Pid)) {
 			continue
 		}
 		if c.Status == "ESTABLISHED" && c.Raddr.IP != "" && c.Pid > 0 {
@@ -1042,10 +1077,10 @@ func analyzeConnections(hideSelf bool) []Conn {
 			enrichMu.Unlock()
 		})
 	}()
-	go func() { // LAN host info per unique LAN IP (arp/nbtstat subprocesses)
+	go func() { // LAN host info per unique LAN IP: cache only, misses are queued (lan.go)
 		defer wg.Done()
 		forEachLimited(keys(lanSet), maxLANWorkers, func(ip string) {
-			l := lanLookup(ip)
+			l := lanLookupCached(ip)
 			lanMapMu.Lock()
 			lanMap[ip] = l
 			lanMapMu.Unlock()

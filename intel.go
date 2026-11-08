@@ -199,44 +199,22 @@ func enrichIP(ip string) *Enrichment {
 
 const enrichWorkers = 4
 
-var (
-	enrichQueue   = make(chan string, 4096)
-	enrichPending sync.Map // ip -> struct{}, avoids duplicate queue entries
-)
+var enrichQueue = newLookupQueue(4096)
 
 // enrichIPCached is the render-path lookup: cached data or nil, never a wait.
 func enrichIPCached(ip string) *Enrichment {
 	if d, ok := cachedIP(ip); ok {
 		return d
 	}
-	enqueueEnrich(ip)
+	enrichQueue.enqueue(ip)
 	return nil
 }
 
-func enqueueEnrich(ip string) {
-	if _, loaded := enrichPending.LoadOrStore(ip, struct{}{}); loaded {
-		return
-	}
-	select {
-	case enrichQueue <- ip:
-	default:
-		enrichPending.Delete(ip) // queue full; a later render re-enqueues
-	}
-}
-
-// enrichWorker resolves queued addresses. Several run at once (enrichWorkers):
-// each lookup is latency, not CPU. The refresh nudge goes out when the queue
-// is drained rather than per address, so a burst of new destinations costs
-// the browser one re-render, not one per lookup.
-func enrichWorker() {
-	for ip := range enrichQueue {
-		enrichIP(ip)
-		enrichPending.Delete(ip)
-		if len(enrichQueue) == 0 {
-			broadcast(Event{Kind: "refresh"})
-		}
-	}
-}
+// enrichResolve and lookupDrained are what main hands the queues: resolve
+// through the existing enrichIP (its inflight coalescing and caches are
+// unchanged), and nudge the SSE clients to redraw once a burst has landed.
+func enrichResolve(ip string) { enrichIP(ip) }
+func lookupDrained()          { broadcast(Event{Kind: "refresh"}) }
 
 // geoLookup fills country/city/ISP/org/ASN from ipwho.is.
 //

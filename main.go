@@ -175,9 +175,10 @@ func main() {
 	startPassiveDNS() // DNS answers → hostnames table, outside captures (see dns.go)
 	go vtWorker()     // resolves VT hashes in the background at 4/min
 	go sigWorker()    // resolves code signatures off the request path
-	for i := 0; i < enrichWorkers; i++ {
-		go enrichWorker() // IP reputation off the request path too (see intel.go)
-	}
+	// IP reputation and LAN host lookups off the request path too (see
+	// queue.go): the render reads caches, these resolve the misses.
+	enrichQueue.start(enrichWorkers, enrichResolve, lookupDrained)
+	lanQueue.start(maxLANWorkers, lanResolve, lookupDrained)
 	startServiceMap() // Windows: pid → hosted services, refreshed every minute
 
 	staticSub, _ := fs.Sub(staticFS, "web/static")

@@ -163,7 +163,7 @@ func snapshot() map[connKey]gnet.ConnectionStat {
 		if isUDP(c) && c.Raddr.IP == "" {
 			continue
 		}
-		if c.Pid == ownPID { // never monitor our own API traffic
+		if c.Pid == ownPID || ownChild(c.Pid) { // never monitor our own API traffic, nor our own subprocesses
 			continue
 		}
 		if isLoopback(c.Laddr.IP) || (c.Raddr.IP != "" && isLoopback(c.Raddr.IP)) {

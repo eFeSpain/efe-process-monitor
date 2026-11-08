@@ -30,6 +30,11 @@ Versions follow [Semantic Versioning](https://semver.org/).
   Sniff button in place, and the page redraws itself when the results land
   (one redraw per burst, not per address). Reverse DNS has its own 3 s
   deadline. Same pattern VirusTotal and the signatures already used.
+- **LAN host lookups off the request path too.** `nmblookup` and `arp` ran
+  inline per LAN host with 5 s timeouts behind a 10-minute cache, so every ten
+  minutes a render stalled for seconds on hosts that do not answer NetBIOS. A
+  stale entry is served while its refresh is queued, so the LAN block never
+  blinks out. Measured cold render: 68 ms, down from 3–4 s.
 - **Indexes for the per-render queries.** The details block asks SQLite about
   each process on every render (activity in the last 24 h, first and last
   event) and the risk log looks up the last verdict of every (binary, remote
@@ -49,6 +54,10 @@ Versions follow [Semantic Versioning](https://semver.org/).
   passes. Concurrent requests now share one (`sharedConnections`).
 
 ### Fixed
+- The live feed no longer reports the monitor's own subprocesses (`nmblookup`,
+  `arp`, `tshark`, `netsh`…) as new processes — nor, the first time, as new
+  binaries with a desktop notification. A direct child of the monitor is the
+  monitor's, in the feed and in the table's *hide self* filter.
 - The score breakdown is rendered in the language of the request that reads
   it. It used to be rendered from a process-wide "current language", so two
   browsers in different languages could each see the other's words.

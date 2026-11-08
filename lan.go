@@ -22,7 +22,33 @@ var (
 	lanCache = map[string]*LANInfo{}
 	lanAt    = map[string]time.Time{}
 	lanTTL   = 10 * time.Minute
+
+	// lanQueue resolves misses in the background (queue.go). lanLookup used to
+	// run inline in the render — nmblookup and arp per LAN host, 5 s timeouts,
+	// behind a 10-minute cache — so every ten minutes a render stalled for
+	// seconds on hosts that do not answer NetBIOS.
+	lanQueue = newLookupQueue(1024)
 )
+
+// lanLookupCached is the render-path lookup: the cached entry (served even
+// when stale, with a refresh queued, so the LAN block never blinks out) or
+// nil with the lookup queued. Never a wait.
+func lanLookupCached(ip string) *LANInfo {
+	lanMu.Lock()
+	e, ok := lanCache[ip]
+	at := lanAt[ip]
+	lanMu.Unlock()
+	if !ok || time.Since(at) >= lanTTL {
+		lanQueue.enqueue(ip)
+	}
+	if ok {
+		return e
+	}
+	return nil
+}
+
+// lanResolve is the worker side: lanLookup does the lookups and stores.
+func lanResolve(ip string) { lanLookup(ip) }
 
 // isLAN reports whether ip is a private/link-local host on our network.
 func isLAN(ip string) bool {
@@ -48,9 +74,11 @@ func lanLookup(ip string) *LANInfo {
 	info.NetBIOS = netbiosName(ip)
 
 	lanMu.Lock()
-	// Bound both maps: entries were kept forever, only ignored once stale.
+	// Bound both maps: entries were kept forever, only ignored once stale. The
+	// bound is well past the TTL so a stale entry stays servable while its
+	// refresh is queued (see lanLookupCached).
 	for k, at := range lanAt {
-		if time.Since(at) >= lanTTL {
+		if time.Since(at) >= 6*lanTTL {
 			delete(lanAt, k)
 			delete(lanCache, k)
 		}
