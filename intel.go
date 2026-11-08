@@ -3,6 +3,7 @@ package main
 import (
 	"archive/zip"
 	"bytes"
+	"context"
 	"encoding/csv"
 	"encoding/json"
 	"fmt"
@@ -164,9 +165,13 @@ func enrichIP(ip string) *Enrichment {
 	d := &Enrichment{Country: "N/A", City: "N/A", ISP: "N/A", Org: "N/A", ASN: "N/A", DNS: "N/A"}
 	geoOK := geoLookup(ip, d)
 
-	if names, err := net.LookupAddr(ip); err == nil && len(names) > 0 {
+	// Reverse DNS with its own deadline: the system resolver's can be far
+	// longer than the HTTP client's 8 s, and this runs once per new address.
+	rctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+	if names, err := net.DefaultResolver.LookupAddr(rctx, ip); err == nil && len(names) > 0 {
 		d.DNS = strings.TrimSuffix(names[0], ".")
 	}
+	cancel()
 	d.VTMalicious = vtIP(ip)
 	d.AbuseScore = abuseIPDB(ip)
 	d.Tor = torExits()[ip]
@@ -179,6 +184,58 @@ func enrichIP(ip string) *Enrichment {
 	f.data = d
 	storeIP(ip, d, !geoOK)
 	return d
+}
+
+// ── Background enrichment ────────────────────────────────────────────────────
+//
+// The table render used to call enrichIP inline and wait: up to five network
+// calls per address, sequential, eight seconds each, eight addresses at a
+// time. A first load or a burst of new destinations held the page for seconds.
+// VirusTotal and the signatures had already moved off the request path; this
+// is the same pattern for reputation. The render reads the cache; a miss is
+// reported as nil — the row renders as partial — and queued here. When a
+// lookup lands the SSE clients are nudged to refresh, so the row fills in on
+// its own without the operator doing anything.
+
+const enrichWorkers = 4
+
+var (
+	enrichQueue   = make(chan string, 4096)
+	enrichPending sync.Map // ip -> struct{}, avoids duplicate queue entries
+)
+
+// enrichIPCached is the render-path lookup: cached data or nil, never a wait.
+func enrichIPCached(ip string) *Enrichment {
+	if d, ok := cachedIP(ip); ok {
+		return d
+	}
+	enqueueEnrich(ip)
+	return nil
+}
+
+func enqueueEnrich(ip string) {
+	if _, loaded := enrichPending.LoadOrStore(ip, struct{}{}); loaded {
+		return
+	}
+	select {
+	case enrichQueue <- ip:
+	default:
+		enrichPending.Delete(ip) // queue full; a later render re-enqueues
+	}
+}
+
+// enrichWorker resolves queued addresses. Several run at once (enrichWorkers):
+// each lookup is latency, not CPU. The refresh nudge goes out when the queue
+// is drained rather than per address, so a burst of new destinations costs
+// the browser one re-render, not one per lookup.
+func enrichWorker() {
+	for ip := range enrichQueue {
+		enrichIP(ip)
+		enrichPending.Delete(ip)
+		if len(enrichQueue) == 0 {
+			broadcast(Event{Kind: "refresh"})
+		}
+	}
 }
 
 // geoLookup fills country/city/ISP/org/ASN from ipwho.is.

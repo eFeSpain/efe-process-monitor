@@ -52,7 +52,7 @@ func TestRowsTemplateExecutes(t *testing.T) {
 		VT:         "3",
 		Undetected: "60",
 		Cached:     true, Suspicious: true, SuspPort: false,
-		Blockable: true, Capturable: true,
+		Blockable: true, Capturable: true, Public: true,
 		Sig:       Signature{Status: "NotSigned"},
 		Partial:   true,
 		Breakdown: "ruta sospechosa (+25)",
@@ -94,7 +94,15 @@ func TestRowsTemplateExecutes(t *testing.T) {
 		Port: 443, LocalIP: "192.168.1.10", RPort: 443, RemoteIP: "8.8.8.8",
 		PID: 900, Process: "chrome.exe", Status: "UDP", Known: "HTTPS",
 		VT: "PENDING", Sig: Signature{Status: sigPendingStatus},
-		Capturable: true, Enrich: &Enrichment{Country: "N/A", City: "N/A"},
+		Capturable: true, Public: true, Enrich: &Enrichment{Country: "N/A", City: "N/A"},
+	}
+	// A public peer whose reputation has not come back yet: the IP block must
+	// still render (with the pending note), as must the Sniff button.
+	pending := Conn{
+		Port: 50123, LocalIP: "192.168.1.10", RPort: 443, RemoteIP: "203.0.113.5",
+		PID: 777, Process: "updater", Exe: "/opt/app/updater", Status: "ESTABLISHED", Known: "HTTPS",
+		VT: "NOT_IN_VT", Capturable: true, Public: true, Partial: true,
+		Hostnames: []Hostname{{Name: "cdn.example", Source: "sni", At: "2026-09-20 10:00:00"}},
 	}
 	bare := Conn{
 		Port: 135, Status: "LISTEN", Process: "N/A", Exe: "N/A", Known: "MSRPC",
@@ -113,7 +121,7 @@ func TestRowsTemplateExecutes(t *testing.T) {
 		var sb strings.Builder
 		data := map[string]any{
 			"T":     strings_(lang),
-			"Conns": []Conn{full, udp, bare, bound, legacy},
+			"Conns": []Conn{full, udp, bare, bound, legacy, pending},
 		}
 		if err := tm.ExecuteTemplate(&sb, "rows.html", data); err != nil {
 			t.Fatalf("rows.html [%s]: %v", lang, err)
@@ -129,6 +137,7 @@ func TestRowsTemplateExecutes(t *testing.T) {
 			"bash ×2 · curl", "20 " + strings_(lang)["unit_min"], // provenance lines
 			"Acme Ltd · Suspicious Suite · Helper · v2.0", "EvilSvc — Evil Service", // file info and services
 			"openHistoryFor(", "www.google.com", "2026-09-01 10:00:00 → 2026-09-20 22:00:00", // activity block
+			strings_(lang)["enrich_pending"], "203.0.113.5", "cdn.example", // public peer awaiting reputation
 		} {
 			if !strings.Contains(out, want) {
 				t.Errorf("rows.html [%s] missing %q", lang, want)

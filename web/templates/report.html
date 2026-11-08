@@ -705,6 +705,7 @@ const monitorES = new EventSource('/events');
 monitorES.onmessage = (e) => {
     const ev = JSON.parse(e.data);
     if (ev.kind === 'hello') return;
+    if (ev.kind === 'refresh') { scheduleRefresh(); return; } // a background lookup landed: redraw, nothing to list
     const feed = document.getElementById('live-feed');
     const div = document.createElement('div');
     div.className = 'live-ev ev-' + ev.kind;

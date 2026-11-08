@@ -51,9 +51,21 @@ func unsubscribe(ch chan Event) {
 	subsMu.Unlock()
 }
 
+// publish records an event in the forensic history and pushes it to the SSE
+// clients.
 func publish(ev Event) {
 	ev.TS = time.Now().Format("15:04:05")
 	logEvent(ev) // forensic timeline
+	broadcast(ev)
+}
+
+// broadcast pushes an event to the SSE clients without recording it: for UI
+// nudges such as "a background lookup landed, redraw", which are not events
+// that happened on the machine and have no place in the history.
+func broadcast(ev Event) {
+	if ev.TS == "" {
+		ev.TS = time.Now().Format("15:04:05")
+	}
 	subsMu.Lock()
 	for ch := range subs {
 		select {

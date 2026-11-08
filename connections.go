@@ -105,6 +105,7 @@ type Conn struct {
 	LegacyPort    bool // a RAT/worm default from decades ago: labelled, never scored
 	Blockable     bool
 	Capturable    bool    // has a public remote peer, so tshark has something to filter on
+	Public        bool    // remote peer is a public address: reputation applies, and may still be pending
 	RateIn        float64 // bytes/sec inbound (see volume.go on what this measures)
 	RateOut       float64 // bytes/sec outbound
 	HighEgress    bool    // sustained outbound flow; informational unless combined
@@ -1032,10 +1033,10 @@ func analyzeConnections(hideSelf bool) []Conn {
 			vtMapMu.Unlock()
 		})
 	}()
-	go func() { // reputation per unique public IP (several HTTP calls each)
+	go func() { // reputation per unique public IP: cache only, misses are queued (intel.go)
 		defer wg.Done()
 		forEachLimited(keys(ipSet), maxEnrichWorkers, func(ip string) {
-			e := enrichIP(ip)
+			e := enrichIPCached(ip)
 			enrichMu.Lock()
 			enrichMap[ip] = e
 			enrichMu.Unlock()
@@ -1096,7 +1097,8 @@ func analyzeConnections(hideSelf bool) []Conn {
 			IPWhitelist: ipwl[r.c.Raddr.IP],
 		}
 		if conn.RemoteIP != "" && !isPrivateIP(conn.RemoteIP) {
-			conn.Enrich = enrichMap[conn.RemoteIP]
+			conn.Public = true
+			conn.Enrich = enrichMap[conn.RemoteIP] // nil while the lookup is pending
 		}
 		if fi, ok := infoMap[r.exe]; ok {
 			conn.Info = &fi
@@ -1112,7 +1114,7 @@ func analyzeConnections(hideSelf bool) []Conn {
 		}
 		// Capture needs a public peer to filter on; it works the same for UDP
 		// (QUIC) as for TCP, so the gate is "has a public remote", not the state.
-		conn.Capturable = conn.Enrich != nil
+		conn.Capturable = conn.Public
 		if (r.c.Status == "ESTABLISHED" || isUDP(r.c)) && r.c.Pid > 0 {
 			d, ok := detailsMap[r.c.Pid]
 			if !ok {

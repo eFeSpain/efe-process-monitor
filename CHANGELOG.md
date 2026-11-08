@@ -22,6 +22,14 @@ Versions follow [Semantic Versioning](https://semver.org/).
   tracking `master`.
 
 ### Performance
+- **IP reputation off the request path.** The table render waited for every
+  new public address to be looked up — up to five network calls each,
+  sequential, eight seconds apiece, eight at a time — so a first load or a
+  burst of new destinations held the page for seconds. Lookups now run in
+  background workers; the row shows *reputation pending* with its details and
+  Sniff button in place, and the page redraws itself when the results land
+  (one redraw per burst, not per address). Reverse DNS has its own 3 s
+  deadline. Same pattern VirusTotal and the signatures already used.
 - **Indexes for the per-render queries.** The details block asks SQLite about
   each process on every render (activity in the last 24 h, first and last
   event) and the risk log looks up the last verdict of every (binary, remote

@@ -3,6 +3,7 @@ package main
 import (
 	"net"
 	"testing"
+	"time"
 )
 
 const tfFixture = `################################################################
@@ -76,5 +77,67 @@ func TestParseSpamhaus(t *testing.T) {
 func TestParseSpamhausGarbage(t *testing.T) {
 	if nets := parseSpamhaus(`{"cidr":"not-a-cidr"}` + "\n" + `garbage`); len(nets) != 0 {
 		t.Errorf("expected 0 nets from garbage, got %d", len(nets))
+	}
+}
+
+// The render must never wait on the network. An address without a cached
+// verdict comes back nil — the row shows as partial — and is queued for the
+// background workers; a cached one is returned straight away.
+func TestEnrichIPCachedNeverBlocks(t *testing.T) {
+	ipCacheMu.Lock()
+	ipCache = map[string]ipCacheEntry{}
+	ipCacheMu.Unlock()
+	enrichPending.Range(func(k, _ any) bool { enrichPending.Delete(k); return true })
+	for len(enrichQueue) > 0 {
+		<-enrichQueue
+	}
+
+	const ip = "203.0.113.9"
+	if d := enrichIPCached(ip); d != nil {
+		t.Fatalf("uncached address returned %+v, want nil", d)
+	}
+	if _, queued := enrichPending.Load(ip); !queued {
+		t.Error("uncached address was not queued for the background lookup")
+	}
+	if len(enrichQueue) != 1 || <-enrichQueue != ip {
+		t.Error("queue does not hold exactly the requested address")
+	}
+	enrichIPCached(ip) // asked again while pending: no second queue entry
+	if len(enrichQueue) != 0 {
+		t.Error("an address already pending must not be queued twice")
+	}
+	enrichPending.Delete(ip)
+
+	want := &Enrichment{Country: "Nowhere"}
+	storeIP(ip, want, false)
+	if d := enrichIPCached(ip); d != want {
+		t.Errorf("cached address returned %+v, want the cached entry", d)
+	}
+	if len(enrichQueue) != 0 {
+		t.Error("a cached address must not be queued")
+	}
+}
+
+// When a queued lookup lands the SSE clients get a "refresh" nudge, so the
+// pending row fills in without the operator doing anything. Hermetic: the
+// address is pre-cached, so enrichIP returns without touching the network.
+func TestEnrichWorkerNudgesClients(t *testing.T) {
+	ch := subscribe()
+	defer unsubscribe(ch)
+	const ip = "203.0.113.77"
+	storeIP(ip, &Enrichment{Country: "Nowhere"}, false)
+	enrichPending.Store(ip, struct{}{})
+	enrichQueue <- ip
+	go enrichWorker()
+	select {
+	case ev := <-ch:
+		if ev.Kind != "refresh" {
+			t.Errorf("event kind = %q, want refresh", ev.Kind)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("no refresh event after the queued lookup completed")
+	}
+	if _, still := enrichPending.Load(ip); still {
+		t.Error("address still marked pending after resolution")
 	}
 }
