@@ -35,6 +35,15 @@ Versions follow [Semantic Versioning](https://semver.org/).
   PID; items are now keyed without the PID and old rows are folded in on
   start-up. Freed pages are returned to the OS (`auto_vacuum=INCREMENTAL`,
   converting an existing file once at start-up).
+- **One analysis per concurrent render.** Two open tabs, or the live-feed
+  refresh arriving while a periodic one was still enriching, each ran a
+  complete analysis — a `/proc` pass per PID plus the hash, reputation and LAN
+  passes. Concurrent requests now share one (`sharedConnections`).
+
+### Fixed
+- The score breakdown is rendered in the language of the request that reads
+  it. It used to be rendered from a process-wide "current language", so two
+  browsers in different languages could each see the other's words.
 
 ## [0.4.0] — 2026-09-24
 

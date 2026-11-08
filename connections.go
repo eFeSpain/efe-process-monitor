@@ -912,6 +912,28 @@ func forEachLimited[T any](items []T, limit int, fn func(T)) {
 	wg.Wait()
 }
 
+// connFlight coalesces concurrent renders per hideSelf value (see flight.go).
+var connFlight flightGroup[bool, []Conn]
+
+// sharedConnections is analyzeConnections with concurrent callers coalesced:
+// whoever asks while an analysis is running gets that analysis.
+func sharedConnections(hideSelf bool) []Conn {
+	return connFlight.Do(hideSelf, func() []Conn { return analyzeConnections(hideSelf) })
+}
+
+// localizedConnections renders the breakdown of every row in lang, on a copy.
+// The analysis itself is language-neutral (BreakdownCode), so one shared
+// result serves requests in different languages; threatScore fills Breakdown
+// from the process-wide current language only as a default for direct callers.
+func localizedConnections(conns []Conn, lang string) []Conn {
+	out := make([]Conn, len(conns))
+	copy(out, conns)
+	for i := range out {
+		out[i].Breakdown = localizeBreakdown(lang, out[i].BreakdownCode)
+	}
+	return out
+}
+
 func analyzeConnections(hideSelf bool) []Conn {
 	conns, err := gnet.Connections("inet")
 	if err != nil {

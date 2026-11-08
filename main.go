@@ -263,8 +263,10 @@ func handleConnections(w http.ResponseWriter, r *http.Request) {
 	lang := langFrom(r)
 	hideSelf := r.URL.Query().Get("self") != "1" // default: hide own traffic
 	render(w, "rows.html", map[string]any{
-		"T":     strings_(lang),
-		"Conns": analyzeConnections(hideSelf),
+		"T": strings_(lang),
+		// One analysis serves every concurrent request; the language is applied
+		// per request on top of it (see sharedConnections).
+		"Conns": localizedConnections(sharedConnections(hideSelf), lang),
 	})
 }
 
