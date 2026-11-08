@@ -73,6 +73,9 @@ attacking others.
 - **Passive DNS**: DNS answers are read continuously (Linux as root via
   AF_PACKET + BPF, Windows via the resolver cache), so a remote address shows
   the name the process asked for even outside a capture. DoH/DoT is not visible.
+  The same listener raises a **DGA alert**: a burst of distinct names that do
+  not exist (NXDOMAIN) is malware iterating generated domains in search of its
+  C2. Machine-wide (the socket sees the answer, not the asker); Linux only.
 - **New-binary baseline by content** (path + SHA-256): a binary replaced in
   place is alerted as such, not missed because the path was known.
 - **Resource usage per process**: CPU (% of one core, as `top`), resident memory,

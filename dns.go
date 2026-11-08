@@ -32,27 +32,44 @@ var passiveDNSStatus string
 
 // parseDNSAnswers extracts the queried name and the A/AAAA addresses from a DNS
 // response. Only clean, successful responses count: a NXDOMAIN or a SERVFAIL
-// binds nothing. Written by hand rather than pulling in a DNS library: the
-// message format is a page long and this needs four fields of it.
+// binds nothing.
 func parseDNSAnswers(b []byte) (qname string, ips []string) {
-	if len(b) < 12 {
+	qname, ips, rcode, ok := parseDNSResponse(b)
+	if !ok || rcode != 0 {
 		return "", nil
+	}
+	return qname, ips
+}
+
+// parseDNSResponse parses a DNS response: the queried name, the A/AAAA
+// addresses (only when rcode is 0) and the rcode itself — an NXDOMAIN (3)
+// names nothing but says which name does not exist, which the DGA detector
+// counts. ok is false for anything that is not a response. Written by hand
+// rather than pulling in a DNS library: the message format is a page long and
+// this needs five fields of it.
+func parseDNSResponse(b []byte) (qname string, ips []string, rcode int, ok bool) {
+	if len(b) < 12 {
+		return "", nil, 0, false
 	}
 	flags := binary.BigEndian.Uint16(b[2:])
-	if flags&0x8000 == 0 || flags&0x000f != 0 { // not a response, or an error rcode
-		return "", nil
+	if flags&0x8000 == 0 { // not a response
+		return "", nil, 0, false
 	}
+	rcode = int(flags & 0x000f)
 	qd, an := int(binary.BigEndian.Uint16(b[4:])), int(binary.BigEndian.Uint16(b[6:]))
 	off := 12
 	for i := 0; i < qd; i++ {
 		name, next, ok := readDNSName(b, off)
 		if !ok || next+4 > len(b) {
-			return "", nil
+			return "", nil, 0, false
 		}
 		if i == 0 {
 			qname = name
 		}
 		off = next + 4 // qtype, qclass
+	}
+	if rcode != 0 {
+		return qname, nil, rcode, true
 	}
 	for i := 0; i < an; i++ {
 		_, next, ok := readDNSName(b, off)
@@ -73,7 +90,7 @@ func parseDNSAnswers(b []byte) (qname string, ips []string) {
 		}
 		off += rdlen
 	}
-	return qname, ips
+	return qname, ips, 0, true
 }
 
 // readDNSName decodes a (possibly compressed) name at off. It returns the

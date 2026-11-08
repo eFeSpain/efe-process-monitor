@@ -46,8 +46,17 @@ func startPassiveDNS() {
 				unix.Close(fd)
 				return
 			}
-			if payload := udpPayloadOfFrame(buf[:n]); payload != nil {
-				observeDNSAnswer(parseDNSAnswers(payload))
+			payload := udpPayloadOfFrame(buf[:n])
+			if payload == nil {
+				continue
+			}
+			qname, ips, rcode, ok := parseDNSResponse(payload)
+			switch {
+			case !ok:
+			case rcode == 0:
+				observeDNSAnswer(qname, ips)
+			case rcode == 3: // NXDOMAIN: the name does not exist (see dga.go)
+				dgaObserve(qname)
 			}
 		}
 	}()

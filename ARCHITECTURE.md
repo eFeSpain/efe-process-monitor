@@ -89,7 +89,9 @@ GOOS=darwin go build -o efemon .  # macOS
 - **dns.go / dns_linux.go / dns_windows.go** — passive DNS outside captures: a hand-written
   response parser (`parseDNSAnswers`, `readDNSName`) feeding `recordHostname`; Linux as root reads
   responses from an AF_PACKET socket with a classic BPF filter for UDP sport 53 (cooked frames, v4+v6);
-  Windows polls `Get-DnsClientCache` every 30 s. `passiveDNSStatus` is printed by the banner.
+  Windows polls `Get-DnsClientCache` every 30 s. `passiveDNSStatus` is printed by the banner. `parseDNSResponse`
+  also returns the rcode: NXDOMAIN names go to **dga.go** (`dgaDetector`: ≥ 25 distinct failed names in 60 s →
+  one `alert` event + notification per 10 min, reverse/local/WPAD names excluded; machine-wide, Linux only).
 - **timeline.go** — `buildTimeline` joins events + score_history + hostnames + block/whitelist state
   into one record per (exe, remote IP) for `/export/timeline.json`; pure, tested with fixtures.
 - **hostnames.go** — `observeHostnames` harvests IP↔name bindings from each captured packet (TLS SNI

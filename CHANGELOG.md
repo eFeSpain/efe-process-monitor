@@ -8,6 +8,15 @@ Versions follow [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Added
+- **DGA alert from the passive DNS listener** (Linux). A burst of distinct
+  names that do not exist — 25 NXDOMAIN answers in a minute — is malware
+  iterating generated domains in search of its C2; the listener used to throw
+  those answers away. One alert per burst in the live feed, the history and
+  a desktop notification, quoting a sample of the names. Machine-wide (the
+  socket sees the answer, not the asker); reverse lookups, local-network
+  suffixes and WPAD probes never count.
+
 ### Security
 - **ThreatFox was silently dead — now back, through the abuse.ch API.** abuse.ch
   withdrew every keyless export in 2025 (`410 Gone`), so the ThreatFox feed —

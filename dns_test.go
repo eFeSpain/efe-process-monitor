@@ -122,3 +122,19 @@ func TestUDPPayloadOfFrame(t *testing.T) {
 		t.Error("short frame accepted")
 	}
 }
+
+// NXDOMAIN answers carry the question even though they bind nothing: the name
+// that does not exist is the input of the DGA detector.
+func TestParseDNSResponseReportsNXDOMAIN(t *testing.T) {
+	q := append(dnsName("a", "b"), 0, 1, 0, 1)
+	qname, ips, rcode, ok := parseDNSResponse(append(dnsHeader(0x8183, 1, 0), q...))
+	if !ok || rcode != 3 || qname != "a.b" || ips != nil {
+		t.Errorf("nxdomain: ok=%v rcode=%d qname=%q ips=%v", ok, rcode, qname, ips)
+	}
+	if _, _, _, ok := parseDNSResponse(append(dnsHeader(0x0100, 1, 0), q...)); ok {
+		t.Error("a query is not a response")
+	}
+	if _, _, rcode, ok := parseDNSResponse(append(dnsHeader(0x8182, 1, 0), q...)); !ok || rcode != 2 {
+		t.Errorf("servfail: ok=%v rcode=%d", ok, rcode)
+	}
+}
