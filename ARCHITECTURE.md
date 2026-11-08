@@ -137,7 +137,9 @@ GOOS=darwin go build -o efemon .  # macOS
   commands run before log/DB/listener exist). `--tray-helper` stays ahead of all of it.
 - **service_linux.go / service_other.go** — systemd integration behind pure functions: `unitFile`,
   `migrationPlan`/`migrateData` (moves `.env`, DB(+wal/shm), TLS pair — never token/logs — into `/opt/efemon`),
-  `copyExecutable` (no-op on the same file: reinstalling must not truncate the running binary),
+  `copyExecutable` (no-op on the same file: reinstalling must not truncate the running binary), the
+  `/usr/local/bin/efemon` link, restart-on-reinstall, `uninstallServiceSteps` (stop **last**: from the
+  service's own API the stop kills the process answering),
   `installService(fromUI)` (CLI: migrate now + `enable --now`; UI: unit carries `EFEMON_MIGRATE_FROM`, enabled
   only, the caller starts it and exits), `uninstallService` (keeps `/opt/efemon`), `serviceStatus`,
   `serviceControl(stop|restart|start)`, `runServiceMigration` (first service start). gosec G304/G703 are
@@ -236,12 +238,15 @@ GOOS=darwin go build -o efemon .  # macOS
 - **tray_windows.go / tray_linux.go / tray_other.go** — `runApp`: Windows = systray icon + menu (Open/Quit);
   Linux = same over SNI/D-Bus when a `StatusNotifierWatcher` exists; else headless.
 - **desktop_linux.go** — root cannot join the user's session bus, so as root every desktop
-  interaction runs *as the logged-in user*. In **service mode** (`--service` or systemd's `INVOCATION_ID`)
-  nobody launched us from a session: `sessionWatcher` polls `/run/user/*/bus` every 5 s, spawns the tray
-  helper when a session appears (one per session; a `notray` desktop is remembered until that session
-  ends), and detaches when the helper exits (logout). `desktopUser()` reads the watcher then. Quit from the
-  helper, *Restart now* and *Stop* go through `serviceControl` instead of exiting/relaunching; a busy port
-  at start-up is `exit 1` so systemd retries; the browser never opens by itself. `runAsDesktopUser(cmd)` sets credentials + session env
+  interaction runs *as the logged-in user*. In **service mode** (`--service`, or `INVOCATION_ID` set *and*
+  ppid == 1 — the variable alone is inherited by every terminal under a systemd desktop session) nobody
+  launched us from a session: `sessionWatcher` polls `/run/user/*/bus` every 5 s; the first session found is
+  current at once (notifications and "open panel" go there, tray or not), then the tray helper is spawned —
+  one per session; `notray` or a dead helper is retried with a 15 s/30 s/1 min/5 min backoff. The helper does
+  not exit at logout (systray keeps waiting on the vanished bus), so the watcher kills it when
+  `/run/user/<uid>/bus` is gone and starts over. Quit from the helper, *Restart now* and *Stop* go through
+  `serviceControl`; a busy port at start-up is retried ~30 s then `exit 1` so systemd retries
+  (`StartLimitIntervalSec=0`); the browser never opens by itself; the handoff reads the token from `/opt/efemon`. `runAsDesktopUser(cmd)` sets credentials + session env
   (from `/proc/<pid>/environ`) for `xdg-open`/`notify-send`, and `spawnTrayHelper` runs a copy of
   the binary with `--tray-helper` (URL over stdin, "ready|notray|quit" over stdout) to show the icon.
 - **tools/genicon/** — generates `web/static/icon.{ico,png}` from the hexagon design. `versioninfo.json`

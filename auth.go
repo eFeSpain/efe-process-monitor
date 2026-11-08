@@ -144,7 +144,7 @@ func initLocalToken() {
 
 // readLocalToken loads the token written by the instance that owns the port.
 func readLocalToken() string {
-	b, err := os.ReadFile(filepath.Join(appDir, tokenFile))
+	b, err := os.ReadFile(filepath.Join(tokenHandoffDir(), tokenFile))
 	if err != nil {
 		return ""
 	}

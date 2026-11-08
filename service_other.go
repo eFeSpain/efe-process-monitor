@@ -15,3 +15,4 @@ func installService(fromUI bool) error   { return errServiceUnsupported }
 func uninstallService() error            { return errServiceUnsupported }
 func runServiceMigration()               {}
 func serviceControl(action string) error { return errServiceUnsupported }
+func tokenHandoffDir() string            { return appDir }

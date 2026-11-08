@@ -97,62 +97,106 @@ func desktopSessionName() string {
 // ── Session watcher (service mode) ──────────────────────────────────────────
 //
 // A service starts at boot, before any graphical session exists, and the user
-// may log out and back in while it runs. The watcher polls for a session and
-// spawns the tray helper when one appears: one helper per session, never two;
-// when the helper exits (logout) it waits for the next session. A desktop that
-// answers "notray" (GNOME without the extension) is remembered for as long as
-// that session lasts, so the helper is not forked again every tick.
+// may log out and back in while it runs. The watcher polls for a session and,
+// as soon as one exists, makes it current — notifications and "open panel" go
+// there from then on, tray or not — then spawns the tray helper: one per
+// session, never two. The helper does not exit by itself when the session
+// ends (systray keeps waiting for a bus that is gone), so the watcher kills it
+// when the session's bus disappears and starts over. A helper that answers
+// "notray" (Plasma registers its StatusNotifierWatcher seconds after
+// WAYLAND_DISPLAY exists; GNOME without the extension never does) or that dies
+// is retried with a growing backoff, never every tick.
 
 type sessionWatcher struct {
-	mu       sync.Mutex
-	current  *desktopSession
-	done     <-chan struct{} // closes when the current helper exits
-	notray   map[uint32]bool // uids whose session has no tray host
-	probe    func() *desktopSession
-	spawn    func(*desktopSession) (done <-chan struct{}, ok bool)
-	interval time.Duration
-	onAttach func(*desktopSession)
-	onDetach func(*desktopSession)
+	mu      sync.Mutex
+	current *desktopSession
+	done    <-chan struct{} // closes when the helper exits; nil = no helper
+	kill    func()          // terminates the helper; nil = no helper
+	fails   map[uint32]int  // consecutive helper failures per uid
+	retryAt map[uint32]time.Time
+
+	probe                         func() *desktopSession                                             // the session now, or nil
+	alive                         func(*desktopSession) bool                                         // is this session still there?
+	spawn                         func(*desktopSession) (done <-chan struct{}, kill func(), ok bool) // start the helper
+	interval                      time.Duration
+	onSession, onAttach, onDetach func(*desktopSession)
 }
 
 // watcher is the service-mode watcher; nil under sudo.
 var watcher *sessionWatcher
 
-// tick is one poll step.
-func (w *sessionWatcher) tick() {
+// helperBackoff is the wait before the n-th retry of the helper: 15 s, 30 s,
+// 1 min, then every 5 min.
+func helperBackoff(n int) time.Duration {
+	switch {
+	case n <= 0:
+		return 15 * time.Second
+	case n == 1:
+		return 30 * time.Second
+	case n == 2:
+		return time.Minute
+	default:
+		return 5 * time.Minute
+	}
+}
+
+// tick is one poll step at time now.
+func (w *sessionWatcher) tick(now time.Time) {
 	w.mu.Lock()
 	defer w.mu.Unlock()
-	if w.current != nil {
+	if w.fails == nil {
+		w.fails, w.retryAt = map[uint32]int{}, map[uint32]time.Time{}
+	}
+	if w.current != nil && !w.alive(w.current) {
+		// Logout: the bus is gone and the helper is lingering. End it, forget
+		// the session and its failure history.
+		if w.kill != nil {
+			w.kill()
+		}
+		s := w.current
+		w.current, w.done, w.kill = nil, nil, nil
+		delete(w.fails, s.uid)
+		delete(w.retryAt, s.uid)
+		if w.onDetach != nil {
+			w.onDetach(s)
+		}
+		return
+	}
+	if w.current == nil {
+		s := w.probe()
+		if s == nil {
+			return
+		}
+		w.current = s
+		if w.onSession != nil {
+			w.onSession(s)
+		}
+	}
+	uid := w.current.uid
+	if w.done != nil {
 		select {
-		case <-w.done: // the helper is gone: the session ended (or it was killed)
-			s := w.current
-			w.current, w.done = nil, nil
-			if w.onDetach != nil {
-				w.onDetach(s)
-			}
+		case <-w.done: // the helper died with the session still here
+			w.done, w.kill = nil, nil
+			w.fails[uid]++
+			w.retryAt[uid] = now.Add(helperBackoff(w.fails[uid] - 1))
 		default:
 		}
 		return
 	}
-	s := w.probe()
-	if s == nil {
-		w.notray = nil // no session: forget what the last one could not show
+	if at, ok := w.retryAt[uid]; ok && now.Before(at) {
 		return
 	}
-	if w.notray[s.uid] {
-		return
-	}
-	done, ok := w.spawn(s)
+	done, kill, ok := w.spawn(w.current)
 	if !ok {
-		if w.notray == nil {
-			w.notray = map[uint32]bool{}
-		}
-		w.notray[s.uid] = true
+		w.fails[uid]++
+		w.retryAt[uid] = now.Add(helperBackoff(w.fails[uid] - 1))
 		return
 	}
-	w.current, w.done = s, done
+	w.done, w.kill = done, kill
+	w.fails[uid] = 0
+	delete(w.retryAt, uid)
 	if w.onAttach != nil {
-		w.onAttach(s)
+		w.onAttach(w.current)
 	}
 }
 
@@ -164,8 +208,8 @@ func (w *sessionWatcher) run(stop <-chan struct{}) {
 		select {
 		case <-stop:
 			return
-		case <-t.C:
-			w.tick()
+		case now := <-t.C:
+			w.tick(now)
 		}
 	}
 }
@@ -174,6 +218,13 @@ func (w *sessionWatcher) session() *desktopSession {
 	w.mu.Lock()
 	defer w.mu.Unlock()
 	return w.current
+}
+
+// sessionAlive is the production alive check: logind removes
+// /run/user/<uid> (bus included) when the user's last session ends.
+func sessionAlive(s *desktopSession) bool {
+	_, err := os.Stat(fmt.Sprintf("/run/user/%d/bus", s.uid))
+	return err == nil
 }
 
 // desktopUserCandidates lists the uids to try, in order. Pure, so the choice is
@@ -329,13 +380,14 @@ func trayHelperMain() bool {
 }
 
 // spawnTrayHelper starts the helper as the desktop user and waits for it to
-// report. ok is true when the icon is up and done closes when the helper exits
-// (logout, or killed); ok false means "no tray on this desktop" or the helper
-// could not run, and the caller falls back to headless.
-func spawnTrayHelper(url string, s *desktopSession) (done <-chan struct{}, ok bool) {
+// report. ok is true when the icon is up: done closes when the helper exits
+// and kill terminates it (the watcher does that at logout, because the helper
+// does not notice the bus going away). ok false means "no tray on this
+// desktop" or the helper could not run.
+func spawnTrayHelper(url string, s *desktopSession) (done <-chan struct{}, kill func(), ok bool) {
 	exe, err := os.Executable()
 	if err != nil {
-		return nil, false
+		return nil, nil, false
 	}
 	args := []string{trayHelperFlag}
 	if serviceMode {
@@ -343,23 +395,23 @@ func spawnTrayHelper(url string, s *desktopSession) (done <-chan struct{}, ok bo
 	}
 	cmd := command(exe, args...)
 	if !runAsDesktopUserSession(cmd, s) {
-		return nil, false
+		return nil, nil, false
 	}
 	// Die with the parent: an orphaned icon pointing at a dead server is worse
 	// than no icon.
 	cmd.SysProcAttr.Pdeathsig = syscall.SIGTERM
 	stdin, err := cmd.StdinPipe()
 	if err != nil {
-		return nil, false
+		return nil, nil, false
 	}
 	stdout, err := cmd.StdoutPipe()
 	if err != nil {
-		return nil, false
+		return nil, nil, false
 	}
 	cmd.Stderr = os.Stderr
 	if err := cmd.Start(); err != nil {
 		log.Printf("[tray] no se pudo lanzar el helper como %s: %v", s.name, err)
-		return nil, false
+		return nil, nil, false
 	}
 	fmt.Fprintln(stdin, url)
 	stdin.Close()
@@ -391,12 +443,17 @@ func spawnTrayHelper(url string, s *desktopSession) (done <-chan struct{}, ok bo
 		_ = cmd.Wait()
 		log.Printf("[tray] el helper de bandeja (uid=%d) ha terminado", s.uid)
 	}()
+	kill = func() { _ = cmd.Process.Signal(syscall.SIGTERM) }
 	select {
 	case l := <-first:
-		return exited, l == "ready"
+		if l != "ready" {
+			return nil, nil, false // "notray": the helper exits on its own
+		}
+		return exited, kill, true
 	case <-time.After(5 * time.Second):
 		log.Println("[tray] el helper de bandeja no respondió")
-		return nil, false
+		kill()
+		return nil, nil, false
 	}
 }
 

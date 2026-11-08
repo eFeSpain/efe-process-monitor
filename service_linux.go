@@ -34,13 +34,20 @@ func unitFile(exe, migrateFrom string) string {
 	b.WriteString("Description=eFe Process Monitor\n")
 	b.WriteString("Documentation=https://github.com/eFeSpain/efe-process-monitor\n")
 	b.WriteString("After=network-online.target\n")
-	b.WriteString("Wants=network-online.target\n\n")
+	b.WriteString("Wants=network-online.target\n")
+	// A manual instance holding the port makes the service exit 1 until it is
+	// gone; systemd's default rate limit (5 starts in 10 s) would turn that
+	// transient conflict into a permanently failed unit.
+	b.WriteString("StartLimitIntervalSec=0\n\n")
 	b.WriteString("[Service]\n")
 	b.WriteString("Type=simple\n")
 	b.WriteString("ExecStart=" + exe + " --service\n")
 	b.WriteString("WorkingDirectory=" + filepath.Dir(exe) + "\n")
 	if migrateFrom != "" {
-		b.WriteString("Environment=" + migrateEnv + "=" + migrateFrom + "\n")
+		// systemd.exec(5): the line is unquoted and specifier-expanded, so the
+		// whole assignment is quoted and % is doubled, or a path with a space
+		// truncates to its first word and the migration silently moves nothing.
+		b.WriteString("Environment=\"" + migrateEnv + "=" + strings.ReplaceAll(migrateFrom, "%", "%%") + "\"\n")
 	}
 	b.WriteString("Restart=on-failure\n")
 	b.WriteString("RestartSec=2\n")
@@ -94,6 +101,11 @@ func migrateData(src, dst string) (moved []string, err error) {
 				return moved, fmt.Errorf("%s: %w", f, err)
 			}
 		}
+		// Owner-only whatever the user's editor left: the directory is 0755 so
+		// the tray helper can exec the binary as the user.
+		if err := os.Chmod(to, 0o600); err != nil {
+			return moved, fmt.Errorf("%s: %w", f, err)
+		}
 		moved = append(moved, f)
 	}
 	return moved, nil
@@ -140,6 +152,15 @@ const (
 	serviceExe = serviceDir + "/efemon"
 	unitName   = "efemon.service"
 	unitPath   = "/etc/systemd/system/" + unitName
+	// serviceLink puts `efemon` on PATH, so `sudo efemon` and the documented
+	// `efemon --uninstall-service` work after an install. os.Executable()
+	// resolves it, so appDir becomes /opt/efemon.
+	serviceLink = "/usr/local/bin/efemon"
+	// serviceDirMode must let the session user traverse the directory: the tray
+	// helper is this binary exec'd as that user, and setuid happens before
+	// execve. The data files inside are 0600 (migrateData, writeSecretFile,
+	// initDB), so the directory being readable exposes nothing.
+	serviceDirMode = 0o755
 )
 
 // systemctl runs one systemctl command; the combined output rides in the error
@@ -177,13 +198,21 @@ func installService(fromUI bool) error {
 	if err != nil {
 		return err
 	}
-	if err := os.MkdirAll(serviceDir, 0o700); err != nil {
+	if err := os.MkdirAll(serviceDir, serviceDirMode); err != nil {
+		return err
+	}
+	if err := os.Chmod(serviceDir, serviceDirMode); err != nil { // an earlier 0700 install
 		return err
 	}
 	if err := copyExecutable(exe, serviceExe); err != nil {
 		return fmt.Errorf("copy to %s: %w", serviceExe, err)
 	}
 	log.Printf("[service] binario instalado en %s", serviceExe)
+	if err := ensureServiceLink(); err != nil {
+		log.Printf("[service] %s: %v (sigue sin estar en PATH)", serviceLink, err)
+	}
+	out, _ := systemctl("is-active", unitName)
+	wasActive := parseIsActive(out)
 	src, migrateFrom := filepath.Dir(exe), ""
 	switch {
 	case src == serviceDir:
@@ -212,25 +241,112 @@ func installService(fromUI bool) error {
 		return err
 	}
 	log.Printf("[service] unidad %s escrita y habilitada", unitPath)
+	if wasActive && !fromUI {
+		// Reinstalling over a running service replaced the file under the old
+		// inode; "installed and started" must mean the new binary is running.
+		if _, err := systemctl("restart", unitName); err != nil {
+			return err
+		}
+		log.Printf("[service] servicio reiniciado con el binario nuevo")
+	}
 	return nil
 }
 
-// uninstallService stops, disables and removes the unit. /opt/efemon is kept:
-// it holds the forensic history and the .env with the keys.
+// ensureServiceLink points /usr/local/bin/efemon at the installed binary. A
+// regular file there is somebody else's and is left alone.
+func ensureServiceLink() error {
+	if fi, err := os.Lstat(serviceLink); err == nil {
+		if fi.Mode()&os.ModeSymlink == 0 {
+			return errors.New("exists and is not a symlink")
+		}
+		if target, _ := os.Readlink(serviceLink); target == serviceExe {
+			return nil
+		}
+		if err := os.Remove(serviceLink); err != nil {
+			return err
+		}
+	}
+	return os.Symlink(serviceExe, serviceLink)
+}
+
+// removeServiceLink removes the symlink only if it is ours.
+func removeServiceLink(p string) error {
+	fi, err := os.Lstat(p)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return nil
+		}
+		return err
+	}
+	if fi.Mode()&os.ModeSymlink == 0 {
+		return nil
+	}
+	if target, _ := os.Readlink(p); target != serviceExe {
+		return nil
+	}
+	return os.Remove(p)
+}
+
+// uninstallService disables and removes the unit and the PATH link, then stops
+// it. /opt/efemon is kept: it holds the forensic history and the .env with the
+// keys.
 func uninstallService() error {
 	if err := requireServiceTools(); err != nil {
 		return err
 	}
-	if _, err := systemctl("disable", "--now", unitName); err != nil && !strings.Contains(err.Error(), "not loaded") &&
-		!strings.Contains(err.Error(), "does not exist") {
-		return err
+	remove := func(p string) error {
+		if p == serviceLink {
+			return removeServiceLink(p)
+		}
+		if err := os.Remove(p); err != nil && !os.IsNotExist(err) {
+			return err
+		}
+		return nil
 	}
-	if err := os.Remove(unitPath); err != nil && !os.IsNotExist(err) {
-		return err
-	}
-	_, err := systemctl("daemon-reload")
+	err := uninstallServiceSteps(systemctl, remove)
 	log.Printf("[service] unidad %s eliminada; %s se conserva", unitPath, serviceDir)
 	return err
+}
+
+// uninstallServiceSteps is the ordered uninstall with its effects injected.
+// The stop comes LAST: when the request arrives through the service's own
+// /api/service, `stop` kills this very process, and a `disable --now` first
+// would leave the unit file (and the "installed" status) behind.
+func uninstallServiceSteps(run func(args ...string) (string, error), remove func(string) error) error {
+	ignorable := func(err error) bool {
+		return err == nil || strings.Contains(err.Error(), "not loaded") || strings.Contains(err.Error(), "does not exist")
+	}
+	if _, err := run("disable", unitName); !ignorable(err) {
+		return err
+	}
+	if err := remove(unitPath); err != nil {
+		return err
+	}
+	if err := remove(serviceLink); err != nil {
+		return err
+	}
+	if _, err := run("daemon-reload"); err != nil {
+		return err
+	}
+	if _, err := run("stop", unitName); !ignorable(err) {
+		return err
+	}
+	return nil
+}
+
+// handoffDir is where the "already running → open the dashboard" path reads
+// the token from. Root with the service installed reads the service's token:
+// the one next to whichever binary was launched is stale after an install.
+func handoffDir(appDir string, root, installed bool) string {
+	if root && installed {
+		return serviceDir
+	}
+	return appDir
+}
+
+func tokenHandoffDir() string {
+	_, err := os.Stat(unitPath)
+	return handoffDir(appDir, os.Geteuid() == 0, err == nil)
 }
 
 func serviceStatus() ServiceStatus {
@@ -256,11 +372,16 @@ func runServiceMigration() {
 		return
 	}
 	moved, err := migrateData(src, serviceDir)
-	if err != nil {
+	switch {
+	case err != nil:
 		log.Printf("[service] migración desde %s incompleta: %v", src, err)
-	}
-	if len(moved) > 0 {
+	case len(moved) > 0:
 		log.Printf("[service] datos movidos desde %s: %s", src, strings.Join(moved, ", "))
+	default:
+		// Said out loud: a missing source or a target that already had data
+		// means the user's .env and history are NOT here, and nothing else
+		// would tell them why.
+		log.Printf("[service] migración desde %s: nada que mover (origen inexistente o %s ya tenía datos)", src, serviceDir)
 	}
 	if err := os.WriteFile(unitPath, []byte(unitFile(serviceExe, "")), 0o644); err != nil { // #nosec G306 -- unit file
 		log.Printf("[service] no se pudo reescribir la unidad: %v", err)

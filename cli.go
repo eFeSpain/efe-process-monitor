@@ -97,6 +97,10 @@ func runServiceCommand(o options) bool {
 		}
 		fmt.Println("efemon installed and started as a systemd service (efemon.service); data in /opt/efemon.")
 		fmt.Println("The tray icon appears when a desktop session is logged in. Remove with: efemon --uninstall-service")
+		if !serviceStatus().Active {
+			fmt.Println("Note: the unit is not active yet — another instance is probably holding the port.")
+			fmt.Println("Stop the manual instance; the service retries on its own.")
+		}
 	case o.Uninstall:
 		if err := uninstallService(); err != nil {
 			fmt.Fprintln(os.Stderr, "uninstall failed:", err)

@@ -73,8 +73,12 @@ func runApp(ln net.Listener, url string) {
 				}
 				return nil
 			},
-			spawn: func(s *desktopSession) (<-chan struct{}, bool) {
+			alive: sessionAlive,
+			spawn: func(s *desktopSession) (<-chan struct{}, func(), bool) {
 				return spawnTrayHelper(tokenURL(url, localToken), s)
+			},
+			onSession: func(s *desktopSession) {
+				log.Printf("[tray] sesión gráfica de %s (uid=%d): notificaciones y panel van ahí", s.name, s.uid)
 			},
 			onAttach: func(s *desktopSession) {
 				log.Printf("[tray] icono mostrado en la sesión de %s (uid=%d)", s.name, s.uid)
@@ -89,7 +93,7 @@ func runApp(ln net.Listener, url string) {
 		// icon is shown by a helper copy running as the logged-in user.
 		if s := desktopUser(); s == nil {
 			noTrayMode, noTrayRoot = true, true
-		} else if _, ok := spawnTrayHelper(tokenURL(url, localToken), s); ok {
+		} else if _, _, ok := spawnTrayHelper(tokenURL(url, localToken), s); ok {
 			viaHelper = true
 			log.Printf("[tray] icono mostrado en la sesión de %s (uid=%d)", s.name, s.uid)
 		} else {

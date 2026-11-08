@@ -232,10 +232,15 @@ func main() {
 
 	// Single instance: if the port is taken, another instance is already running.
 	ln, err := net.Listen("tcp", addr)
-	if err != nil && os.Getenv("RESTART_WAIT") != "" {
-		// We were relaunched by "Restart now"; wait (up to ~10s) for the old
-		// process to release the port instead of bailing as a second instance.
-		for i := 0; i < 100 && err != nil; i++ {
+	if err != nil && (os.Getenv("RESTART_WAIT") != "" || serviceMode) {
+		// Relaunched by "Restart now" (~10 s), or the service starting while a
+		// manual instance still holds the port (~30 s): wait for it to go
+		// instead of bailing as a second instance.
+		tries := 100
+		if serviceMode {
+			tries = 300
+		}
+		for i := 0; i < tries && err != nil; i++ {
 			time.Sleep(100 * time.Millisecond)
 			ln, err = net.Listen("tcp", addr)
 		}
