@@ -289,6 +289,10 @@ func handleEvents(w http.ResponseWriter, r *http.Request) {
 	fmt.Fprintf(w, "data: {\"kind\":\"hello\"}\n\n")
 	flusher.Flush()
 
+	// One ticker for the keepalive, not a time.After per iteration: the latter
+	// allocates a timer per event that lives until it fires.
+	keepalive := time.NewTicker(15 * time.Second)
+	defer keepalive.Stop()
 	for {
 		select {
 		case <-r.Context().Done():
@@ -297,7 +301,7 @@ func handleEvents(w http.ResponseWriter, r *http.Request) {
 			b, _ := json.Marshal(ev)
 			fmt.Fprintf(w, "data: %s\n\n", b)
 			flusher.Flush()
-		case <-time.After(15 * time.Second):
+		case <-keepalive.C:
 			fmt.Fprint(w, ": keepalive\n\n")
 			flusher.Flush()
 		}
@@ -319,7 +323,9 @@ func handleSettings(w http.ResponseWriter, r *http.Request) {
 			CurrentPassword  *string
 			ListenAddr       *string
 		}
-		json.NewDecoder(r.Body).Decode(&body)
+		if !decodeJSON(w, r, &body) {
+			return
+		}
 		updateSettings(body.VTKey, body.AbuseKey)
 		if body.AuthEnabled != nil {
 			T := strings_(langFrom(r))
@@ -408,7 +414,10 @@ func handleWhitelist(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var body struct{ Exe string }
-	json.NewDecoder(r.Body).Decode(&body)
+	if !decodeJSON(w, r, &body) || body.Exe == "" {
+		http.Error(w, `{"ok":false,"error":"invalid exe"}`, http.StatusBadRequest)
+		return
+	}
 	switch r.Method {
 	case "POST":
 		addWhitelist(body.Exe)
@@ -427,7 +436,9 @@ func handleIPWhitelist(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var body struct{ IP string }
-	json.NewDecoder(r.Body).Decode(&body)
+	if !decodeJSON(w, r, &body) {
+		return
+	}
 	if net.ParseIP(body.IP) == nil {
 		http.Error(w, `{"ok":false,"error":"invalid ip"}`, 400)
 		return
@@ -449,8 +460,17 @@ func handleKill(w http.ResponseWriter, r *http.Request) {
 	// The upper bound matters: PID is an int from JSON and int32() below would
 	// wrap a huge value round into a different, valid PID — killing a process the
 	// caller never named.
-	if json.NewDecoder(r.Body).Decode(&body) != nil || body.PID <= 0 || body.PID > math.MaxInt32 {
+	if !decodeJSON(w, r, &body) {
+		return
+	}
+	if body.PID <= 0 || body.PID > math.MaxInt32 {
 		http.Error(w, `{"ok":false,"error":"invalid pid"}`, 400)
+		return
+	}
+	// Never ourselves (the monitor used to be able to kill itself from its own
+	// API) and never init: neither is a response action, both are an outage.
+	if int32(body.PID) == ownPID || body.PID == 1 {
+		http.Error(w, `{"ok":false,"error":"refusing to kill the monitor or init"}`, http.StatusBadRequest)
 		return
 	}
 	p, err := process.NewProcess(int32(body.PID))
@@ -458,11 +478,15 @@ func handleKill(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, map[string]any{"ok": false, "error": "process not found"})
 		return
 	}
+	// Resolve what is about to be killed before it is gone: the log line is
+	// the forensic record of the action, and a bare PID is meaningless later.
+	name, _ := p.Name()
+	exe, _ := p.Exe()
 	if err := p.Kill(); err != nil {
 		writeJSON(w, map[string]any{"ok": false, "error": err.Error()})
 		return
 	}
-	log.Printf("KILL pid=%d by operator", body.PID)
+	log.Printf("KILL pid=%d name=%q exe=%q by operator", body.PID, name, exe)
 	writeJSON(w, map[string]any{"ok": true, "pid": body.PID})
 }
 
@@ -615,7 +639,8 @@ func handleExportCSV(w http.ResponseWriter, r *http.Request) {
 	cw := csv.NewWriter(w)
 	cw.Write([]string{"ts", "kind", "pid", "process", "exe", "local", "remote", "detail"})
 	for _, e := range queryEvents(5000, "") {
-		cw.Write([]string{e.TS, e.Kind, strconv.Itoa(int(e.PID)), e.Process, e.Exe, e.Local, e.Remote, e.Detail})
+		cw.Write([]string{csvCell(e.TS), csvCell(e.Kind), strconv.Itoa(int(e.PID)), csvCell(e.Process),
+			csvCell(e.Exe), csvCell(e.Local), csvCell(e.Remote), csvCell(e.Detail)})
 	}
 	cw.Flush()
 }
@@ -625,7 +650,9 @@ func handleBlockIP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var body struct{ IP string }
-	json.NewDecoder(r.Body).Decode(&body)
+	if !decodeJSON(w, r, &body) {
+		return
+	}
 	if !isBlockable(body.IP) {
 		writeJSON(w, map[string]any{"ok": false, "error": strings_(langFrom(r))["block_invalid"]})
 		return
@@ -703,7 +730,9 @@ func handleUnblock(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var body struct{ IP string }
-	json.NewDecoder(r.Body).Decode(&body)
+	if !decodeJSON(w, r, &body) {
+		return
+	}
 	if net.ParseIP(body.IP) == nil {
 		writeJSON(w, map[string]any{"ok": false, "error": "invalid IP"})
 		return
@@ -725,6 +754,35 @@ func handleUnblock(w http.ResponseWriter, r *http.Request) {
 		resp["warn"] = warn
 	}
 	writeJSON(w, resp)
+}
+
+// maxJSONBody bounds the body of every JSON API request. Nothing legitimate
+// sends more than a few hundred bytes; in exposed mode an unbounded body is a
+// memory hole.
+const maxJSONBody = 64 << 10
+
+// decodeJSON reads a bounded JSON body into v and answers 400 on failure. The
+// handlers used to ignore the decode error and act on the zero value — a bad
+// body to /api/whitelist whitelisted "".
+func decodeJSON(w http.ResponseWriter, r *http.Request, v any) bool {
+	r.Body = http.MaxBytesReader(w, r.Body, maxJSONBody)
+	if err := json.NewDecoder(r.Body).Decode(v); err != nil {
+		http.Error(w, `{"ok":false,"error":"invalid json"}`, http.StatusBadRequest)
+		return false
+	}
+	return true
+}
+
+// csvCell neutralizes a value for the CSV export. A cell starting with = + - @
+// or a tab/CR is a formula to Excel and LibreOffice, and process names, paths
+// and detail lines are attacker-influenced text in a file that will be opened
+// in exactly those programs. The leading apostrophe is the standard defence;
+// the value is otherwise unchanged.
+func csvCell(s string) string {
+	if s != "" && strings.ContainsAny(s[:1], "=+-@\t\r") {
+		return "'" + s
+	}
+	return s
 }
 
 func render(w http.ResponseWriter, name string, data any) {

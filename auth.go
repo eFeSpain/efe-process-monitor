@@ -420,9 +420,39 @@ func securityMiddleware(next http.Handler) http.Handler {
 				return
 			}
 			http.SetCookie(w, sessionCookieFor(localSessionTTL))
+			// The token is good for the whole run, so it must not linger in the
+			// address bar and the history: send the browser to the same URL
+			// without it. Only for page loads — redirecting a POST would change
+			// its method, and the API never carries the token anyway.
+			if r.Method == http.MethodGet || r.Method == http.MethodHead {
+				// #nosec G710 -- the target is a local path: tokenlessTarget keeps only a
+				// single-leading-slash path and drops anything protocol-relative; see
+				// TestTokenlessTargetIsLocal. The taint analysis cannot see that.
+				http.Redirect(w, r, tokenlessTarget(r.URL), http.StatusFound)
+				return
+			}
 		}
 		next.ServeHTTP(w, r)
 	})
+}
+
+// tokenlessTarget is the request URL without the t parameter, as a local
+// redirect target. The path is kept only when it is a plain absolute path: a
+// request line of "GET //evil.com/?t=…" parses to a path of "//evil.com/",
+// which a browser reads as a protocol-relative URL — an open redirect, bounced
+// off a page the operator trusts. Anything but a single leading slash falls
+// back to the dashboard root.
+func tokenlessTarget(u *url.URL) string {
+	path := u.Path
+	if !strings.HasPrefix(path, "/") || strings.HasPrefix(path, "//") || strings.HasPrefix(path, "/\\") {
+		path = "/"
+	}
+	q := u.Query()
+	q.Del("t")
+	if enc := q.Encode(); enc != "" {
+		return path + "?" + enc
+	}
+	return path
 }
 
 // denyLocal rejects a request that presented neither a session nor the local

@@ -62,9 +62,15 @@ func TestGateAcceptsTokenThenCookie(t *testing.T) {
 	withLocalGate(t, "secrettoken")
 	h := gateHandler()
 
-	res := do(h, "GET", "/?t=secrettoken", "127.0.0.1:5000", nil)
-	if res.Code != http.StatusOK || !strings.Contains(res.Body.String(), "REACHED") {
-		t.Fatalf("valid token should pass, got %d %q", res.Code, res.Body.String())
+	// The token is exchanged for a cookie and the browser is sent to the same
+	// URL without it, so the token — valid for the whole run — does not stay in
+	// the address bar and the history.
+	res := do(h, "GET", "/?lang=en&t=secrettoken", "127.0.0.1:5000", nil)
+	if res.Code != http.StatusFound || res.Header().Get("Location") != "/?lang=en" {
+		t.Fatalf("valid token should redirect to the URL without it, got %d Location=%q", res.Code, res.Header().Get("Location"))
+	}
+	if strings.Contains(res.Body.String(), "REACHED") {
+		t.Error("the exchange request must not also serve the page with the token still in the URL")
 	}
 	cookies := res.Result().Cookies()
 	var sid string
@@ -192,5 +198,25 @@ func TestSecurityHeadersAlwaysSet(t *testing.T) {
 	}
 	if !strings.Contains(res.Header().Get("Content-Security-Policy"), "default-src 'self'") {
 		t.Error("CSP header missing")
+	}
+}
+
+// The post-exchange redirect is built from the request URL, which the client
+// controls. "GET //evil.com/?t=…" parses to a path of "//evil.com/" — a
+// protocol-relative URL to a browser — so anything but a plain local path is
+// sent to the root instead.
+func TestTokenlessTargetIsLocal(t *testing.T) {
+	for in, want := range map[string]string{
+		"/?t=abc":               "/",
+		"/?lang=en&t=abc":       "/?lang=en",
+		"/history?t=abc&x=1":    "/history?x=1",
+		"//evil.com/?t=abc":     "/",
+		"//evil.com/?t=abc&a=1": "/?a=1",
+		`/\evil.com/?t=abc`:     "/",
+	} {
+		r := httptest.NewRequest("GET", in, nil)
+		if got := tokenlessTarget(r.URL); got != want {
+			t.Errorf("tokenlessTarget(%q) = %q, want %q", in, got, want)
+		}
 	}
 }

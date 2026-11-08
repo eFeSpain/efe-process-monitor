@@ -9,6 +9,19 @@ Versions follow [Semantic Versioning](https://semver.org/).
 ## [Unreleased]
 
 ### Security
+- **CSV export neutralizes formulas.** Process names, paths and detail lines
+  are attacker-influenced text, and the export is opened in Excel or
+  LibreOffice; a cell starting with `= + - @` or a tab is a formula there. Such
+  cells now carry a leading apostrophe, the standard defence.
+- **The local token leaves the address bar.** After exchanging `?t=` for the
+  session cookie the browser is redirected to the same URL without it, so a
+  token valid for the whole run no longer sits in the history.
+- `/api/kill` refuses the monitor's own PID and PID 1 (it could be made to
+  kill itself from its own API), and the `KILL` log line now records the
+  process name and path — a bare PID is meaningless in a later reading.
+- JSON API bodies are bounded (64 KiB) and a body that does not decode is a
+  `400`; the handlers used to act on the zero value, so a malformed body to
+  `/api/whitelist` whitelisted the empty string.
 - **Toolchain: Go 1.26.3 → 1.26.10.** `go.mod` pins the toolchain the binary is
   built with, and 0.4.0 shipped with 22 fixed standard-library vulnerabilities
   reachable from this code — in `net/http`, `crypto/tls`, `html/template`,
@@ -58,6 +71,9 @@ Versions follow [Semantic Versioning](https://semver.org/).
   `arp`, `tshark`, `netsh`…) as new processes — nor, the first time, as new
   binaries with a desktop notification. A direct child of the monitor is the
   monitor's, in the feed and in the table's *hide self* filter.
+- Database reads report an error that cut a scan short instead of returning a
+  silently truncated history; the SSE keepalive uses one ticker instead of a
+  timer per event.
 - The score breakdown is rendered in the language of the request that reads
   it. It used to be rendered from a process-wide "current language", so two
   browsers in different languages could each see the other's words.

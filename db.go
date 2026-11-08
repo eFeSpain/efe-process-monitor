@@ -100,6 +100,15 @@ func ensureIncrementalVacuum() {
 	}
 }
 
+// rowsDone reports an error that ended a row scan early. rows.Next returning
+// false can mean "no more rows" or "the read failed"; without this the history
+// could come back silently truncated.
+func rowsDone(rows *sql.Rows, what string) {
+	if err := rows.Err(); err != nil {
+		log.Printf("[!] lectura incompleta de %s: %v", what, err)
+	}
+}
+
 // eventRetentionDays bounds the forensic history. The events table grows with
 // every connection change; without a cap it grows for as long as the tool runs.
 // 0 disables pruning (keep everything).
@@ -188,6 +197,7 @@ func queryEvents(limit int, kind string) []Event {
 		rows.Scan(&e.TS, &e.Kind, &e.PID, &e.Process, &e.Exe, &e.Local, &e.Remote, &e.Detail)
 		out = append(out, e)
 	}
+	rowsDone(rows, "events")
 	return out
 }
 
@@ -219,6 +229,7 @@ func dbEventStats(exe string, since time.Time) eventStats {
 			hosts[h] = true
 		}
 	}
+	rowsDone(rows, "event stats")
 	rows.Close()
 	st.ips = len(hosts)
 	db.QueryRow("SELECT ts FROM events WHERE exe=? ORDER BY epoch ASC LIMIT 1", exe).Scan(&st.first)
@@ -349,6 +360,7 @@ func dbAllWhitelist() map[string]string {
 		rows.Scan(&exe, &added)
 		out[exe] = added
 	}
+	rowsDone(rows, "whitelist")
 	return out
 }
 
@@ -377,6 +389,7 @@ func dbAllIPWhitelist() map[string]string {
 		rows.Scan(&ip, &added)
 		out[ip] = added
 	}
+	rowsDone(rows, "ip whitelist")
 	return out
 }
 
@@ -444,6 +457,7 @@ func dbHostnames(ip string) []Hostname {
 			out = append(out, h)
 		}
 	}
+	rowsDone(rows, "hostnames")
 	return out
 }
 
@@ -470,6 +484,7 @@ func dbAllHostnames() map[string][]Hostname {
 			out[ip] = append(out[ip], h)
 		}
 	}
+	rowsDone(rows, "hostnames")
 	return out
 }
 
@@ -497,6 +512,7 @@ func dbAuditSeen() (seen map[string]map[string]time.Time, hadHistory bool) {
 		seen[k][it] = time.Unix(0, int64(first*1e9))
 		hadHistory = true
 	}
+	rowsDone(rows, "audit_seen")
 	return seen, hadHistory
 }
 
@@ -553,6 +569,7 @@ func migrateAuditSeen() {
 			old = append(old, l)
 		}
 	}
+	rowsDone(rows, "audit_seen migration")
 	rows.Close()
 	for _, l := range old {
 		k := auditItemKey(l.item)
@@ -613,6 +630,7 @@ func dbScoreHistory(limit int) []ScoreChange {
 			out = append(out, s)
 		}
 	}
+	rowsDone(rows, "score history")
 	return out
 }
 
@@ -628,5 +646,6 @@ func dbAllBlocked() []Blocked {
 		rows.Scan(&b.IP, &b.At, &b.Report)
 		out = append(out, b)
 	}
+	rowsDone(rows, "blocked")
 	return out
 }
