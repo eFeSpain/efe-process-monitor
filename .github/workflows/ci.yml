@@ -53,7 +53,7 @@ jobs:
       # G101 is excluded globally: it is a lexical match on identifiers such as
       # auth_* / login_* / token in the translation maps, not a credential.
       - name: gosec
-        uses: securego/gosec@master
+        uses: securego/gosec@v2.30.0
         with:
           args: >-
             -exclude-generated
@@ -61,6 +61,15 @@ jobs:
             -exclude=G101
             -exclude-rules=audit\.go:G304,G703;lan\.go:G304;proc\.go:G204,G702;tools/.*:G115,G304,G306
             ./...
+
+      # govulncheck: known vulnerabilities reachable from this code, including the
+      # standard library the binary is built with. The toolchain is pinned by
+      # go.mod and goes stale silently otherwise — 0.4.0 shipped with 22 fixed
+      # stdlib CVEs in net/http, crypto/tls and html/template.
+      - name: govulncheck
+        run: |
+          go install golang.org/x/vuln/cmd/govulncheck@latest
+          govulncheck ./...
 
   build:
     # Guarantees the binary stays cgo-free and compiles on every target OS.

@@ -6,6 +6,21 @@ Versions follow [Semantic Versioning](https://semver.org/).
 
 ---
 
+## [Unreleased]
+
+### Security
+- **Toolchain: Go 1.26.3 → 1.26.10.** `go.mod` pins the toolchain the binary is
+  built with, and 0.4.0 shipped with 22 fixed standard-library vulnerabilities
+  reachable from this code — in `net/http`, `crypto/tls`, `html/template`,
+  `crypto/x509`, `net/textproto`, `net/url` and `encoding/asn1`: the server, the
+  HTTPS mode and the templates. `govulncheck` now runs in CI and in `verify.sh`,
+  so a pinned toolchain going stale is a failing gate instead of something
+  nobody notices.
+- Dependencies updated (gopsutil 4.26.10, x/crypto 0.58, x/sys 0.49, systray
+  1.12.2, dbus 5.2.4, modernc sqlite 1.62). Dependabot opens weekly PRs for
+  modules and actions, and the gosec action is pinned to a release instead of
+  tracking `master`.
+
 ## [0.4.0] — 2026-09-24
 
 The details block now answers the questions an analyst asks next about a

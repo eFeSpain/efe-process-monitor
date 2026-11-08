@@ -1,0 +1,16 @@
+# Weekly PRs for stale Go modules and GitHub Actions. The toolchain itself is
+# pinned by the `go` directive in go.mod; Dependabot bumps that too, which is
+# how a stdlib CVE fix reaches the shipped binary without anyone remembering.
+version: 2
+updates:
+  - package-ecosystem: gomod
+    directory: /
+    schedule:
+      interval: weekly
+    groups:
+      go-deps:
+        patterns: ["*"]
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly

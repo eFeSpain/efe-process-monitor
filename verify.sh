@@ -11,6 +11,7 @@
 #   staticcheck  dead code
 #   gosec        an unbounded PID conversion, an unescaped template value
 #   linux run    a GOOS-dependent filepath.Base that made a detection rule dead
+#   govulncheck  22 fixed stdlib CVEs shipped in 0.4.0 because go.mod pinned 1.26.3
 #
 # Usage:  ./verify.sh            full run
 #         ./verify.sh --quick    skip cross-compile and the WSL Linux run
@@ -61,6 +62,13 @@ if tool gosec github.com/securego/gosec/v2/cmd/gosec@latest; then
       -exclude=G101 \
       '-exclude-rules=audit\.go:G304,G703;lan\.go:G304;proc\.go:G204,G702;tools/.*:G115,G304,G306' \
       ./...; then ok; else bad; fi
+fi
+
+step "govulncheck"
+# The stdlib is part of what ships: a toolchain pinned in go.mod does not pick up
+# security fixes on its own, and this is the only gate that notices.
+if tool govulncheck golang.org/x/vuln/cmd/govulncheck@latest; then
+  if "$(go env GOPATH)/bin/govulncheck" ./...; then ok; else bad; fi
 fi
 
 if [ "${1:-}" = "--quick" ]; then
