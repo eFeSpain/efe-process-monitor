@@ -241,6 +241,13 @@ func main() {
 			ln, err = net.Listen("tcp", addr)
 		}
 	}
+	if err != nil && serviceMode {
+		// A clean exit here would leave the unit stopped (Restart=on-failure
+		// ignores exit 0) while a manual instance holds the port. Fail, so
+		// systemd retries until that instance is gone.
+		log.Printf("[!] puerto %s ocupado por otra instancia; saliendo con error para que systemd reintente", addr)
+		os.Exit(1)
+	}
 	if err != nil {
 		// Hand off to the instance that owns the port, carrying its token so the
 		// browser is authorized by the local gate.
@@ -409,6 +416,14 @@ func handleRestart(w http.ResponseWriter, r *http.Request) {
 	go func() {
 		time.Sleep(400 * time.Millisecond) // let the response flush
 		log.Println("restarting via UI…")
+		if serviceMode {
+			// systemd would kill a relaunched child with the cgroup; the unit
+			// restarts itself and the page reconnects on the new address.
+			if err := serviceControl("restart"); err != nil {
+				log.Printf("[service] %v", err)
+			}
+			return
+		}
 		relaunchSelf()
 		os.Exit(0)
 	}()
@@ -423,6 +438,11 @@ func handleShutdown(w http.ResponseWriter, r *http.Request) {
 	go func() {
 		time.Sleep(400 * time.Millisecond)
 		log.Println("shutdown via UI…")
+		if serviceMode {
+			if err := serviceControl("stop"); err != nil {
+				log.Printf("[service] %v", err)
+			}
+		}
 		os.Exit(0)
 	}()
 }

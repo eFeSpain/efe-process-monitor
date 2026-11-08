@@ -217,3 +217,26 @@ func TestSettingsAbuseChKey(t *testing.T) {
 		t.Error("the full key must never be echoed back")
 	}
 }
+
+// Under a service the token file is root-owned, so a user who runs efemon by
+// hand lands on the gate page; it must tell them the two ways in that work.
+func TestGatePageMentionsServiceHint(t *testing.T) {
+	withLocalGate(t, "secrettoken")
+	old := serviceMode
+	t.Cleanup(func() { serviceMode = old })
+	for _, svc := range []bool{true, false} {
+		serviceMode = svc
+		res := do(gateHandler(), "GET", "/", "127.0.0.1:5000", map[string]string{"Cookie": "lang=es"})
+		if res.Code != http.StatusForbidden {
+			t.Fatalf("service=%v: code %d, want 403", svc, res.Code)
+		}
+		body := res.Body.String()
+		hint := strings_("es")["gate_body_service"]
+		if svc && (hint == "" || !strings.Contains(body, hint)) {
+			t.Errorf("service mode: gate page lacks the service hint %q", hint)
+		}
+		if !svc && (!strings.Contains(body, strings_("es")["gate_body"]) || strings.Contains(body, "sudo efemon")) {
+			t.Error("manual mode: gate page must keep its usual text, without the service hint")
+		}
+	}
+}

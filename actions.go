@@ -230,6 +230,14 @@ func startupBanner() {
 		log.Println("[-] tshark          not found — capture disabled")
 	}
 	log.Printf("[+] Live monitor    active (every %s)", monitorInterval)
+	switch {
+	case serviceMode && desktopSessionName() != "":
+		log.Printf("[+] Mode            systemd service (desktop session: user %s)", desktopSessionName())
+	case serviceMode:
+		log.Println("[+] Mode            systemd service (desktop session: waiting — the tray attaches at login)")
+	default:
+		log.Println("[+] Mode            manual")
+	}
 	if strings.HasPrefix(passiveDNSStatus, "activo") {
 		log.Printf("[+] DNS pasivo      %s", passiveDNSStatus)
 	} else {

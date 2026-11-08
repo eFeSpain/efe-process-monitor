@@ -85,6 +85,15 @@ func runUsers() []string {
 	return out
 }
 
+// desktopSessionName is the user whose session the desktop work goes to, for
+// the banner; "" when there is none.
+func desktopSessionName() string {
+	if s := desktopUser(); s != nil {
+		return s.name
+	}
+	return ""
+}
+
 // ── Session watcher (service mode) ──────────────────────────────────────────
 //
 // A service starts at boot, before any graphical session exists, and the user

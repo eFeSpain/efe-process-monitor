@@ -466,12 +466,18 @@ func denyLocal(w http.ResponseWriter, r *http.Request) {
 	}
 	lang := langFrom(r)
 	T := strings_(lang)
+	// Under a service the token file is root-owned, so "launch the executable
+	// again" only works as root: say so.
+	body := T["gate_body"]
+	if serviceMode {
+		body = T["gate_body_service"]
+	}
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	w.WriteHeader(http.StatusForbidden)
 	// Every interpolated value is escaped, including lang: it can only be a key of
 	// the translations map today, but that's an invariant somewhere else.
 	fmt.Fprintf(w, gateHTML, html.EscapeString(lang), html.EscapeString(T["gate_title"]),
-		html.EscapeString(T["gate_title"]), html.EscapeString(T["gate_body"]),
+		html.EscapeString(T["gate_title"]), html.EscapeString(body),
 		html.EscapeString(filepath.Join(appDir, tokenFile)))
 }
 
