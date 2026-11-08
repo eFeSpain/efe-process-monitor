@@ -18,13 +18,18 @@ sobre el binario y la IP remota.
 
 > **Estado: estable.** Funciona y se usa a diario. La interfaz y los datos guardados pueden evolucionar entre versiones.
 
-**Novedades de la 0.4.0** — el desplegable de proceso ha crecido: directorio
-de trabajo, terminal, unidad systemd y contenedor, variables de entorno de
-inyección/proxy, ficheros sensibles abiertos y memoria ejecutable desde
-memfd/temp (ambos puntúan), antigüedad del binario y primera aparición, hijos,
-recurso de versión y servicios alojados en Windows, y un bloque de actividad
-de red agregada con enlace al historial del proceso. La CPU es por núcleo, como
-la muestra `top`. Detalle completo en el [changelog](CHANGELOG.md).
+**Novedades de la 0.4.1** — una versión de seguridad y fontanería. El toolchain
+pasa a Go 1.26.10 (la 0.4.0 salió con 22 CVE ya corregidas en la biblioteca
+estándar, justo en los paquetes que usa el servidor) y `govulncheck` vigila
+cada build. ThreatFox vuelve a través de la API de abuse.ch con una Auth-Key
+gratuita — la exportación sin clave había muerto en silencio — y cada feed
+muestra su estado en el panel de privacidad. La tabla se renderiza en
+milisegundos en vez de segundos: la reputación y las consultas LAN salieron
+del camino de la petición y la base de datos tiene los índices que sus
+consultas necesitaban. Nuevo: **alerta DGA** por ráfagas de NXDOMAIN (Linux).
+Y endurecimiento: CSV sin fórmulas, el token local fuera de la barra de
+direcciones, *kill* que se niega a matar al propio monitor. Detalle completo
+en el [changelog](CHANGELOG.md).
 
 <div align="center">
 <img src="docs/screenshot-main.png" alt="Panel principal" width="880">

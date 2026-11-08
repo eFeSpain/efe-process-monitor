@@ -18,13 +18,16 @@ sources say about the binary and the remote IP.
 
 > **Status: stable.** Works and is used day to day. Interfaces and stored data may evolve between versions.
 
-**What's new in 0.4.0** — the process details block grew up: working
-directory, terminal, systemd unit and container, injection/proxy environment
-variables, sensitive files held open and executable memory from memfd/temp
-(both score), binary age and first sighting, children, Windows version
-resource and hosted services, and an aggregated network-activity block with a
-link to the process's history. CPU is per core, as `top` shows it.
-Full notes in the [changelog](CHANGELOG.md).
+**What's new in 0.4.1** — a security and plumbing release. The toolchain moves
+to Go 1.26.10 (0.4.0 shipped with 22 fixed standard-library CVEs in the very
+packages the server uses) and `govulncheck` now guards every build. ThreatFox
+is back through the abuse.ch API with a free Auth-Key — the keyless export had
+died silently — and every feed shows its state in the privacy panel. The table
+renders in milliseconds instead of seconds: reputation and LAN lookups left the
+request path and the database got the indexes its per-render queries needed.
+New: a **DGA alert** from NXDOMAIN bursts (Linux). Plus hardening: CSV formula
+neutralization, the local token out of the address bar, *kill* refusing the
+monitor itself. Full notes in the [changelog](CHANGELOG.md).
 
 <div align="center">
 <img src="docs/screenshot-main.png" alt="Main dashboard" width="880">

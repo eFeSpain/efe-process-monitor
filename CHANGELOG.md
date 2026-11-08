@@ -6,7 +6,7 @@ Versions follow [Semantic Versioning](https://semver.org/).
 
 ---
 
-## [Unreleased]
+## [0.4.1] — 2026-11-08
 
 ### Added
 - **DGA alert from the passive DNS listener** (Linux). A burst of distinct
