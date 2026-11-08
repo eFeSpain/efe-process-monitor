@@ -132,6 +132,16 @@ GOOS=darwin go build -o efemon .  # macOS
   (trunc, threatClass, join, joinInts, json, deref, humanBytes). Every JSON handler reads its body
   through `decodeJSON` (64 KiB bound, 400 on a decode error — never act on the zero value); the CSV
   export goes through `csvCell` (formula neutralization). `/api/kill` refuses `ownPID` and PID 1.
+- **cli.go** — `parseArgs` (`--version`, `--no-browser`, `--service`, `--install-service`, `--uninstall-service`,
+  `--service-status`), `serviceMode`/`noBrowser`, `ServiceStatus`, `runServiceCommand` (the three service
+  commands run before log/DB/listener exist). `--tray-helper` stays ahead of all of it.
+- **service_linux.go / service_other.go** — systemd integration behind pure functions: `unitFile`,
+  `migrationPlan`/`migrateData` (moves `.env`, DB(+wal/shm), TLS pair — never token/logs — into `/opt/efemon`),
+  `copyExecutable` (no-op on the same file: reinstalling must not truncate the running binary),
+  `installService(fromUI)` (CLI: migrate now + `enable --now`; UI: unit carries `EFEMON_MIGRATE_FROM`, enabled
+  only, the caller starts it and exits), `uninstallService` (keeps `/opt/efemon`), `serviceStatus`,
+  `serviceControl(stop|restart|start)`, `runServiceMigration` (first service start). gosec G304/G703 are
+  excluded for this file in CI: fixed basenames under appDir and `/opt/efemon`.
 - **flight.go** — `flightGroup[K, V]`: single-flight for the table render. **queue.go** — `lookupQueue`:
   enqueue-once-while-pending + workers + `drained` callback, shared by the reputation and LAN passes.
 - **connections.go** — `analyzeConnections()` (the core): enumerate via gopsutil, dedupe per exe/PID/IP,
@@ -226,7 +236,12 @@ GOOS=darwin go build -o efemon .  # macOS
 - **tray_windows.go / tray_linux.go / tray_other.go** — `runApp`: Windows = systray icon + menu (Open/Quit);
   Linux = same over SNI/D-Bus when a `StatusNotifierWatcher` exists; else headless.
 - **desktop_linux.go** — root cannot join the user's session bus, so as root every desktop
-  interaction runs *as the logged-in user*: `runAsDesktopUser(cmd)` sets credentials + session env
+  interaction runs *as the logged-in user*. In **service mode** (`--service` or systemd's `INVOCATION_ID`)
+  nobody launched us from a session: `sessionWatcher` polls `/run/user/*/bus` every 5 s, spawns the tray
+  helper when a session appears (one per session; a `notray` desktop is remembered until that session
+  ends), and detaches when the helper exits (logout). `desktopUser()` reads the watcher then. Quit from the
+  helper, *Restart now* and *Stop* go through `serviceControl` instead of exiting/relaunching; a busy port
+  at start-up is `exit 1` so systemd retries; the browser never opens by itself. `runAsDesktopUser(cmd)` sets credentials + session env
   (from `/proc/<pid>/environ`) for `xdg-open`/`notify-send`, and `spawnTrayHelper` runs a copy of
   the binary with `--tray-helper` (URL over stdin, "ready|notray|quit" over stdout) to show the icon.
 - **tools/genicon/** — generates `web/static/icon.{ico,png}` from the hexagon design. `versioninfo.json`

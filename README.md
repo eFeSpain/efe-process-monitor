@@ -188,6 +188,28 @@ GOOS=darwin CGO_ENABLED=0 go build -o efemon .   # cross-compile for macOS
   "not available on this OS" instead of passing them, which is honest but still
   means you'd be using a security tool with holes in it. Untested and unsupported.
 
+### Run at boot (Linux)
+
+```bash
+sudo efemon --install-service      # copies the binary to /opt/efemon, writes and starts efemon.service
+sudo efemon --service-status       # installed=true active=true path=/opt/efemon/efemon
+sudo efemon --uninstall-service    # stops and removes the unit; /opt/efemon (database, .env) is kept
+```
+
+The persistence the audit looks for runs at boot, so the monitor should too.
+Installed as a **systemd service** it is watching before anyone logs in; when
+you log in, the tray icon, the notifications and *Open panel* attach to your
+session (and re-attach after a logout/login). The same can be done from
+**⚙ Settings → Run at boot** when running elevated. Your existing `.env`,
+database and TLS pair move to `/opt/efemon` with the install — a root service
+must not start from a user-writable directory, which is exactly what the audit
+would flag. The browser never opens by itself in service mode: use the tray
+icon, or `sudo efemon` (a plain `efemon` cannot read the root-owned token and
+lands on the gate page, which says so). *Quit* from the tray stops the service
+until the next boot. Requires systemd; Windows is not covered yet.
+
+Other flags: `--version`, `--no-browser` (start without opening the dashboard).
+
 ### API keys (optional)
 
 VirusTotal, AbuseIPDB and ThreatFox lookups need free keys — add them in

@@ -6,6 +6,21 @@ Versions follow [Semantic Versioning](https://semver.org/).
 
 ---
 
+## [Unreleased]
+
+### Added
+- **Run at boot on Linux.** `sudo efemon --install-service` copies the binary
+  to `/opt/efemon`, moves the existing `.env`, database and TLS pair there and
+  enables a systemd unit; `--uninstall-service` removes it (the data stays);
+  `--service-status` reports it. The same from **⚙ Settings → Run at boot**
+  when elevated. As a service the monitor is watching before anyone logs in
+  and the tray icon, notifications and *Open panel* attach to the desktop
+  session when it appears — and again after a logout/login. *Quit* from the
+  tray and *Stop* in the panel stop the unit until the next boot; *Restart
+  now* restarts it. The persistence the audit looks for runs at boot; now the
+  monitor does too.
+- `--version` and `--no-browser`.
+
 ## [0.4.1] — 2026-11-08
 
 ### Added

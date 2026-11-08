@@ -199,6 +199,29 @@ GOOS=darwin CGO_ENABLED=0 go build -o efemon .   # compilar para macOS
   en lugar de darlas por buenas, que es honesto pero sigue significando que
   usarías una herramienta de seguridad con agujeros. Sin probar y sin soporte.
 
+### Arranque con el sistema (Linux)
+
+```bash
+sudo efemon --install-service      # copia el binario a /opt/efemon, escribe y arranca efemon.service
+sudo efemon --service-status       # installed=true active=true path=/opt/efemon/efemon
+sudo efemon --uninstall-service    # para y elimina la unidad; /opt/efemon (base de datos, .env) se conserva
+```
+
+La persistencia que busca la auditoría se ejecuta al arrancar, así que el
+monitor también debería. Instalado como **servicio systemd** vigila antes de que
+nadie inicie sesión; al iniciarla, el icono de bandeja, las notificaciones y
+*Abrir panel* se enganchan a tu sesión (y se vuelven a enganchar tras cerrar y
+abrir sesión). Lo mismo se puede hacer desde **⚙ Ajustes → Arranque con el
+sistema** si corre elevado. Tu `.env`, la base de datos y el par TLS se mueven a
+`/opt/efemon` con la instalación — un servicio root no debe arrancar desde un
+directorio escribible por el usuario, que es justo lo que la auditoría
+señalaría. El navegador nunca se abre solo en modo servicio: usa el icono de
+bandeja o `sudo efemon` (un `efemon` a secas no puede leer el token, que es de
+root, y cae en la página del candado, que lo explica). *Detener* desde la bandeja
+para el servicio hasta el próximo arranque. Requiere systemd; Windows aún no.
+
+Otros flags: `--version`, `--no-browser` (arrancar sin abrir el panel).
+
 ### Claves de API (opcional)
 
 Las consultas a VirusTotal, AbuseIPDB y ThreatFox necesitan claves gratuitas —
