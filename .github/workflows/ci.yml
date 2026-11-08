@@ -49,6 +49,9 @@ jobs:
       #   proc.go    the single exec wrapper every subprocess goes through; all
       #              call sites use a fixed binary name and validated args, and
       #              nothing runs via a shell → G204, G702.
+      #   service_linux.go  copies the binary to /opt/efemon and moves a fixed list
+      #              of basenames there; the only external path (EFEMON_MIGRATE_FROM)
+      #              is one installService itself wrote into a root-owned unit → G304, G703.
       #   tools/     build-time asset generators, not part of the shipped binary.
       # G101 is excluded globally: it is a lexical match on identifiers such as
       # auth_* / login_* / token in the translation maps, not a credential.
@@ -59,7 +62,7 @@ jobs:
             -exclude-generated
             -severity medium
             -exclude=G101
-            -exclude-rules=audit\.go:G304,G703;lan\.go:G304;proc\.go:G204,G702;tools/.*:G115,G304,G306
+            -exclude-rules=audit\.go:G304,G703;lan\.go:G304;proc\.go:G204,G702;service_linux\.go:G304,G703;tools/.*:G115,G304,G306
             ./...
 
       # govulncheck: known vulnerabilities reachable from this code, including the

@@ -149,7 +149,8 @@ func main() {
 	// it means launching the binary from inside some other project makes us read
 	// *and rewrite* that project's .env — writing AUTH_HASH and API keys into it.
 	appDir = exeDir()
-	initLogging() // before anything that logs, so the banner lands in the file too
+	initLogging()         // before anything that logs, so the banner lands in the file too
+	runServiceMigration() // service: finish an install started from the UI (see service_linux.go)
 	ensureSbinPath()
 	envPath = filepath.Join(appDir, ".env")
 	candidates := []string{envPath}

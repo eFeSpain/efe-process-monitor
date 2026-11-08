@@ -90,3 +90,12 @@ func TestCopyExecutableSameFileIsNoop(t *testing.T) {
 		t.Error("copy content differs")
 	}
 }
+
+// `systemctl is-active` prints one word; only "active" means running.
+func TestParseIsActive(t *testing.T) {
+	for out, want := range map[string]bool{"active\n": true, "inactive\n": false, "failed": false, "": false, "activating\n": false} {
+		if got := parseIsActive(out); got != want {
+			t.Errorf("parseIsActive(%q) = %v, want %v", out, got, want)
+		}
+	}
+}

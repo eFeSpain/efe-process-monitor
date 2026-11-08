@@ -3,8 +3,10 @@
 package main
 
 import (
+	"errors"
 	"fmt"
 	"io"
+	"log"
 	"os"
 	"path/filepath"
 	"strings"
@@ -114,12 +116,12 @@ func copyExecutable(src, dst string) error {
 }
 
 func copyFile(src, dst string, mode os.FileMode) error {
-	in, err := os.Open(src) // #nosec G304 -- src is os.Executable() or a fixed basename under appDir
+	in, err := os.Open(src)
 	if err != nil {
 		return err
 	}
 	defer in.Close()
-	out, err := os.OpenFile(dst, os.O_CREATE|os.O_TRUNC|os.O_WRONLY, mode) // #nosec G304 -- dst is under /opt/efemon
+	out, err := os.OpenFile(dst, os.O_CREATE|os.O_TRUNC|os.O_WRONLY, mode)
 	if err != nil {
 		return err
 	}
@@ -131,4 +133,140 @@ func copyFile(src, dst string, mode os.FileMode) error {
 		return err
 	}
 	return os.Chmod(dst, mode)
+}
+
+const (
+	serviceDir = "/opt/efemon"
+	serviceExe = serviceDir + "/efemon"
+	unitName   = "efemon.service"
+	unitPath   = "/etc/systemd/system/" + unitName
+)
+
+// systemctl runs one systemctl command; the combined output rides in the error
+// so the operator reads systemd's own words in the UI or the terminal.
+func systemctl(args ...string) (string, error) {
+	out, err := command("systemctl", args...).CombinedOutput()
+	if err != nil {
+		return string(out), fmt.Errorf("systemctl %s: %w: %s", strings.Join(args, " "), err, strings.TrimSpace(string(out)))
+	}
+	return string(out), nil
+}
+
+func parseIsActive(out string) bool { return strings.TrimSpace(out) == "active" }
+
+func requireServiceTools() error {
+	if os.Geteuid() != 0 {
+		return errors.New("requires root")
+	}
+	if !hasCmd("systemctl") {
+		return errors.New("this system does not use systemd; run efemon from your session start-up instead")
+	}
+	return nil
+}
+
+// installService copies the binary to /opt/efemon, writes and enables the
+// unit. fromUI is the two-step path: the calling instance still holds the DB
+// and the port, so the data migration is deferred to the service's first start
+// (unitFile's Environment line) and the unit is enabled but not started — the
+// caller starts it right before exiting (handleService).
+func installService(fromUI bool) error {
+	if err := requireServiceTools(); err != nil {
+		return err
+	}
+	exe, err := os.Executable()
+	if err != nil {
+		return err
+	}
+	if err := os.MkdirAll(serviceDir, 0o700); err != nil {
+		return err
+	}
+	if err := copyExecutable(exe, serviceExe); err != nil {
+		return fmt.Errorf("copy to %s: %w", serviceExe, err)
+	}
+	log.Printf("[service] binario instalado en %s", serviceExe)
+	src, migrateFrom := filepath.Dir(exe), ""
+	switch {
+	case src == serviceDir:
+	case fromUI:
+		migrateFrom = src // moved by the service on its first start
+	default:
+		moved, err := migrateData(src, serviceDir)
+		if err != nil {
+			return fmt.Errorf("migrate data: %w", err)
+		}
+		if len(moved) > 0 {
+			log.Printf("[service] datos movidos a %s: %s", serviceDir, strings.Join(moved, ", "))
+		}
+	}
+	if err := os.WriteFile(unitPath, []byte(unitFile(serviceExe, migrateFrom)), 0o644); err != nil { // #nosec G306 -- unit files are world-readable by convention
+		return err
+	}
+	if _, err := systemctl("daemon-reload"); err != nil {
+		return err
+	}
+	args := []string{"enable", "--now", unitName}
+	if fromUI {
+		args = []string{"enable", unitName}
+	}
+	if _, err := systemctl(args...); err != nil {
+		return err
+	}
+	log.Printf("[service] unidad %s escrita y habilitada", unitPath)
+	return nil
+}
+
+// uninstallService stops, disables and removes the unit. /opt/efemon is kept:
+// it holds the forensic history and the .env with the keys.
+func uninstallService() error {
+	if err := requireServiceTools(); err != nil {
+		return err
+	}
+	if _, err := systemctl("disable", "--now", unitName); err != nil && !strings.Contains(err.Error(), "not loaded") &&
+		!strings.Contains(err.Error(), "does not exist") {
+		return err
+	}
+	if err := os.Remove(unitPath); err != nil && !os.IsNotExist(err) {
+		return err
+	}
+	_, err := systemctl("daemon-reload")
+	log.Printf("[service] unidad %s eliminada; %s se conserva", unitPath, serviceDir)
+	return err
+}
+
+func serviceStatus() ServiceStatus {
+	st := ServiceStatus{Supported: true, Mode: "manual", Path: serviceExe, Elevated: elevated}
+	if serviceMode {
+		st.Mode = "service"
+	}
+	if _, err := os.Stat(unitPath); err == nil {
+		st.Installed = true
+		out, _ := systemctl("is-active", unitName)
+		st.Active = parseIsActive(out)
+	}
+	return st
+}
+
+// runServiceMigration completes an install started from the UI: the unit
+// carries EFEMON_MIGRATE_FROM, nobody holds the files any more, so they are
+// moved now and the line is removed from the unit. A missing source or a
+// target that already has data is skipped silently.
+func runServiceMigration() {
+	src := os.Getenv(migrateEnv)
+	if src == "" {
+		return
+	}
+	moved, err := migrateData(src, serviceDir)
+	if err != nil {
+		log.Printf("[service] migración desde %s incompleta: %v", src, err)
+	}
+	if len(moved) > 0 {
+		log.Printf("[service] datos movidos desde %s: %s", src, strings.Join(moved, ", "))
+	}
+	if err := os.WriteFile(unitPath, []byte(unitFile(serviceExe, "")), 0o644); err != nil { // #nosec G306 -- unit file
+		log.Printf("[service] no se pudo reescribir la unidad: %v", err)
+		return
+	}
+	if _, err := systemctl("daemon-reload"); err != nil {
+		log.Printf("[service] %v", err)
+	}
 }

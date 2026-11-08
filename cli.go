@@ -3,6 +3,7 @@ package main
 import (
 	"flag"
 	"fmt"
+	"os"
 	"strings"
 )
 
@@ -24,6 +25,17 @@ type options struct {
 // hand without --service still behaves as a service). noBrowser is --no-browser
 // or service mode.
 var serviceMode, noBrowser bool
+
+// ServiceStatus is what /api/service and --service-status report. Declared here,
+// not in the platform files, so both of them fill the same shape.
+type ServiceStatus struct {
+	Supported bool   `json:"supported"`
+	Installed bool   `json:"installed"`
+	Active    bool   `json:"active"`
+	Mode      string `json:"mode"` // "service" or "manual"
+	Path      string `json:"path"`
+	Elevated  bool   `json:"elevated"`
+}
 
 // parseArgs parses the arguments after the program name. An unknown flag, or
 // install and uninstall together, is an error whose text starts with "usage:".
@@ -66,5 +78,37 @@ func usage() string {
 
 // runServiceCommand runs --install-service / --uninstall-service /
 // --service-status and exits; it returns false when none of them was asked.
-// Filled in with the service implementation.
-func runServiceCommand(o options) bool { return false }
+// It runs before the log file, the DB or the listener exist: these commands
+// act on the installation, not on a running monitor.
+func runServiceCommand(o options) bool {
+	switch {
+	case o.Install:
+		if err := installService(false); err != nil {
+			fmt.Fprintln(os.Stderr, "install failed:", err)
+			os.Exit(1)
+		}
+		fmt.Println("efemon installed and started as a systemd service (efemon.service); data in /opt/efemon.")
+		fmt.Println("The tray icon appears when a desktop session is logged in. Remove with: efemon --uninstall-service")
+	case o.Uninstall:
+		if err := uninstallService(); err != nil {
+			fmt.Fprintln(os.Stderr, "uninstall failed:", err)
+			os.Exit(1)
+		}
+		fmt.Println("efemon.service removed. /opt/efemon (database, .env with your keys) is kept;")
+		fmt.Println("to delete it as well: rm -rf /opt/efemon")
+	case o.Status:
+		st := serviceStatus()
+		if !st.Supported {
+			fmt.Println("not supported on this OS")
+			os.Exit(1)
+		}
+		fmt.Printf("installed=%t active=%t path=%s\n", st.Installed, st.Active, st.Path)
+		if !(st.Installed && st.Active) {
+			os.Exit(1)
+		}
+	default:
+		return false
+	}
+	os.Exit(0)
+	return true
+}

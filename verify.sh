@@ -60,7 +60,7 @@ step "gosec"
 if tool gosec github.com/securego/gosec/v2/cmd/gosec@latest; then
   if "$(go env GOPATH)/bin/gosec" -quiet -exclude-generated -severity medium \
       -exclude=G101 \
-      '-exclude-rules=audit\.go:G304,G703;lan\.go:G304;proc\.go:G204,G702;tools/.*:G115,G304,G306' \
+      '-exclude-rules=audit\.go:G304,G703;lan\.go:G304;proc\.go:G204,G702;service_linux\.go:G304,G703;tools/.*:G115,G304,G306' \
       ./...; then ok; else bad; fi
 fi
 
