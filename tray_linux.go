@@ -7,6 +7,7 @@ import (
 	"log"
 	"net"
 	"os"
+	"time"
 
 	"fyne.io/systray"
 	"github.com/godbus/dbus/v5"
@@ -57,18 +58,44 @@ func runApp(ln net.Listener, url string) {
 	// Decide the tray before starting the server, so noTrayMode is set before
 	// the first HTTP request arrives.
 	viaHelper := false
-	if os.Geteuid() == 0 {
+	switch {
+	case serviceMode && os.Geteuid() == 0:
+		// A service starts before anyone logs in: the watcher attaches the
+		// tray helper to the session when it appears, and again after a
+		// logout/login (see sessionWatcher).
+		watcher = &sessionWatcher{
+			interval: 5 * time.Second,
+			probe: func() *desktopSession {
+				for _, uid := range desktopUserCandidates(os.Getenv, runUsers()) {
+					if s := sessionFor(uid); s != nil {
+						return s
+					}
+				}
+				return nil
+			},
+			spawn: func(s *desktopSession) (<-chan struct{}, bool) {
+				return spawnTrayHelper(tokenURL(url, localToken), s)
+			},
+			onAttach: func(s *desktopSession) {
+				log.Printf("[tray] icono mostrado en la sesión de %s (uid=%d)", s.name, s.uid)
+			},
+			onDetach: func(s *desktopSession) {
+				log.Printf("[tray] sesión de %s cerrada; esperando otra", s.name)
+			},
+		}
+		viaHelper = true
+	case os.Geteuid() == 0:
 		// Root cannot join the user's session bus (see desktop_linux.go): the
 		// icon is shown by a helper copy running as the logged-in user.
 		if s := desktopUser(); s == nil {
 			noTrayMode, noTrayRoot = true, true
-		} else if spawnTrayHelper(tokenURL(url, localToken), s) {
+		} else if _, ok := spawnTrayHelper(tokenURL(url, localToken), s); ok {
 			viaHelper = true
 			log.Printf("[tray] icono mostrado en la sesión de %s (uid=%d)", s.name, s.uid)
 		} else {
 			noTrayMode = true
 		}
-	} else if !hasTraySupport() {
+	case !hasTraySupport():
 		noTrayMode = true
 	}
 
@@ -78,6 +105,9 @@ func runApp(ln net.Listener, url string) {
 		}
 	}()
 
+	if watcher != nil {
+		go watcher.run(make(chan struct{}))
+	}
 	if viaHelper {
 		select {} // the helper relays Quit; the server runs in the goroutine above
 	}
@@ -93,12 +123,13 @@ func runApp(ln net.Listener, url string) {
 		select {} // block; server runs in the goroutine above
 	}
 
-	runTray(func() { openDashboard(url) }, func() {})
+	runTray(func() { openDashboard(url) }, func() {}, false)
 }
 
 // runTray shows the icon and blocks. open runs on "Open panel"; quit runs on
-// "Quit", right before the process exits.
-func runTray(open, quit func()) {
+// "Quit", right before the process exits. service changes the Quit label: a
+// service stopped from the tray comes back at the next boot.
+func runTray(open, quit func(), service bool) {
 	systray.Run(func() {
 		systray.SetIcon(trayIcon)
 		systray.SetTitle("eFe Process Monitor")
@@ -106,7 +137,11 @@ func runTray(open, quit func()) {
 
 		mOpen := systray.AddMenuItem("Abrir panel / Open", "Abrir el panel en el navegador")
 		systray.AddSeparator()
-		mQuit := systray.AddMenuItem("Detener / Quit", "Detener el monitor y salir")
+		quitLabel, quitTip := "Detener / Quit", "Detener el monitor y salir"
+		if service {
+			quitLabel, quitTip = "Detener hasta el próximo arranque / Stop until next boot", "Detener el servicio; vuelve a arrancar con el sistema"
+		}
+		mQuit := systray.AddMenuItem(quitLabel, quitTip)
 
 		go func() {
 			for {

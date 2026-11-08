@@ -51,21 +51,18 @@ var (
 )
 
 // desktopUser returns the session to hand desktop work to, or nil when we are
-// not root or no session can be identified. Resolved once.
+// not root or no session can be identified. Under sudo it is resolved once; in
+// service mode it is whatever the session watcher currently holds — the
+// service starts before anyone logs in, and the user may log out and in again.
 func desktopUser() *desktopSession {
+	if serviceMode && watcher != nil {
+		return watcher.session()
+	}
 	desktopOnce.Do(func() {
 		if os.Geteuid() != 0 {
 			return
 		}
-		var runUsers []string
-		if ents, err := os.ReadDir("/run/user"); err == nil {
-			for _, e := range ents {
-				if _, err := os.Stat(filepath.Join("/run/user", e.Name(), "bus")); err == nil {
-					runUsers = append(runUsers, e.Name())
-				}
-			}
-		}
-		for _, uid := range desktopUserCandidates(os.Getenv, runUsers) {
+		for _, uid := range desktopUserCandidates(os.Getenv, runUsers()) {
 			if s := sessionFor(uid); s != nil {
 				desktopSess = s
 				return
@@ -73,6 +70,101 @@ func desktopUser() *desktopSession {
 		}
 	})
 	return desktopSess
+}
+
+// runUsers lists the uids with a session bus under /run/user.
+func runUsers() []string {
+	var out []string
+	if ents, err := os.ReadDir("/run/user"); err == nil {
+		for _, e := range ents {
+			if _, err := os.Stat(filepath.Join("/run/user", e.Name(), "bus")); err == nil {
+				out = append(out, e.Name())
+			}
+		}
+	}
+	return out
+}
+
+// ── Session watcher (service mode) ──────────────────────────────────────────
+//
+// A service starts at boot, before any graphical session exists, and the user
+// may log out and back in while it runs. The watcher polls for a session and
+// spawns the tray helper when one appears: one helper per session, never two;
+// when the helper exits (logout) it waits for the next session. A desktop that
+// answers "notray" (GNOME without the extension) is remembered for as long as
+// that session lasts, so the helper is not forked again every tick.
+
+type sessionWatcher struct {
+	mu       sync.Mutex
+	current  *desktopSession
+	done     <-chan struct{} // closes when the current helper exits
+	notray   map[uint32]bool // uids whose session has no tray host
+	probe    func() *desktopSession
+	spawn    func(*desktopSession) (done <-chan struct{}, ok bool)
+	interval time.Duration
+	onAttach func(*desktopSession)
+	onDetach func(*desktopSession)
+}
+
+// watcher is the service-mode watcher; nil under sudo.
+var watcher *sessionWatcher
+
+// tick is one poll step.
+func (w *sessionWatcher) tick() {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	if w.current != nil {
+		select {
+		case <-w.done: // the helper is gone: the session ended (or it was killed)
+			s := w.current
+			w.current, w.done = nil, nil
+			if w.onDetach != nil {
+				w.onDetach(s)
+			}
+		default:
+		}
+		return
+	}
+	s := w.probe()
+	if s == nil {
+		w.notray = nil // no session: forget what the last one could not show
+		return
+	}
+	if w.notray[s.uid] {
+		return
+	}
+	done, ok := w.spawn(s)
+	if !ok {
+		if w.notray == nil {
+			w.notray = map[uint32]bool{}
+		}
+		w.notray[s.uid] = true
+		return
+	}
+	w.current, w.done = s, done
+	if w.onAttach != nil {
+		w.onAttach(s)
+	}
+}
+
+// run polls until stop closes.
+func (w *sessionWatcher) run(stop <-chan struct{}) {
+	t := time.NewTicker(w.interval)
+	defer t.Stop()
+	for {
+		select {
+		case <-stop:
+			return
+		case <-t.C:
+			w.tick()
+		}
+	}
+}
+
+func (w *sessionWatcher) session() *desktopSession {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	return w.current
 }
 
 // desktopUserCandidates lists the uids to try, in order. Pure, so the choice is
@@ -196,18 +288,7 @@ func hasKey(env []string, key string) bool {
 // runAsDesktopUser makes cmd run with the logged-in user's credentials and
 // session environment when we are root and that user is known. Returns
 // whether it did; otherwise cmd is left to run as we are.
-func runAsDesktopUser(cmd *exec.Cmd) bool {
-	s := desktopUser()
-	if s == nil {
-		return false
-	}
-	if cmd.SysProcAttr == nil {
-		cmd.SysProcAttr = &syscall.SysProcAttr{}
-	}
-	cmd.SysProcAttr.Credential = &syscall.Credential{Uid: s.uid, Gid: s.gid, NoSetGroups: true}
-	cmd.Env = s.env
-	return true
-}
+func runAsDesktopUser(cmd *exec.Cmd) bool { return runAsDesktopUserSession(cmd, desktopUser()) }
 
 // ── Tray helper ──────────────────────────────────────────────────────────────
 
@@ -232,43 +313,52 @@ func trayHelperMain() bool {
 		return true
 	}
 	fmt.Println("ready")
-	runTray(func() { openBrowser(url) }, func() { fmt.Println("quit") })
+	// The helper has a clean environment: whether the parent is a service
+	// travels as a second argument, and only changes the Quit label.
+	runTray(func() { openBrowser(url) }, func() { fmt.Println("quit") }, len(os.Args) > 2 && os.Args[2] == "service")
 	return true
 }
 
 // spawnTrayHelper starts the helper as the desktop user and waits for it to
-// report. Returns true when the icon is up; false means "no tray on this
-// desktop" or the helper could not run, and the caller falls back to headless.
-func spawnTrayHelper(url string, s *desktopSession) bool {
+// report. ok is true when the icon is up and done closes when the helper exits
+// (logout, or killed); ok false means "no tray on this desktop" or the helper
+// could not run, and the caller falls back to headless.
+func spawnTrayHelper(url string, s *desktopSession) (done <-chan struct{}, ok bool) {
 	exe, err := os.Executable()
 	if err != nil {
-		return false
+		return nil, false
 	}
-	cmd := command(exe, trayHelperFlag)
-	if !runAsDesktopUser(cmd) {
-		return false
+	args := []string{trayHelperFlag}
+	if serviceMode {
+		args = append(args, "service")
+	}
+	cmd := command(exe, args...)
+	if !runAsDesktopUserSession(cmd, s) {
+		return nil, false
 	}
 	// Die with the parent: an orphaned icon pointing at a dead server is worse
 	// than no icon.
 	cmd.SysProcAttr.Pdeathsig = syscall.SIGTERM
 	stdin, err := cmd.StdinPipe()
 	if err != nil {
-		return false
+		return nil, false
 	}
 	stdout, err := cmd.StdoutPipe()
 	if err != nil {
-		return false
+		return nil, false
 	}
 	cmd.Stderr = os.Stderr
 	if err := cmd.Start(); err != nil {
 		log.Printf("[tray] no se pudo lanzar el helper como %s: %v", s.name, err)
-		return false
+		return nil, false
 	}
 	fmt.Fprintln(stdin, url)
 	stdin.Close()
 
 	first := make(chan string, 1)
+	exited := make(chan struct{})
 	go func() {
+		defer close(exited)
 		sc := bufio.NewScanner(stdout)
 		for sc.Scan() {
 			l := strings.TrimSpace(sc.Text())
@@ -278,6 +368,14 @@ func spawnTrayHelper(url string, s *desktopSession) bool {
 			}
 			if l == "quit" {
 				log.Println("[tray] detenido desde el icono de bandeja")
+				if serviceMode {
+					// Stop the unit rather than just exiting: systemd would
+					// otherwise see a clean exit and leave it stopped only
+					// until the next failure-less restart — stop is explicit.
+					if err := serviceControl("stop"); err != nil {
+						log.Printf("[service] %v", err)
+					}
+				}
 				os.Exit(0)
 			}
 		}
@@ -286,9 +384,24 @@ func spawnTrayHelper(url string, s *desktopSession) bool {
 	}()
 	select {
 	case l := <-first:
-		return l == "ready"
+		return exited, l == "ready"
 	case <-time.After(5 * time.Second):
 		log.Println("[tray] el helper de bandeja no respondió")
+		return nil, false
+	}
+}
+
+// runAsDesktopUserSession is runAsDesktopUser for an explicit session: the
+// watcher spawns the helper for the session it just found, which is not yet
+// the current one.
+func runAsDesktopUserSession(cmd *exec.Cmd, s *desktopSession) bool {
+	if s == nil {
 		return false
 	}
+	if cmd.SysProcAttr == nil {
+		cmd.SysProcAttr = &syscall.SysProcAttr{}
+	}
+	cmd.SysProcAttr.Credential = &syscall.Credential{Uid: s.uid, Gid: s.gid, NoSetGroups: true}
+	cmd.Env = s.env
+	return true
 }

@@ -270,3 +270,15 @@ func runServiceMigration() {
 		log.Printf("[service] %v", err)
 	}
 }
+
+// serviceControl is stop / restart / start of the unit, for the paths that
+// used to exit or relaunch the process directly (tray Quit, Restart now, Stop).
+func serviceControl(action string) error {
+	switch action {
+	case "stop", "restart", "start":
+	default:
+		return fmt.Errorf("unsupported service action %q", action)
+	}
+	_, err := systemctl(action, unitName)
+	return err
+}

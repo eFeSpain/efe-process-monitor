@@ -9,3 +9,4 @@ import "os/exec"
 
 func runAsDesktopUser(cmd *exec.Cmd) bool { return false }
 func trayHelperMain() bool                { return false }
+func desktopSessionName() string          { return "" }

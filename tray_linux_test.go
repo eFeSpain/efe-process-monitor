@@ -58,3 +58,63 @@ func TestSessionEnvFrom(t *testing.T) {
 		t.Errorf("expected exactly 5 variables, got %d: %v", len(got), got)
 	}
 }
+
+// In service mode nobody launched us from a session: the watcher polls for one
+// and spawns the tray helper when it appears, exactly once per session, and
+// again after the helper dies (logout → login).
+func TestSessionWatcherAttachesDetachesOnce(t *testing.T) {
+	sess := &desktopSession{uid: 1000, name: "efe"}
+	var cur *desktopSession
+	var spawns int
+	done := make(chan struct{})
+	w := &sessionWatcher{
+		probe: func() *desktopSession { return cur },
+		spawn: func(s *desktopSession) (<-chan struct{}, bool) { spawns++; return done, true },
+	}
+	w.tick()
+	if spawns != 0 || w.session() != nil {
+		t.Fatal("no session: nothing to spawn")
+	}
+	cur = sess
+	w.tick()
+	w.tick()
+	w.tick()
+	if spawns != 1 || w.session() != sess {
+		t.Fatalf("one session → exactly one helper, got %d (current=%v)", spawns, w.session())
+	}
+	close(done) // logout: helper exits
+	w.tick()
+	if w.session() != nil {
+		t.Fatal("helper gone → no current session")
+	}
+	done = make(chan struct{})
+	w.tick()
+	if spawns != 2 {
+		t.Fatalf("session still there after a detach → respawn, got %d spawns", spawns)
+	}
+}
+
+// A desktop without a tray host (GNOME without the extension) answers "notray";
+// retrying it every tick would fork a helper every five seconds forever.
+func TestSessionWatcherRemembersNoTray(t *testing.T) {
+	sess := &desktopSession{uid: 1000, name: "efe"}
+	cur := sess
+	var spawns int
+	w := &sessionWatcher{
+		probe: func() *desktopSession { return cur },
+		spawn: func(s *desktopSession) (<-chan struct{}, bool) { spawns++; return nil, false },
+	}
+	for i := 0; i < 5; i++ {
+		w.tick()
+	}
+	if spawns != 1 {
+		t.Fatalf("a notray session must not be retried every tick, got %d spawns", spawns)
+	}
+	cur = nil
+	w.tick()
+	cur = sess
+	w.tick()
+	if spawns != 2 {
+		t.Fatalf("the session went away and came back → try again once, got %d", spawns)
+	}
+}
