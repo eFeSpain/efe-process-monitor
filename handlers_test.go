@@ -240,3 +240,28 @@ func TestGatePageMentionsServiceHint(t *testing.T) {
 		}
 	}
 }
+
+// /api/service: status for anyone with a session; install/uninstall only when
+// elevated, and nothing but those two actions. The deferred install/uninstall
+// path exits the process, so it is exercised by the manual checks, not here.
+func TestServiceEndpointGuards(t *testing.T) {
+	old := elevated
+	elevated = false
+	t.Cleanup(func() { elevated = old })
+	w := httptest.NewRecorder()
+	handleService(w, httptest.NewRequest(http.MethodGet, "/api/service", nil))
+	var st ServiceStatus
+	if err := json.Unmarshal(w.Body.Bytes(), &st); err != nil || st.Elevated {
+		t.Fatalf("GET: %v %+v", err, st)
+	}
+	if w := jsonPost(handleService, "/api/service", `{"action":"install"}`); w.Code != http.StatusForbidden {
+		t.Errorf("install without root: %d, want 403", w.Code)
+	}
+	elevated = true
+	if w := jsonPost(handleService, "/api/service", `{"action":"explode"}`); w.Code != http.StatusBadRequest {
+		t.Errorf("unknown action: %d, want 400", w.Code)
+	}
+	if w := jsonPost(handleService, "/api/service", `{"action":`); w.Code != http.StatusBadRequest {
+		t.Errorf("bad body: %d, want 400", w.Code)
+	}
+}

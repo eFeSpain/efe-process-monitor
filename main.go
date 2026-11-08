@@ -224,6 +224,7 @@ func main() {
 	http.HandleFunc("/api/shutdown", handleShutdown)
 	http.HandleFunc("/api/score_history", handleScoreHistory)
 	http.HandleFunc("/api/feeds", handleFeeds)
+	http.HandleFunc("/api/service", handleService)
 	http.HandleFunc("/logs.txt", handleLogs)
 	http.HandleFunc("/api/audit", handleAudit)
 	http.HandleFunc("/audit.json", handleAuditJSON)
@@ -732,6 +733,64 @@ func handleScoreHistory(w http.ResponseWriter, r *http.Request) {
 // the privacy modal shows next to each source.
 func handleFeeds(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, feedStatuses(langFrom(r)))
+}
+
+// handleService reports the systemd service state (GET) and installs or
+// removes it (POST). The action itself runs ~400 ms after the response, like
+// Restart now: installing from a manual instance ends with that instance
+// handing the port to the service, and uninstalling from the service kills
+// the very process that is answering — either way the reply must leave first.
+func handleService(w http.ResponseWriter, r *http.Request) {
+	if !requireMethod(w, r, http.MethodGet, http.MethodPost) {
+		return
+	}
+	if r.Method == http.MethodGet {
+		writeJSON(w, serviceStatus())
+		return
+	}
+	var body struct{ Action string }
+	if !decodeJSON(w, r, &body) {
+		return
+	}
+	if body.Action != "install" && body.Action != "uninstall" {
+		http.Error(w, `{"ok":false,"error":"unknown action"}`, http.StatusBadRequest)
+		return
+	}
+	if !serviceStatus().Supported {
+		http.Error(w, `{"ok":false,"error":"not supported on this OS"}`, http.StatusBadRequest)
+		return
+	}
+	if !elevated {
+		http.Error(w, `{"ok":false,"error":"requires root"}`, http.StatusForbidden)
+		return
+	}
+	log.Printf("SERVICE %s by operator", body.Action)
+	writeJSON(w, map[string]any{"ok": true})
+	go func() {
+		time.Sleep(400 * time.Millisecond) // let the response flush
+		if body.Action == "uninstall" {
+			if err := uninstallService(); err != nil {
+				log.Printf("[service] uninstall: %v", err)
+			}
+			return
+		}
+		// Two-step install (see service_linux.go): write and enable the unit
+		// while this instance still holds the DB and the port, then close the
+		// DB, start the unit and get out of its way. The data moves on the
+		// service's first start.
+		if err := installService(true); err != nil {
+			log.Printf("[service] install: %v", err)
+			return
+		}
+		if db != nil {
+			db.Close()
+		}
+		if err := serviceControl("start"); err != nil {
+			log.Printf("[service] start: %v", err)
+		}
+		log.Println("[service] instalado; esta instancia sale para dejar el puerto al servicio")
+		os.Exit(0)
+	}()
 }
 
 // handleLogs serves the tail of the log. It's the only way to read the operator
