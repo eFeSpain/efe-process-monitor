@@ -137,9 +137,7 @@ func main() {
 	if runServiceCommand(opts) {
 		return
 	}
-	// systemd sets INVOCATION_ID for every unit it starts: a unit written by
-	// hand without --service still runs as a service.
-	serviceMode = opts.Service || os.Getenv("INVOCATION_ID") != ""
+	serviceMode = inferServiceMode(opts.Service, os.Getenv("INVOCATION_ID"), os.Getppid())
 	noBrowser = opts.NoBrowser || serviceMode
 	// DB and .env live next to the executable, so the app behaves the same
 	// wherever it's launched from.

@@ -20,11 +20,19 @@ type options struct {
 	Status    bool // print the service status and exit
 }
 
-// serviceMode is set by main from --service, or from the INVOCATION_ID that
-// systemd puts in the environment of every unit it starts (a unit edited by
-// hand without --service still behaves as a service). noBrowser is --no-browser
-// or service mode.
+// serviceMode is set by main through inferServiceMode; noBrowser is
+// --no-browser or service mode.
 var serviceMode, noBrowser bool
+
+// inferServiceMode decides whether this process is the systemd service: the
+// --service flag, or started by systemd itself (INVOCATION_ID set) *as a
+// direct child of PID 1*. The variable alone is not enough: systemd also
+// starts the user's graphical session, so every terminal and editor under it
+// inherits INVOCATION_ID — and a user program must not go quiet (no browser,
+// Quit → systemctl stop) because of where it was launched from.
+func inferServiceMode(flag bool, invocationID string, ppid int) bool {
+	return flag || (invocationID != "" && ppid == 1)
+}
 
 // ServiceStatus is what /api/service and --service-status report. Declared here,
 // not in the platform files, so both of them fill the same shape.
