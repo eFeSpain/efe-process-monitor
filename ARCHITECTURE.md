@@ -33,7 +33,8 @@ GOOS=darwin go build -o efemon .  # macOS
 - **`efemon.db`** (SQLite) → next to the executable (`appDir` = dir of `os.Executable()`), set in `main.go`.
 - **`.env`** → next to the executable. The cwd → `../.env` fallback only exists with `EFEMON_DEV=1`
   (dev: real keys are in `../.env`). `writeEnv` saves to the one found.
-- Keys/flags in `.env`: `VT_API_KEY`, `ABUSEIPDB_API_KEY`, `NOTIFY_DESKTOP`, `NOTIFY_SOUND`,
+- Keys/flags in `.env`: `VT_API_KEY`, `ABUSEIPDB_API_KEY`, `ABUSECH_API_KEY` (abuse.ch Auth-Key: ThreatFox
+  moved behind one in 2025; without it the feed is off), `NOTIFY_DESKTOP`, `NOTIFY_SOUND`,
   `PERSIST_WHITELIST`, `PERSIST_BLOCKS`, `REFRESH_SECS`, `AUTH_HASH` (base64 of a bcrypt hash; "" = login off),
   `LISTEN_ADDR` ("" = `127.0.0.1:5000`), optional `LISTEN_CERT`/`LISTEN_KEY`,
   `EVENT_RETENTION_DAYS` (history pruning; default 30, 0 = keep forever).
@@ -141,10 +142,13 @@ GOOS=darwin go build -o efemon .  # macOS
   (muted, "datos incompletos") instead of a confident "limpio", so a low score never reads as "safe".
 - **intel.go** — `Enrichment`, `enrichIP` (geo ipwho.is, reverse DNS with a 3 s deadline, `vtIP`, `abuseIPDB`,
   `torExits`, `feodoC2`, `threatFoxLookup`, `spamhausHit`, `shodan`), `enrichIPCached` + `enrichQueue` (the
-  render-path side, see Runtime model), provider attenuation (`detectProvider`), `ipReport`,
-  HTTP helpers (`getJSON`/`getText`/`getZipCSV`), `vtKey`/`abuseKey`. **Keyless downloaded feeds**: ThreatFox
-  (abuse.ch zipped CSV → `ip→malware family` map) and Spamhaus DROP (`drop_v4.json` → CIDR set, matched with
-  `net.IPNet.Contains`); both cached 24h and auto-refreshed (no manual refresh — `primeIntel` warms all four at startup).
+  render-path side, see Runtime model), provider attenuation (`detectProvider`), `ipReport`, `feedStatuses`
+  (what `/api/feeds`, the privacy modal and the banner show: every feed carries a `feedMeta` — last success,
+  last attempt, count, `gone` on a 410, last error — so a dead or keyless feed never reads as "no signals"),
+  HTTP helpers (`getJSON`/`getText`/`postRaw`, non-200 → `httpStatusError`), `vtKey`/`abuseKey`/`abusechKey`.
+  **Downloaded feeds**: ThreatFox (abuse.ch **API** `get_iocs`, Auth-Key required, last 7 days → `ip→malware
+  family` map), Spamhaus DROP (`drop_v4.json` → CIDR set, matched with `net.IPNet.Contains`), Tor exits and
+  Feodo (keyless); all cached 24h and auto-refreshed (`primeIntel` warms all four at startup and logs their state).
 - **vt.go** — VT token bucket (`vtBucket`, 4/min shared hash+IP), background hash queue + `vtWorker`, `resolveHash`.
 - **lan.go** — `LANInfo` (DNS/NetBIOS/MAC/**Vendor**), `lanLookup` (reverse DNS + `arpMAC` from ARP table +
   `ouiVendor` from MAC + `netbiosName` via nbtstat/nmblookup), `isLAN`. `lanLookupCached` serves the cache

@@ -9,6 +9,19 @@ Versions follow [Semantic Versioning](https://semver.org/).
 ## [Unreleased]
 
 ### Security
+- **ThreatFox was silently dead — now back, through the abuse.ch API.** abuse.ch
+  withdrew every keyless export in 2025 (`410 Gone`), so the ThreatFox feed —
+  a 55-point signal, announced in the README and the privacy panel — had been
+  returning nothing while the rows read "clean", and the download was retried
+  every ten minutes. ThreatFox now uses the API with a free **abuse.ch
+  Auth-Key** (`ABUSECH_API_KEY`, or ⚙ Settings): the IOCs of the last seven
+  days, refreshed daily. Without a key the feed is off and says so.
+- **Every feed shows its state.** The privacy panel has a *Status* column and
+  the start-up log a line per feed: entries and age, *no key*, *withdrawn by
+  the provider (HTTP 410)*, or the last error — four things that used to look
+  like "no signals". A `410` stops the retries for good. The live-feed
+  reputation alert now also fires on ThreatFox and Spamhaus hits, not only
+  Feodo, Tor, VirusTotal and AbuseIPDB.
 - **CSV export neutralizes formulas.** Process names, paths and detail lines
   are attacker-influenced text, and the export is opened in Excel or
   LibreOffice; a cell starting with `= + - @` or a tab is a formula there. Such

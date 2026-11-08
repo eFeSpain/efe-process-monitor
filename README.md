@@ -184,13 +184,19 @@ GOOS=darwin CGO_ENABLED=0 go build -o efemon .   # cross-compile for macOS
 
 ### API keys (optional)
 
-VirusTotal and AbuseIPDB lookups need free API keys — add them in **⚙ Settings**
-(saved to `.env`) or create a `.env` next to the binary:
+VirusTotal, AbuseIPDB and ThreatFox lookups need free keys — add them in
+**⚙ Settings** (saved to `.env`) or create a `.env` next to the binary:
 
 ```
 VT_API_KEY=your_virustotal_key
 ABUSEIPDB_API_KEY=your_abuseipdb_key
+ABUSECH_API_KEY=your_abuse.ch_auth_key
 ```
+
+The abuse.ch Auth-Key (free, from the [abuse.ch authentication portal](https://auth.abuse.ch/))
+is what ThreatFox requires since 2025, when abuse.ch withdrew its keyless
+exports. Without it the ThreatFox feed is off — and the **🛰 Privacy** panel
+says so, next to the state of every other feed.
 
 > **The `.env` must sit next to the binary.** Earlier versions also looked in the
 > current directory and its parent, which meant launching the binary from inside
@@ -206,8 +212,8 @@ Unix file mode is ignored there. A `.env` created by hand does **not** get that
 treatment until the app next rewrites it; `icacls <file> /inheritance:r /grant:r
 "*<your-SID>:F"` applies it now.
 
-Geolocation, Tor, Feodo/ThreatFox, Spamhaus and Shodan work with **no key**.
-Without VirusTotal/AbuseIPDB keys, those two are simply skipped.
+Geolocation, Tor, Feodo, Spamhaus and Shodan work with **no key**. Without
+VirusTotal/AbuseIPDB/abuse.ch keys, those three are simply skipped.
 
 ## Access
 
@@ -238,8 +244,9 @@ and a same-origin `Origin` on every state-changing request (anti CSRF).
 
 No telemetry; everything is stored locally (`efemon.db`). To enrich data the tool
 queries external services for the IPs/hashes **you inspect**: ipwho.is, VirusTotal,
-AbuseIPDB and Shodan receive those values; the abuse.ch / Spamhaus / Tor lists are
-plain public downloads that reveal nothing about you. Results are cached so each
+AbuseIPDB and Shodan receive those values; the Feodo / Spamhaus / Tor lists are
+plain public downloads that reveal nothing about you, and the ThreatFox IOC list
+is downloaded with your abuse.ch Auth-Key and nothing else. Results are cached so each
 binary/IP is queried at most once (hourly for IPs). The machine audit runs fully
 locally, and so does the passive DNS listener: it reads DNS answers on your own
 interfaces and stores name↔address pairs in `efemon.db`; nothing is sent

@@ -2,45 +2,10 @@ package main
 
 import (
 	"net"
+	"strings"
 	"testing"
 	"time"
 )
-
-const tfFixture = `################################################################
-# ThreatFox IOCs (CSV)                                          #
-################################################################
-"2026-06-07 10:00:22", "1", "165.154.227.66:8080", "ip:port", "botnet_cc", "win.cobalt_strike", "alias", "Cobalt Strike", "", "100", "True", "None", "tag", "1", "rep"
-"2026-06-07 09:52:46", "2", "221.130.29.85:2375", "ip:port", "payload_delivery", "elf.kinsing", "h2miner", "Kinsing", "", "85", "False", "ref", "tag", "0", "rep"
-"2026-06-07 09:00:00", "3", "bad.example.com", "domain", "botnet_cc", "win.x", "a", "FamilyDomain", "", "50", "True", "None", "t", "1", "r"
-"2026-06-07 08:00:00", "4", "10.0.0.9:4444", "ip:port", "botnet_cc", "win.y", "a", "None", "", "75", "True", "None", "t", "1", "r"
-`
-
-func TestParseThreatFox(t *testing.T) {
-	m := parseThreatFox(tfFixture)
-	if len(m) != 3 { // 3 ip:port rows; the domain row is skipped
-		t.Fatalf("got %d entries, want 3: %v", len(m), m)
-	}
-	if m["165.154.227.66"] != "Cobalt Strike" {
-		t.Errorf("cobalt strike label=%q", m["165.154.227.66"])
-	}
-	if m["221.130.29.85"] != "Kinsing" {
-		t.Errorf("kinsing label=%q", m["221.130.29.85"])
-	}
-	// malware_printable "None" falls back to threat_type.
-	if m["10.0.0.9"] != "botnet_cc" {
-		t.Errorf("fallback label=%q, want botnet_cc", m["10.0.0.9"])
-	}
-	// domain IOC must not appear.
-	if _, ok := m["bad.example.com"]; ok {
-		t.Error("domain IOC leaked into ip map")
-	}
-}
-
-func TestParseThreatFoxEmpty(t *testing.T) {
-	if m := parseThreatFox("# only a comment\n"); len(m) != 0 {
-		t.Errorf("expected empty map, got %v", m)
-	}
-}
 
 const spamhausFixture = `; comment line should be ignored
 {"cidr":"1.10.16.0/20","sblid":"SBL256894","rir":"apnic"}
@@ -136,5 +101,112 @@ func TestEnrichWorkerNudgesClients(t *testing.T) {
 	}
 	if q.isPending(ip) {
 		t.Error("address still marked pending after resolution")
+	}
+}
+
+// ThreatFox moved behind an Auth-Key in 2025 and the CSV exports answer 410;
+// get_iocs is what remains: the last seven days of IOCs as JSON. Only ip:port
+// entries feed the IP map; the label is the malware family, falling back to
+// the threat type.
+const tfAPIFixture = `{"query_status":"ok","data":[
+ {"id":"1","ioc":"203.0.113.10:14642","threat_type":"botnet_cc","ioc_type":"ip:port","malware":"win.remcos","malware_printable":"Remcos","confidence_level":75},
+ {"id":"2","ioc":"bad.example.com","threat_type":"botnet_cc","ioc_type":"domain","malware_printable":"Dridex","confidence_level":50},
+ {"id":"3","ioc":"198.51.100.7:443","threat_type":"payload_delivery","ioc_type":"ip:port","malware_printable":"","confidence_level":100},
+ {"id":"4","ioc":"not-an-ip-port","threat_type":"botnet_cc","ioc_type":"ip:port","malware_printable":"X","confidence_level":50},
+ {"id":"5","ioc":"abcd","threat_type":"botnet_cc","ioc_type":"sha256_hash","malware_printable":"Y","confidence_level":50}
+]}`
+
+func TestParseThreatFoxAPI(t *testing.T) {
+	m, err := parseThreatFoxAPI(strings.NewReader(tfAPIFixture))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(m) != 2 {
+		t.Fatalf("got %d entries, want 2 (ip:port only): %v", len(m), m)
+	}
+	if m["203.0.113.10"] != "Remcos" {
+		t.Errorf("label=%q, want Remcos", m["203.0.113.10"])
+	}
+	if m["198.51.100.7"] != "payload_delivery" {
+		t.Errorf("empty malware_printable should fall back to the threat type, got %q", m["198.51.100.7"])
+	}
+	if _, ok := m["bad.example.com"]; ok {
+		t.Error("domain IOC leaked into the ip map")
+	}
+	if _, err := parseThreatFoxAPI(strings.NewReader(`{"query_status":"unknown_auth_key"}`)); err == nil {
+		t.Error("a non-ok query_status must be an error, not an empty feed")
+	}
+	if _, err := parseThreatFoxAPI(strings.NewReader(`{"query_status":"ok","data":[]}`)); err != nil {
+		t.Errorf("an empty but ok answer is not an error: %v", err)
+	}
+}
+
+// Every feed used to retry a dead endpoint every ten minutes forever, and a
+// failed download looked exactly like "nothing listed". feedMeta is the shared
+// bookkeeping: when to try again, and what to tell the operator.
+func TestFeedMetaRetryAndGone(t *testing.T) {
+	var m feedMeta
+	now := time.Now()
+	if !m.due(now) {
+		t.Error("a feed never fetched is due")
+	}
+	m.done(nil, 1200, now)
+	if m.due(now.Add(feedTTL/2)) || !m.due(now.Add(feedTTL+time.Second)) {
+		t.Error("a good fetch is reused until feedTTL and due after it")
+	}
+	t1 := now.Add(feedTTL + time.Second)
+	m.done(httpStatusError(503), 0, t1)
+	if m.due(t1.Add(feedFailTTL/2)) || !m.due(t1.Add(feedFailTTL+time.Second)) || m.gone {
+		t.Error("a transient failure backs off for feedFailTTL and is not final")
+	}
+	if m.count != 1200 {
+		t.Errorf("a failed refresh must keep the last good count, got %d", m.count)
+	}
+	m.done(httpStatusError(410), 0, t1)
+	if !m.gone || m.due(t1.Add(48*time.Hour)) {
+		t.Error("410 Gone means the endpoint no longer exists: never retry")
+	}
+	var n feedMeta
+	n.done(errNoKey, 0, now)
+	if !n.due(now.Add(time.Minute)) {
+		t.Error("a feed waiting for a key is re-checked (the key can arrive from Settings at any time)")
+	}
+}
+
+// The feed status is what the privacy modal and the banner show; a feed with
+// no key, a dead endpoint and a failing download are three different things
+// and must not read as "no signals".
+func TestFeedStatusesDistinguishCauses(t *testing.T) {
+	keysMu.Lock()
+	oldKey := abusechKey
+	abusechKey = ""
+	keysMu.Unlock()
+	t.Cleanup(func() { keysMu.Lock(); abusechKey = oldKey; keysMu.Unlock() })
+	now := time.Now()
+	torSet.mu.Lock()
+	torSet.feedMeta = feedMeta{}
+	torSet.feedMeta.done(nil, 1200, now.Add(-time.Hour))
+	torSet.mu.Unlock()
+	threatFox.mu.Lock()
+	threatFox.feedMeta = feedMeta{}
+	threatFox.feedMeta.done(errNoKey, 0, now)
+	threatFox.mu.Unlock()
+	spamhaus.mu.Lock()
+	spamhaus.feedMeta = feedMeta{}
+	spamhaus.feedMeta.done(httpStatusError(410), 0, now)
+	spamhaus.mu.Unlock()
+
+	st := map[string]FeedStatus{}
+	for _, s := range feedStatuses("en") {
+		st[s.ID] = s
+	}
+	if !st["tor"].OK || !strings.Contains(st["tor"].Status, "1200") {
+		t.Errorf("tor: %+v", st["tor"])
+	}
+	if st["threatfox"].OK || !strings.Contains(st["threatfox"].Status, strings_("en")["feed_nokey"]) {
+		t.Errorf("threatfox without key: %+v", st["threatfox"])
+	}
+	if st["spamhaus"].OK || !strings.Contains(st["spamhaus"].Status, "410") {
+		t.Errorf("spamhaus gone: %+v", st["spamhaus"])
 	}
 }

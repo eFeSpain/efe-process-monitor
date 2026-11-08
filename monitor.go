@@ -184,6 +184,12 @@ func alertOnIntel(ev Event, ip string) {
 	if e.C2 {
 		reasons = append(reasons, "C2 Feodo")
 	}
+	if e.ThreatFox != "" {
+		reasons = append(reasons, "ThreatFox: "+e.ThreatFox)
+	}
+	if e.Spamhaus {
+		reasons = append(reasons, "Spamhaus DROP")
+	}
 	if e.Tor {
 		reasons = append(reasons, "Tor exit")
 	}

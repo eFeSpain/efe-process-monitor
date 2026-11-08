@@ -146,7 +146,8 @@ select{background:#0d1117;color:#c9d1d9;border:1px solid #30363d;padding:3px 6px
 .priv-table th{color:#8b949e;border-bottom:1px solid #30363d;font-weight:600;}
 .priv-table td{border-bottom:1px solid #21262d;}
 .priv-table td:first-child{font-family:ui-monospace,monospace;color:#c9d1d9;}
-.priv-table col.c1{width:32%}.priv-table col.c2{width:38%}.priv-table col.c3{width:30%}
+.priv-table col.c1{width:24%}.priv-table col.c2{width:34%}.priv-table col.c3{width:18%}.priv-table col.c4{width:24%}
+.feed-st{color:#8b949e;font-size:11.5px;} .feed-st.feed-ok{color:#3fb950;} .feed-st.feed-bad{color:#f85149;}
 .priv-safe{color:#3fb950;}
 .aud-row{padding:8px 10px;border-left:3px solid #30363d;margin-bottom:6px;background:#0d1117;border-radius:0 4px 4px 0;}
 .aud-row .aud-h{font-size:13px;} .aud-row .aud-h .t{color:#484f58;font-size:11px;text-transform:uppercase;margin-left:6px;}
@@ -254,6 +255,8 @@ select{background:#0d1117;color:#c9d1d9;border:1px solid #30363d;padding:3px 6px
             <input type="password" id="vt-key" placeholder="VirusTotal API key">
             <label>AbuseIPDB API key <span id="abuse-status"></span></label>
             <input type="password" id="abuse-key" placeholder="AbuseIPDB API key">
+            <label>abuse.ch Auth-Key (ThreatFox) <span id="abusech-status"></span></label>
+            <input type="password" id="abusech-key" placeholder="abuse.ch Auth-Key">
             <label>{{ .T.refresh_int }}</label>
             <input type="number" id="refresh-interval" min="0" max="3600" value="0" style="width:90px">
             <div style="color:#484f58;font-size:11px;margin:-6px 0 12px;">{{ .T.refresh_int_hint }}</div>
@@ -352,16 +355,17 @@ select{background:#0d1117;color:#c9d1d9;border:1px solid #30363d;padding:3px 6px
         <div class="modal-body">
             <p style="color:#8b949e;font-size:13px;margin:0 0 14px;">{{ .T.priv_intro }}</p>
             <table class="priv-table">
-                <colgroup><col class="c1"><col class="c2"><col class="c3"></colgroup>
-                <thead><tr><th>{{ .T.priv_col_service }}</th><th>{{ .T.priv_col_sends }}</th><th>{{ .T.priv_col_when }}</th></tr></thead>
+                <colgroup><col class="c1"><col class="c2"><col class="c3"><col class="c4"></colgroup>
+                <thead><tr><th>{{ .T.priv_col_service }}</th><th>{{ .T.priv_col_sends }}</th><th>{{ .T.priv_col_when }}</th><th>{{ .T.priv_col_status }}</th></tr></thead>
                 <tbody>
-                    <tr><td>ipwho.is</td><td>{{ .T.priv_sends_ip }}</td><td>{{ .T.priv_when_always }}</td></tr>
-                    <tr><td>VirusTotal</td><td>{{ .T.priv_sends_haship }}</td><td>{{ .T.priv_when_vt }}</td></tr>
-                    <tr><td>AbuseIPDB</td><td>{{ .T.priv_sends_ip }}</td><td>{{ .T.priv_when_abuse }}</td></tr>
-                    <tr><td>Shodan InternetDB</td><td>{{ .T.priv_sends_ip }}</td><td>{{ .T.priv_when_always }}</td></tr>
-                    <tr><td>abuse.ch (Feodo, ThreatFox)</td><td class="priv-safe">{{ .T.priv_sends_nothing }}</td><td>{{ .T.priv_when_always }}</td></tr>
-                    <tr><td>Spamhaus DROP</td><td class="priv-safe">{{ .T.priv_sends_nothing }}</td><td>{{ .T.priv_when_always }}</td></tr>
-                    <tr><td>Tor Project</td><td class="priv-safe">{{ .T.priv_sends_nothing }}</td><td>{{ .T.priv_when_always }}</td></tr>
+                    <tr><td>ipwho.is</td><td>{{ .T.priv_sends_ip }}</td><td>{{ .T.priv_when_always }}</td><td class="feed-st">—</td></tr>
+                    <tr><td>VirusTotal</td><td>{{ .T.priv_sends_haship }}</td><td>{{ .T.priv_when_vt }}</td><td class="feed-st">—</td></tr>
+                    <tr><td>AbuseIPDB</td><td>{{ .T.priv_sends_ip }}</td><td>{{ .T.priv_when_abuse }}</td><td class="feed-st">—</td></tr>
+                    <tr><td>Shodan InternetDB</td><td>{{ .T.priv_sends_ip }}</td><td>{{ .T.priv_when_always }}</td><td class="feed-st">—</td></tr>
+                    <tr data-feed="feodo"><td>abuse.ch Feodo Tracker</td><td class="priv-safe">{{ .T.priv_sends_nothing }}</td><td>{{ .T.priv_when_always }}</td><td class="feed-st">…</td></tr>
+                    <tr data-feed="threatfox"><td>abuse.ch ThreatFox (API)</td><td class="priv-safe">{{ .T.priv_sends_iocs }}</td><td>{{ .T.priv_when_abusech }}</td><td class="feed-st">…</td></tr>
+                    <tr data-feed="spamhaus"><td>Spamhaus DROP</td><td class="priv-safe">{{ .T.priv_sends_nothing }}</td><td>{{ .T.priv_when_always }}</td><td class="feed-st">…</td></tr>
+                    <tr data-feed="tor"><td>Tor Project</td><td class="priv-safe">{{ .T.priv_sends_nothing }}</td><td>{{ .T.priv_when_always }}</td><td class="feed-st">…</td></tr>
                 </tbody>
             </table>
             <p style="color:#8b949e;font-size:12px;margin:14px 0 0;">{{ .T.priv_note }}</p>
@@ -536,6 +540,7 @@ function openSettings() {
     document.getElementById('settings-modal').style.display = 'flex';
     document.getElementById('vt-key').value = '';
     document.getElementById('abuse-key').value = '';
+    document.getElementById('abusech-key').value = '';
     document.getElementById('settings-msg').textContent = '';
     fetch('/api/settings').then(r => r.json()).then(s => {
         document.getElementById('refresh-interval').value = String(s.refresh_secs || 0);
@@ -558,6 +563,8 @@ function openSettings() {
             s.vt_configured ? `(${s.vt_hint})` : '✗';
         document.getElementById('abuse-status').textContent =
             s.abuse_configured ? `(${s.abuse_hint})` : '✗';
+        document.getElementById('abusech-status').textContent =
+            s.abusech_configured ? `(${s.abusech_hint})` : '✗';
     });
 }
 function closeSettings() { document.getElementById('settings-modal').style.display = 'none'; }
@@ -583,6 +590,7 @@ function settingsPayload() {
     return {
         VTKey: document.getElementById('vt-key').value,
         AbuseKey: document.getElementById('abuse-key').value,
+        AbuseChKey: document.getElementById('abusech-key').value,
         NotifyDesktop: document.getElementById('notify-desktop').checked,
         NotifySound: document.getElementById('notify-sound').checked,
         PersistWhitelist: document.getElementById('persist-whitelist').checked,
@@ -1038,7 +1046,17 @@ function openWhitelist() {
     }).catch(() => { b.textContent = 'error'; });
 }
 function closeWhitelist() { document.getElementById('whitelist-modal').style.display = 'none'; }
-function openPrivacy() { document.getElementById('privacy-modal').style.display = 'flex'; }
+function openPrivacy() {
+    document.getElementById('privacy-modal').style.display = 'flex';
+    // The feed column is live: a withdrawn source, a missing key or a failing
+    // download must not read as "no signals".
+    fetch('/api/feeds').then(r => r.json()).then(list => (list || []).forEach(f => {
+        const cell = document.querySelector(`#privacy-modal tr[data-feed="${f.id}"] .feed-st`);
+        if (!cell) return;
+        cell.textContent = f.status;
+        cell.className = 'feed-st ' + (f.ok ? 'feed-ok' : 'feed-bad');
+    })).catch(() => {});
+}
 function closePrivacy() { document.getElementById('privacy-modal').style.display = 'none'; }
 function removeWl(exe) {
     postJSON('/api/whitelist', { Exe: exe }, 'DELETE').then(() => { openWhitelist(); loadConnections(); });

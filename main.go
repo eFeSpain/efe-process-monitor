@@ -151,6 +151,7 @@ func main() {
 	keysMu.Lock()
 	vtKey = os.Getenv("VT_API_KEY")
 	abuseKey = os.Getenv("ABUSEIPDB_API_KEY")
+	abusechKey = os.Getenv("ABUSECH_API_KEY")
 	keysMu.Unlock()
 	notifyDesktop.Store(os.Getenv("NOTIFY_DESKTOP") != "false")       // default on
 	notifySound.Store(os.Getenv("NOTIFY_SOUND") != "false")           // default on
@@ -205,6 +206,7 @@ func main() {
 	http.HandleFunc("/api/unblock", handleUnblock)
 	http.HandleFunc("/api/shutdown", handleShutdown)
 	http.HandleFunc("/api/score_history", handleScoreHistory)
+	http.HandleFunc("/api/feeds", handleFeeds)
 	http.HandleFunc("/logs.txt", handleLogs)
 	http.HandleFunc("/api/audit", handleAudit)
 	http.HandleFunc("/audit.json", handleAuditJSON)
@@ -313,6 +315,7 @@ func handleSettings(w http.ResponseWriter, r *http.Request) {
 	if r.Method == "POST" {
 		var body struct {
 			VTKey, AbuseKey  string
+			AbuseChKey       string
 			NotifyDesktop    *bool
 			NotifySound      *bool
 			PersistWhitelist *bool
@@ -326,7 +329,7 @@ func handleSettings(w http.ResponseWriter, r *http.Request) {
 		if !decodeJSON(w, r, &body) {
 			return
 		}
-		updateSettings(body.VTKey, body.AbuseKey)
+		updateSettings(body.VTKey, body.AbuseKey, body.AbuseChKey)
 		if body.AuthEnabled != nil {
 			T := strings_(langFrom(r))
 			disabling := !*body.AuthEnabled
@@ -684,6 +687,12 @@ func handleScoreHistory(w http.ResponseWriter, r *http.Request) {
 		list[i].Breakdown = localizeBreakdown(lang, list[i].Breakdown)
 	}
 	writeJSON(w, list)
+}
+
+// handleFeeds reports the state of every intel feed in the UI language: what
+// the privacy modal shows next to each source.
+func handleFeeds(w http.ResponseWriter, r *http.Request) {
+	writeJSON(w, feedStatuses(langFrom(r)))
 }
 
 // handleLogs serves the tail of the log. It's the only way to read the operator

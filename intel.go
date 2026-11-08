@@ -1,13 +1,12 @@
 package main
 
 import (
-	"archive/zip"
-	"bytes"
 	"context"
-	"encoding/csv"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
+	"log"
 	"net"
 	"net/http"
 	"net/url"
@@ -57,13 +56,15 @@ var httpClient = &http.Client{Timeout: 8 * time.Second}
 // ── API keys (mutable at runtime via settings) ──────────────────────────────
 
 var (
-	keysMu   sync.RWMutex
-	vtKey    = os.Getenv("VT_API_KEY")
-	abuseKey = os.Getenv("ABUSEIPDB_API_KEY")
+	keysMu     sync.RWMutex
+	vtKey      = os.Getenv("VT_API_KEY")
+	abuseKey   = os.Getenv("ABUSEIPDB_API_KEY")
+	abusechKey = os.Getenv("ABUSECH_API_KEY") // abuse.ch Auth-Key: ThreatFox moved behind one in 2025
 )
 
-func getVTKey() string    { keysMu.RLock(); defer keysMu.RUnlock(); return vtKey }
-func getAbuseKey() string { keysMu.RLock(); defer keysMu.RUnlock(); return abuseKey }
+func getVTKey() string      { keysMu.RLock(); defer keysMu.RUnlock(); return vtKey }
+func getAbuseKey() string   { keysMu.RLock(); defer keysMu.RUnlock(); return abuseKey }
+func getAbuseChKey() string { keysMu.RLock(); defer keysMu.RUnlock(); return abusechKey }
 
 // ── IP enrichment cache (TTL) ───────────────────────────────────────────────
 
@@ -314,7 +315,7 @@ func shodan(ip string, d *Enrichment) {
 	d.Ports, d.Vulns, d.Tags = resp.Ports, resp.Vulns, resp.Tags
 }
 
-// ── Daily-cached blocklists (Tor exits, Feodo C2) ───────────────────────────
+// ── Intel feeds: Tor, Feodo, ThreatFox, Spamhaus ────────────────────────────
 
 // Feed refresh cadence. failTTL is the key detail: on failure the "last
 // attempted" timestamp must still advance, otherwise every single enrichIP call
@@ -325,25 +326,72 @@ const (
 	feedFailTTL = 10 * time.Minute
 )
 
-type ipSet struct {
-	mu      sync.Mutex
+// httpStatusError is a non-200 answer, kept as a type so a feed can tell a
+// 410 Gone — the endpoint no longer exists, which is what happened to every
+// abuse.ch export in 2025 — from a 503 worth retrying.
+type httpStatusError int
+
+func (e httpStatusError) Error() string { return fmt.Sprintf("status %d", int(e)) }
+
+// errNoKey marks a feed that needs a key the operator has not configured.
+var errNoKey = errors.New("no key configured")
+
+// feedMeta is the bookkeeping every feed shares: when it last worked, when it
+// was last tried, whether it is gone for good, and what to show the operator.
+// A failed download used to look exactly like "nothing listed" — the ThreatFox
+// export died and the score lost a 55-point signal without a word anywhere.
+// This is what makes the difference visible (feedStatuses) and stops the
+// ten-minute retry loop on a dead endpoint.
+type feedMeta struct {
 	at      time.Time // last successful refresh
 	triedAt time.Time // last attempt, successful or not
-	set     map[string]bool
+	count   int       // entries loaded by the last successful refresh
+	gone    bool      // 410: the endpoint no longer exists; never retry
+	lastErr error     // nil after a success
+}
+
+// due reports whether a refresh should be attempted now. A feed waiting for a
+// key is always due: the check is free and the key can arrive from Settings.
+func (m *feedMeta) due(now time.Time) bool {
+	if m.gone {
+		return false
+	}
+	if m.triedAt.IsZero() || errors.Is(m.lastErr, errNoKey) {
+		return true
+	}
+	return now.Sub(m.at) >= feedTTL && now.Sub(m.triedAt) >= feedFailTTL
+}
+
+// done records the outcome of an attempt. A failure keeps the last good data
+// and its count; a 410 marks the feed gone.
+func (m *feedMeta) done(err error, count int, now time.Time) {
+	m.triedAt, m.lastErr = now, err
+	if err == nil {
+		m.at, m.count = now, count
+		return
+	}
+	var st httpStatusError
+	if errors.As(err, &st) && int(st) == http.StatusGone {
+		m.gone = true
+	}
+}
+
+type ipSet struct {
+	mu sync.Mutex
+	feedMeta
+	set map[string]bool
 }
 
 func (s *ipSet) get(url string, skipComments bool) map[string]bool {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	if s.set != nil && (time.Since(s.at) < feedTTL || time.Since(s.triedAt) < feedFailTTL) {
-		return s.set // fresh enough, or we tried recently and failed
+	now := time.Now()
+	if !s.due(now) {
+		return s.set
 	}
-	s.triedAt = time.Now()
 	body, err := getText(url)
 	if err != nil {
-		if s.set == nil {
-			s.set = map[string]bool{}
-		}
+		s.done(err, 0, now)
 		return s.set
 	}
 	set := map[string]bool{}
@@ -355,8 +403,9 @@ func (s *ipSet) get(url string, skipComments bool) map[string]bool {
 		set[ln] = true
 	}
 	if len(set) > 0 {
-		s.set, s.at = set, time.Now()
+		s.set = set
 	}
+	s.done(nil, len(set), now)
 	return s.set
 }
 
@@ -369,96 +418,117 @@ func feodoC2() map[string]bool {
 	return feodoSet.get("https://feodotracker.abuse.ch/downloads/ipblocklist.txt", true)
 }
 
-// ── ThreatFox C2/malware IOC feed (abuse.ch CSV, no key) ─────────────────────
+// ── ThreatFox (abuse.ch API, Auth-Key required) ─────────────────────────────
+//
+// The zipped CSV export this used to download answers 410 Gone since abuse.ch
+// moved every download behind a free Auth-Key (2025). What remains is the
+// get_iocs query: the IOCs of the last seven days, as JSON, about 12 MB. The
+// map is rebuilt from it once a day — ThreatFox itself expires IOCs after six
+// months, so a seven-day window of fresh C2 is the live part of the feed.
+
+const threatFoxAPI = "https://threatfox-api.abuse.ch/api/v1/"
 
 type tfFeed struct {
-	mu      sync.Mutex
-	at      time.Time         // last successful refresh
-	triedAt time.Time         // last attempt
-	m       map[string]string // ip -> malware family/label
+	mu sync.Mutex
+	feedMeta
+	m map[string]string // ip -> malware family/label
 }
 
 var threatFox tfFeed
 
-func (f *tfFeed) refresh(force bool) map[string]string {
+func (f *tfFeed) refresh() map[string]string {
 	f.mu.Lock()
 	defer f.mu.Unlock()
-	if !force && f.m != nil && (time.Since(f.at) < feedTTL || time.Since(f.triedAt) < feedFailTTL) {
+	now := time.Now()
+	if !f.due(now) {
 		return f.m
 	}
-	f.triedAt = time.Now()
-	body, err := getZipCSV("https://threatfox.abuse.ch/export/csv/ip-port/full/")
+	key := getAbuseChKey()
+	if key == "" {
+		f.done(errNoKey, 0, now)
+		return f.m
+	}
+	resp, err := postRaw(threatFoxAPI, map[string]string{"Auth-Key": key}, `{"query":"get_iocs","days":7}`)
 	if err != nil {
-		if f.m == nil {
-			f.m = map[string]string{}
-		}
+		f.done(err, 0, now)
 		return f.m
 	}
-	if m := parseThreatFox(body); len(m) > 0 {
-		f.m, f.at = m, time.Now()
-	} else if f.m == nil {
-		f.m = map[string]string{}
+	defer resp.Body.Close()
+	m, err := parseThreatFoxAPI(io.LimitReader(resp.Body, maxFeedBytes))
+	if err != nil {
+		f.done(err, 0, now)
+		return f.m
 	}
+	f.m = m
+	f.done(nil, len(m), now)
 	return f.m
 }
 
-// parseThreatFox turns the abuse.ch ThreatFox CSV into an ip→malware-family map.
-func parseThreatFox(body string) map[string]string {
-	r := csv.NewReader(strings.NewReader(body))
-	r.Comment = '#'
-	r.FieldsPerRecord = -1
-	r.TrimLeadingSpace = true
-	rows, _ := r.ReadAll()
+// parseThreatFoxAPI turns a get_iocs answer into an ip→malware-family map. Only
+// ip:port IOCs apply here; domains, URLs and hashes are other things. The label
+// is the printable family, or the threat type when the family is unknown.
+func parseThreatFoxAPI(r io.Reader) (map[string]string, error) {
+	var resp struct {
+		QueryStatus string `json:"query_status"`
+		Data        []struct {
+			IOC              string `json:"ioc"`
+			ThreatType       string `json:"threat_type"`
+			IOCType          string `json:"ioc_type"`
+			MalwarePrintable string `json:"malware_printable"`
+		} `json:"data"`
+	}
+	if err := json.NewDecoder(r).Decode(&resp); err != nil {
+		return nil, fmt.Errorf("threatfox: %w", err)
+	}
+	if resp.QueryStatus != "ok" {
+		return nil, fmt.Errorf("threatfox: %s", resp.QueryStatus)
+	}
 	m := map[string]string{}
-	for _, rec := range rows {
-		if len(rec) < 8 || rec[3] != "ip:port" {
+	for _, d := range resp.Data {
+		if d.IOCType != "ip:port" {
 			continue
 		}
-		host, _, err := net.SplitHostPort(rec[2])
-		if err != nil || host == "" {
+		host, _, err := net.SplitHostPort(d.IOC)
+		if err != nil || net.ParseIP(host) == nil {
 			continue
 		}
-		label := rec[7] // malware_printable
+		label := d.MalwarePrintable
 		if label == "" || label == "None" {
-			label = rec[4] // threat_type fallback
+			label = d.ThreatType
 		}
 		m[host] = label
 	}
-	return m
+	return m, nil
 }
 
-func threatFoxLookup(ip string) string { return threatFox.refresh(false)[ip] }
+func threatFoxLookup(ip string) string { return threatFox.refresh()[ip] }
 
 // ── Spamhaus DROP (criminal/hijacked netblocks, CIDR, no key) ────────────────
 
 type cidrFeed struct {
-	mu      sync.Mutex
-	at      time.Time // last successful refresh
-	triedAt time.Time // last attempt
-	nets    []*net.IPNet
+	mu sync.Mutex
+	feedMeta
+	nets []*net.IPNet
 }
 
 var spamhaus cidrFeed
 
-func (f *cidrFeed) refresh(force bool) []*net.IPNet {
+func (f *cidrFeed) refresh() []*net.IPNet {
 	f.mu.Lock()
 	defer f.mu.Unlock()
-	if !force && f.nets != nil && (time.Since(f.at) < feedTTL || time.Since(f.triedAt) < feedFailTTL) {
+	now := time.Now()
+	if !f.due(now) {
 		return f.nets
 	}
-	f.triedAt = time.Now()
 	body, err := getText("https://www.spamhaus.org/drop/drop_v4.json")
 	if err != nil {
-		if f.nets == nil {
-			f.nets = []*net.IPNet{}
-		}
+		f.done(err, 0, now)
 		return f.nets
 	}
 	if nets := parseSpamhaus(body); len(nets) > 0 {
-		f.nets, f.at = nets, time.Now()
-	} else if f.nets == nil {
-		f.nets = []*net.IPNet{}
+		f.nets = nets
 	}
+	f.done(nil, len(f.nets), now)
 	return f.nets
 }
 
@@ -489,7 +559,7 @@ func spamhausHit(ip string) bool {
 	if a == nil {
 		return false
 	}
-	for _, n := range spamhaus.refresh(false) {
+	for _, n := range spamhaus.refresh() {
 		if n.Contains(a) {
 			return true
 		}
@@ -497,11 +567,64 @@ func spamhausHit(ip string) bool {
 	return false
 }
 
+// primeIntel warms every feed at start-up and logs where each one stands, so a
+// dead or keyless feed is in the log from minute one instead of being inferred
+// from a score that never fires.
 func primeIntel() {
 	torExits()
 	feodoC2()
-	threatFox.refresh(false)
-	spamhaus.refresh(false)
+	threatFox.refresh()
+	spamhaus.refresh()
+	for _, s := range feedStatuses("en") {
+		mark := "[+]"
+		if !s.OK {
+			mark = "[-]"
+		}
+		log.Printf("%s Feed %-11s %s", mark, s.Name, s.Status)
+	}
+}
+
+// FeedStatus is one feed as shown in the privacy modal and the banner.
+type FeedStatus struct {
+	ID     string `json:"id"`
+	Name   string `json:"name"`
+	Status string `json:"status"` // localized
+	OK     bool   `json:"ok"`
+}
+
+// feedStatuses reports every feed in lang. "No key", "gone", "failing" and
+// "loading" are four different things, none of which is "no signals".
+func feedStatuses(lang string) []FeedStatus {
+	T := strings_(lang)
+	now := time.Now()
+	one := func(id, name string, mu *sync.Mutex, m *feedMeta) FeedStatus {
+		mu.Lock()
+		meta := *m
+		mu.Unlock()
+		st := FeedStatus{ID: id, Name: name}
+		switch {
+		case meta.gone:
+			st.Status = T["feed_gone"]
+		case errors.Is(meta.lastErr, errNoKey):
+			st.Status = T["feed_nokey"]
+		case meta.triedAt.IsZero():
+			st.Status = T["feed_pending"]
+		case meta.lastErr != nil && meta.count > 0:
+			st.Status = fmt.Sprintf(T["feed_stale"], meta.count, humanAge(now.Sub(meta.at), T), meta.lastErr)
+		case meta.lastErr != nil:
+			st.Status = fmt.Sprintf(T["feed_error"], meta.lastErr)
+		default:
+			st.OK = true
+			st.Status = fmt.Sprintf(T["feed_updated"], meta.count, humanAge(now.Sub(meta.at), T))
+		}
+		return st
+	}
+	return []FeedStatus{
+		one("tor", "Tor exits", &torSet.mu, &torSet.feedMeta),
+		one("feodo", "Feodo C2", &feodoSet.mu, &feodoSet.feedMeta),
+		one("threatfox", "ThreatFox", &threatFox.mu, &threatFox.feedMeta),
+		one("spamhaus", "Spamhaus", &spamhaus.mu, &spamhaus.feedMeta),
+	}
 }
 
 // ipReport builds a short human summary of an IP from its (cached) enrichment.
@@ -558,18 +681,37 @@ func getJSON(url string, headers map[string]string, out any) error {
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode != 200 {
-		return fmt.Errorf("status %d", resp.StatusCode)
+		return httpStatusError(resp.StatusCode)
 	}
 	return json.NewDecoder(resp.Body).Decode(out)
 }
 
+// postRaw sends a small JSON body and returns the response for the caller to
+// read and close; a non-200 status is an httpStatusError.
+func postRaw(url string, headers map[string]string, body string) (*http.Response, error) {
+	req, err := http.NewRequest("POST", url, strings.NewReader(body))
+	if err != nil {
+		return nil, err
+	}
+	req.Header.Set("Content-Type", "application/json")
+	for k, v := range headers {
+		req.Header.Set(k, v)
+	}
+	resp, err := httpClient.Do(req)
+	if err != nil {
+		return nil, err
+	}
+	if resp.StatusCode != 200 {
+		resp.Body.Close()
+		return nil, httpStatusError(resp.StatusCode)
+	}
+	return resp, nil
+}
+
 // Feed downloads are bounded: these bodies come from third parties over the
-// network, and an unbounded io.ReadAll on a hostile or broken upstream is an OOM
-// of the monitor. The uncompressed cap also defends against a zip bomb.
-const (
-	maxFeedBytes      = 64 << 20  // 64 MiB of compressed/raw download
-	maxFeedUncompress = 256 << 20 // 256 MiB total after decompression
-)
+// network, and an unbounded read on a hostile or broken upstream is an OOM of
+// the monitor. ThreatFox's seven-day answer is ~12 MiB today.
+const maxFeedBytes = 64 << 20
 
 func getText(url string) (string, error) {
 	resp, err := httpClient.Get(url)
@@ -580,45 +722,8 @@ func getText(url string) (string, error) {
 	// Status must be checked: an upstream 503 HTML page would otherwise be parsed
 	// as feed content and cached as "the Tor exit list" for 24h.
 	if resp.StatusCode != 200 {
-		return "", fmt.Errorf("status %d", resp.StatusCode)
+		return "", httpStatusError(resp.StatusCode)
 	}
 	b, err := io.ReadAll(io.LimitReader(resp.Body, maxFeedBytes))
 	return string(b), err
-}
-
-// getZipCSV downloads a ZIP archive (abuse.ch "full" exports are zipped) and
-// returns the concatenated text of every file inside it.
-func getZipCSV(url string) (string, error) {
-	resp, err := httpClient.Get(url)
-	if err != nil {
-		return "", err
-	}
-	defer resp.Body.Close()
-	if resp.StatusCode != 200 {
-		return "", fmt.Errorf("status %d", resp.StatusCode)
-	}
-	raw, err := io.ReadAll(io.LimitReader(resp.Body, maxFeedBytes))
-	if err != nil {
-		return "", err
-	}
-	zr, err := zip.NewReader(bytes.NewReader(raw), int64(len(raw)))
-	if err != nil {
-		return "", err
-	}
-	var sb strings.Builder
-	remaining := int64(maxFeedUncompress)
-	for _, zf := range zr.File {
-		if remaining <= 0 {
-			return "", fmt.Errorf("zip demasiado grande al descomprimir (>%d bytes)", maxFeedUncompress)
-		}
-		rc, err := zf.Open()
-		if err != nil {
-			continue
-		}
-		b, _ := io.ReadAll(io.LimitReader(rc, remaining))
-		rc.Close()
-		remaining -= int64(len(b))
-		sb.Write(b)
-	}
-	return sb.String(), nil
 }

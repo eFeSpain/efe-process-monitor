@@ -217,6 +217,11 @@ func startupBanner() {
 	if getAbuseKey() != "" {
 		log.Println("[+] AbuseIPDB       configured")
 	}
+	if getAbuseChKey() != "" {
+		log.Println("[+] abuse.ch        Auth-Key configured (ThreatFox API)")
+	} else {
+		log.Println("[-] abuse.ch        no Auth-Key (ABUSECH_API_KEY) — ThreatFox off; the feed status is logged after priming")
+	}
 	info := captureInfo(false)
 	if info.Tshark {
 		log.Printf("[+] tshark          OK (%d interfaces) → %s \"%s\" idx %d",

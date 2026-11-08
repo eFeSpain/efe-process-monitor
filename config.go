@@ -42,18 +42,20 @@ func mask(k string) string {
 
 func getSettings() map[string]any {
 	return map[string]any{
-		"vt_configured":     getVTKey() != "",
-		"vt_hint":           mask(getVTKey()),
-		"abuse_configured":  getAbuseKey() != "",
-		"abuse_hint":        mask(getAbuseKey()),
-		"notify_desktop":    notifyDesktop.Load(),
-		"notify_sound":      notifySound.Load(),
-		"persist_whitelist": persistWhitelist.Load(),
-		"persist_blocks":    persistBlocks.Load(),
-		"refresh_secs":      refreshSecs.Load(),
-		"auth_enabled":      authEnabled(),
-		"listen_addr":       listenAddr.Load(),
-		"exposed":           listenExposed,
+		"vt_configured":      getVTKey() != "",
+		"vt_hint":            mask(getVTKey()),
+		"abuse_configured":   getAbuseKey() != "",
+		"abuse_hint":         mask(getAbuseKey()),
+		"abusech_configured": getAbuseChKey() != "",
+		"abusech_hint":       mask(getAbuseChKey()),
+		"notify_desktop":     notifyDesktop.Load(),
+		"notify_sound":       notifySound.Load(),
+		"persist_whitelist":  persistWhitelist.Load(),
+		"persist_blocks":     persistBlocks.Load(),
+		"refresh_secs":       refreshSecs.Load(),
+		"auth_enabled":       authEnabled(),
+		"listen_addr":        listenAddr.Load(),
+		"exposed":            listenExposed,
 	}
 }
 
@@ -108,7 +110,7 @@ func setNotifySound(b bool) {
 }
 
 // updateSettings updates keys at runtime; blank values are left unchanged.
-func updateSettings(vt, abuse string) {
+func updateSettings(vt, abuse, abusech string) {
 	updates := map[string]string{}
 	keysMu.Lock()
 	if vt != "" {
@@ -118,6 +120,10 @@ func updateSettings(vt, abuse string) {
 	if abuse != "" {
 		abuseKey = abuse
 		updates["ABUSEIPDB_API_KEY"] = abuse
+	}
+	if abusech != "" {
+		abusechKey = abusech
+		updates["ABUSECH_API_KEY"] = abusech
 	}
 	keysMu.Unlock()
 	if len(updates) > 0 {

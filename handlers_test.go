@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"path/filepath"
 	"strconv"
 	"strings"
@@ -183,5 +184,36 @@ func TestHistoryExportsAndGuardedDelete(t *testing.T) {
 	handleAPIEvents(w, httptest.NewRequest(http.MethodDelete, "/api/events?confirm=1&kind=closed", nil))
 	if w.Code != http.StatusOK || len(queryEvents(10, "")) != 1 {
 		t.Errorf("DELETE with confirm and a kind filter: code=%d events left=%d, want 200 and 1", w.Code, len(queryEvents(10, "")))
+	}
+}
+
+// The abuse.ch Auth-Key is a third key beside VirusTotal and AbuseIPDB: saved
+// to .env, reported masked, never echoed back. (The value here is a dummy.)
+func TestSettingsAbuseChKey(t *testing.T) {
+	withTempEnv(t)
+	keysMu.Lock()
+	old := abusechKey
+	abusechKey = ""
+	keysMu.Unlock()
+	t.Cleanup(func() { keysMu.Lock(); abusechKey = old; keysMu.Unlock() })
+
+	const dummy = "0123456789abcdef0123456789abcdef"
+	w := jsonPost(handleSettings, "/api/settings", `{"AbuseChKey":"`+dummy+`"}`)
+	var out map[string]any
+	if err := json.Unmarshal(w.Body.Bytes(), &out); err != nil {
+		t.Fatal(err)
+	}
+	if out["abusech_configured"] != true || out["abusech_hint"] != "…cdef" {
+		t.Errorf("settings after saving the key: %v", out)
+	}
+	if getAbuseChKey() != dummy {
+		t.Error("key not applied at runtime")
+	}
+	env, _ := os.ReadFile(envPath)
+	if !strings.Contains(string(env), "ABUSECH_API_KEY="+dummy) {
+		t.Errorf(".env does not hold the key: %q", env)
+	}
+	if strings.Contains(w.Body.String(), dummy) {
+		t.Error("the full key must never be echoed back")
 	}
 }

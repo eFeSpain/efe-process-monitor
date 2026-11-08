@@ -193,13 +193,19 @@ GOOS=darwin CGO_ENABLED=0 go build -o efemon .   # compilar para macOS
 
 ### Claves de API (opcional)
 
-Las consultas a VirusTotal y AbuseIPDB necesitan claves gratuitas — añádelas en
-**⚙ Ajustes** (se guardan en `.env`) o crea un `.env` junto al binario:
+Las consultas a VirusTotal, AbuseIPDB y ThreatFox necesitan claves gratuitas —
+añádelas en **⚙ Ajustes** (se guardan en `.env`) o crea un `.env` junto al binario:
 
 ```
 VT_API_KEY=tu_clave_de_virustotal
 ABUSEIPDB_API_KEY=tu_clave_de_abuseipdb
+ABUSECH_API_KEY=tu_auth_key_de_abuse.ch
 ```
+
+La Auth-Key de abuse.ch (gratuita, en el [portal de autenticación de abuse.ch](https://auth.abuse.ch/))
+es la que ThreatFox exige desde 2025, cuando abuse.ch retiró sus exportaciones sin
+clave. Sin ella el feed ThreatFox está apagado — y el panel **🛰 Privacidad** lo
+dice, junto al estado de cada uno de los demás feeds.
 
 > **El `.env` tiene que estar junto al binario.** Las versiones anteriores también
 > lo buscaban en el directorio actual y en el padre, lo que hacía que lanzar el
@@ -215,8 +221,8 @@ porque el modo de fichero de Unix allí se ignora. Un `.env` creado a mano **no*
 recibe ese tratamiento hasta que la app lo reescriba; `icacls <fichero>
 /inheritance:r /grant:r "*<tu-SID>:F"` lo aplica ya.
 
-Geolocalización, Tor, Feodo/ThreatFox, Spamhaus y Shodan funcionan **sin clave**.
-Sin las de VirusTotal/AbuseIPDB, esas dos simplemente se omiten.
+Geolocalización, Tor, Feodo, Spamhaus y Shodan funcionan **sin clave**. Sin las
+de VirusTotal/AbuseIPDB/abuse.ch, esas tres simplemente se omiten.
 
 ## Acceso
 
@@ -250,8 +256,9 @@ modifique estado (anti CSRF).
 Sin telemetría; todo se guarda en local (`efemon.db`). Para enriquecer la
 información, la herramienta consulta servicios externos sobre las IPs/hashes que
 **tú inspeccionas**: ipwho.is, VirusTotal, AbuseIPDB y Shodan reciben esos valores;
-las listas de abuse.ch / Spamhaus / Tor son descargas públicas que no revelan nada
-de ti. Los resultados se cachean, así que cada binario/IP se consulta como mucho
+las listas de Feodo / Spamhaus / Tor son descargas públicas que no revelan nada
+de ti, y la lista de IOC de ThreatFox se descarga con tu Auth-Key de abuse.ch y
+nada más. Los resultados se cachean, así que cada binario/IP se consulta como mucho
 una vez (cada hora las IPs). La auditoría del equipo corre 100% en local, y el DNS pasivo también: lee las respuestas DNS en tus propias interfaces y guarda los pares nombre↔dirección en `efemon.db`; no envía nada a ningún sitio. El panel
 **🛰 Privacidad** de la app detalla exactamente qué sale y a dónde.
 
