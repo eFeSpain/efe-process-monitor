@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"regexp"
 	"runtime"
 	"sort"
 	"strconv"
@@ -417,6 +418,17 @@ func sortBySeverity(in []AuditCheck) []AuditCheck {
 // re-scan, which is when the operator is looking; a day keeps it visible.
 const auditNewWindow = 24 * time.Hour
 
+// auditPIDRe matches the "(pid N)" a process item carries. The PID is not
+// identity — it changes at every restart — so the diff must not key on it, or
+// every scan after a reboot marks the same processes NEW and audit_seen grows
+// by one row per PID forever.
+var auditPIDRe = regexp.MustCompile(`\(pid \d+\)`)
+
+// auditItemKey is the identity of an item across scans: the item with its PIDs
+// blanked. A bare "pid N" (a hidden process) has nothing else to key on and is
+// left as it is.
+func auditItemKey(item string) string { return auditPIDRe.ReplaceAllString(item, "(pid)") }
+
 // applyAuditDiff marks the items of each check that were not seen by earlier
 // scans, and records everything seen now. The very first scan on a machine
 // marks nothing: with no history, "everything is new" is noise.
@@ -435,10 +447,15 @@ func applyAuditDiff(checks []AuditCheck) {
 	for i := range checks {
 		c := &checks[i]
 		for _, it := range c.Items {
-			first, ok := seen[c.Key][it]
+			k := auditItemKey(it)
+			first, ok := seen[c.Key][k]
 			if !ok {
-				dbAuditMarkSeen(c.Key, it, mark)
+				dbAuditMarkSeen(c.Key, k, mark)
 				first = mark
+				if seen[c.Key] == nil {
+					seen[c.Key] = map[string]time.Time{}
+				}
+				seen[c.Key][k] = mark // two PIDs of one program in a scan share a key
 			}
 			if now.Sub(first) < auditNewWindow {
 				c.New = append(c.New, it)

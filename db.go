@@ -18,6 +18,10 @@ CREATE TABLE IF NOT EXISTS events (
     exe TEXT, local TEXT, remote TEXT, detail TEXT
 );
 CREATE INDEX IF NOT EXISTS idx_events_epoch ON events(epoch);
+-- The details block asks about each process on every render (activity in the
+-- last 24 h, first and last event): by exe, so that is a seek and not a scan
+-- of the whole retained history per PID.
+CREATE INDEX IF NOT EXISTS idx_events_exe ON events(exe, epoch);
 CREATE TABLE IF NOT EXISTS hashes      (hash TEXT PRIMARY KEY, score TEXT, checked TEXT);
 CREATE TABLE IF NOT EXISTS signatures  (exe TEXT PRIMARY KEY, mtime INTEGER, status TEXT, signer TEXT, trusted INTEGER);
 CREATE TABLE IF NOT EXISTS fileinfo    (exe TEXT PRIMARY KEY, mtime INTEGER, company TEXT, product TEXT, description TEXT, version TEXT);
@@ -49,6 +53,9 @@ CREATE TABLE IF NOT EXISTS score_history (
     epoch REAL, at TEXT, exe TEXT, ip TEXT, threat INTEGER, breakdown TEXT
 );
 CREATE INDEX IF NOT EXISTS idx_score_history_epoch ON score_history(epoch);
+-- recordScoreChange reads the last verdict of every (exe, ip) pair on every
+-- render; without this each of those reads was a full scan.
+CREATE INDEX IF NOT EXISTS idx_score_history_pair ON score_history(exe, ip, epoch);
 `
 
 func initDB() {
@@ -62,14 +69,35 @@ func initDB() {
 		log.Fatalf("db open: %v", err)
 	}
 	db.SetMaxOpenConns(1) // serialize access (modernc sqlite, simplest safe model)
+	ensureIncrementalVacuum()
 	if _, err := db.Exec(schema); err != nil {
 		log.Fatalf("db schema: %v", err)
 	}
+	migrateAuditSeen()
 	// The DB holds the forensic history; don't leave it world-readable.
 	if err := os.Chmod(path, 0o600); err != nil && !os.IsNotExist(err) {
 		log.Printf("[!] no se pudieron ajustar los permisos de %s: %v", path, err)
 	}
 	pruneEvents()
+}
+
+// ensureIncrementalVacuum switches the file to incremental auto-vacuum. The
+// retention pruning deleted rows, but SQLite never returned the pages to the
+// OS, so efemon.db only ever grew. The mode lives in the file: a fresh
+// database takes it directly, one written by an earlier build needs a
+// one-time VACUUM to convert — seconds, once, at start-up.
+func ensureIncrementalVacuum() {
+	var mode int
+	if err := db.QueryRow("PRAGMA auto_vacuum").Scan(&mode); err != nil || mode == 2 {
+		return
+	}
+	if _, err := db.Exec("PRAGMA auto_vacuum = INCREMENTAL"); err != nil {
+		log.Printf("[!] auto_vacuum: %v", err)
+		return
+	}
+	if _, err := db.Exec("VACUUM"); err != nil {
+		log.Printf("[!] no se pudo compactar la base de datos: %v", err)
+	}
 }
 
 // eventRetentionDays bounds the forensic history. The events table grows with
@@ -83,7 +111,8 @@ func pruneEvents() {
 	if eventRetentionDays <= 0 {
 		return
 	}
-	cutoff := float64(time.Now().AddDate(0, 0, -eventRetentionDays).Unix())
+	cutoffAt := time.Now().AddDate(0, 0, -eventRetentionDays)
+	cutoff := float64(cutoffAt.Unix())
 	res, err := db.Exec("DELETE FROM events WHERE epoch < ?", cutoff)
 	if err != nil {
 		log.Printf("[!] no se pudo purgar el histórico: %v", err)
@@ -93,6 +122,11 @@ func pruneEvents() {
 	// trigger (observed activity) and would otherwise outlive the events it explains.
 	if _, err := db.Exec("DELETE FROM score_history WHERE epoch < ?", cutoff); err != nil {
 		log.Printf("[!] no se pudo purgar el histórico de score: %v", err)
+	}
+	pruneHostnames(cutoffAt)
+	// auto_vacuum=INCREMENTAL only marks freed pages; this hands them back.
+	if _, err := db.Exec("PRAGMA incremental_vacuum"); err != nil {
+		log.Printf("[!] incremental_vacuum: %v", err)
 	}
 	if n, _ := res.RowsAffected(); n > 0 {
 		log.Printf("[+] histórico purgado: %d eventos con más de %d días", n, eventRetentionDays)
@@ -497,6 +531,41 @@ func dbBaselineFirstSeen(exe, hash string) time.Time {
 
 func dbAuditMarkSeen(key, item string, at time.Time) {
 	db.Exec("INSERT OR IGNORE INTO audit_seen VALUES (?,?,?)", key, item, float64(at.UnixNano())/1e9)
+}
+
+// migrateAuditSeen folds rows written by earlier builds, which carried the
+// PID in the item, into the PID-less key auditItemKey produces now. The
+// earliest sighting wins, so an upgrade does not re-announce every running
+// process as new. Idempotent: once no row contains "(pid N)" it does nothing.
+func migrateAuditSeen() {
+	rows, err := db.Query("SELECT key, item, first_seen FROM audit_seen WHERE item LIKE '%(pid %'")
+	if err != nil {
+		return
+	}
+	type legacy struct {
+		key, item string
+		first     float64
+	}
+	var old []legacy
+	for rows.Next() {
+		var l legacy
+		if rows.Scan(&l.key, &l.item, &l.first) == nil {
+			old = append(old, l)
+		}
+	}
+	rows.Close()
+	for _, l := range old {
+		k := auditItemKey(l.item)
+		if k == l.item {
+			continue // already normalized (contains "(pid)")
+		}
+		db.Exec("INSERT OR IGNORE INTO audit_seen VALUES (?,?,?)", l.key, k, l.first)
+		db.Exec("UPDATE audit_seen SET first_seen = ? WHERE key=? AND item=? AND first_seen > ?", l.first, l.key, k, l.first)
+		db.Exec("DELETE FROM audit_seen WHERE key=? AND item=?", l.key, l.item)
+	}
+	if len(old) > 0 {
+		log.Printf("[+] audit_seen: %d filas antiguas con PID normalizadas", len(old))
+	}
 }
 
 // ── Score history ────────────────────────────────────────────────────────────

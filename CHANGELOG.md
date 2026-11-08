@@ -21,6 +21,21 @@ Versions follow [Semantic Versioning](https://semver.org/).
   modules and actions, and the gosec action is pinned to a release instead of
   tracking `master`.
 
+### Performance
+- **Indexes for the per-render queries.** The details block asks SQLite about
+  each process on every render (activity in the last 24 h, first and last
+  event) and the risk log looks up the last verdict of every (binary, remote
+  IP) pair; both only had an index on the timestamp, so each was a full scan
+  of the retained history, repeated per process several times a minute.
+  `events(exe, epoch)` and `score_history(exe, ip, epoch)` turn them into seeks.
+- **The database stops growing forever.** `hostnames`, fed all day by the
+  passive DNS listener and loaded whole on every render, now follows the same
+  retention as the events. `audit_seen` keyed its items by text including the
+  PID, so every reboot marked the same processes **NEW** and added a row per
+  PID; items are now keyed without the PID and old rows are folded in on
+  start-up. Freed pages are returned to the OS (`auto_vacuum=INCREMENTAL`,
+  converting an existing file once at start-up).
+
 ## [0.4.0] — 2026-09-24
 
 The details block now answers the questions an analyst asks next about a

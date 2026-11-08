@@ -1,6 +1,7 @@
 package main
 
 import (
+	"log"
 	"net"
 	"strings"
 	"sync"
@@ -98,6 +99,26 @@ func validIP(s string) bool {
 	}
 	ip := net.ParseIP(s)
 	return ip != nil && !ip.IsUnspecified() && !ip.IsLoopback()
+}
+
+// pruneHostnames drops bindings first recorded before cutoff. The passive DNS
+// listener adds pairs all day, dbAllHostnames loads the table whole on every
+// render, and the table sat outside the retention window, so it was the one
+// store that grew for as long as the tool was installed. The in-memory dedupe
+// is reset with it: a binding still in use is then recorded again with a fresh
+// timestamp on its next sighting, instead of staying "already stored" until a
+// restart.
+func pruneHostnames(cutoff time.Time) {
+	if db == nil {
+		return
+	}
+	if _, err := db.Exec("DELETE FROM hostnames WHERE at < ?", cutoff.Format("2006-01-02 15:04:05")); err != nil {
+		log.Printf("[!] no se pudo purgar hostnames: %v", err)
+		return
+	}
+	hostMu.Lock()
+	hostSeen = map[string]map[string]bool{}
+	hostMu.Unlock()
 }
 
 // recordHostname persists a binding, skipping anything already seen this session.

@@ -266,3 +266,58 @@ func TestSortBySeverity(t *testing.T) {
 		t.Errorf("order = %q, want bedca (stable within a level)", got)
 	}
 }
+
+// Six checks describe a process as "name (pid N) path". The PID is not identity:
+// it changes on every restart, so keyed as-is every scan after a reboot marked
+// the same processes NEW and audit_seen grew by one row per PID forever.
+func TestAuditItemKeyDropsPID(t *testing.T) {
+	for in, want := range map[string]string{
+		"bash (pid 123) /tmp/x":            "bash (pid) /tmp/x",
+		"bash (pid 123) fd0 → socket:[9]":  "bash (pid) fd0 → socket:[9]",
+		"gdb (pid 7) ← target (pid 99)":    "gdb (pid) ← target (pid)",
+		"pid 4242":                         "pid 4242", // nothing else identifies a hidden process
+		"HKCU\\...\\Run: evil = C:\\x.exe": "HKCU\\...\\Run: evil = C:\\x.exe",
+		"root: @reboot /tmp/x":             "root: @reboot /tmp/x",
+	} {
+		if got := auditItemKey(in); got != want {
+			t.Errorf("auditItemKey(%q) = %q, want %q", in, got, want)
+		}
+	}
+}
+
+func TestAuditDiffIgnoresPIDChurn(t *testing.T) {
+	setupTestDB(t)
+	applyAuditDiff([]AuditCheck{{Key: "p_suspath", Items: []string{"x (pid 1) /tmp/a"}}})
+	again := []AuditCheck{{Key: "p_suspath", Items: []string{"x (pid 2) /tmp/a", "y (pid 3) /tmp/b"}}}
+	applyAuditDiff(again)
+	if len(again[0].New) != 1 || again[0].New[0] != "y (pid 3) /tmp/b" {
+		t.Errorf("only the genuinely new process should be NEW, got %v", again[0].New)
+	}
+	var n int
+	db.QueryRow("SELECT count(*) FROM audit_seen WHERE key='p_suspath'").Scan(&n)
+	if n != 2 {
+		t.Errorf("audit_seen rows = %d, want 2 (one per distinct process, not per PID)", n)
+	}
+}
+
+// Rows written by earlier builds carry the PID. They are folded into the new key
+// on start-up, keeping the earliest sighting, so an upgrade does not re-announce
+// every running process as new.
+func TestMigrateAuditSeenNormalizesLegacyRows(t *testing.T) {
+	setupTestDB(t)
+	t1, t2 := 1000.0, 2000.0
+	db.Exec("INSERT INTO audit_seen VALUES ('p_suspath','x (pid 1) /tmp/a',?)", t1)
+	db.Exec("INSERT INTO audit_seen VALUES ('p_suspath','x (pid 2) /tmp/a',?)", t2)
+	db.Exec("INSERT INTO audit_seen VALUES ('rk_hidden','pid 77',?)", t2)
+	migrateAuditSeen()
+	seen, _ := dbAuditSeen()
+	if len(seen["p_suspath"]) != 1 {
+		t.Fatalf("p_suspath rows after migration = %v, want one normalized key", seen["p_suspath"])
+	}
+	if got := seen["p_suspath"]["x (pid) /tmp/a"]; got.Unix() != int64(t1) {
+		t.Errorf("first_seen = %v, want the earliest (%v)", got.Unix(), t1)
+	}
+	if _, ok := seen["rk_hidden"]["pid 77"]; !ok {
+		t.Error("a PID-only item has nothing else to key on and must be left alone")
+	}
+}
