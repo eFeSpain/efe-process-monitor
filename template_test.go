@@ -35,6 +35,11 @@ func TestReportTemplateExecutes(t *testing.T) {
 		if !strings.Contains(sb.String(), "eFe Process Monitor") {
 			t.Errorf("report.html [%s] rendered without its title", lang)
 		}
+		// The "run at boot" block exists in the shell (shown by JS when the
+		// platform supports it) and carries its localized title.
+		if out := sb.String(); !strings.Contains(out, `id="svc-block"`) || !strings.Contains(out, strings_(lang)["svc_title"]) || strings_(lang)["svc_title"] == "" {
+			t.Errorf("report.html [%s] lacks the run-at-boot block or its title", lang)
+		}
 	}
 }
 

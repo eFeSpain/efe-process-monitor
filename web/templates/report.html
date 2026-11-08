@@ -285,6 +285,13 @@ select{background:#0d1117;color:#c9d1d9;border:1px solid #30363d;padding:3px 6px
                 <span id="restart-msg" class="t" style="margin-left:8px;color:#8b949e;font-size:11px;"></span>
                 <div style="border-bottom:1px solid #21262d;margin:12px 0;"></div>
             </div>
+            <div id="svc-block" style="display:none;margin:0 0 12px;">
+                <label>{{ .T.svc_title }} <span id="svc-status" class="status-pill"></span></label>
+                <div style="color:#484f58;font-size:11px;margin:0 0 6px;">{{ .T.svc_hint }} <span id="svc-path" class="t"></span></div>
+                <button id="svc-btn" class="btn btn-mini" onclick="serviceAction()"></button>
+                <span id="svc-msg" style="margin-left:8px;color:#8b949e;font-size:11px;"></span>
+                <div style="border-bottom:1px solid #21262d;margin:12px 0;"></div>
+            </div>
             <button class="btn" onclick="saveSettings()">{{ .T.save }}</button>
             <span id="settings-msg"></span>
         </div>
@@ -566,6 +573,44 @@ function openSettings() {
         document.getElementById('abusech-status').textContent =
             s.abusech_configured ? `(${s.abusech_hint})` : '✗';
     });
+    loadServiceBlock();
+}
+
+// ── Run at boot (systemd service; Linux) ───────────────────────────────────
+let svcState = null;
+function loadServiceBlock() {
+    const block = document.getElementById('svc-block');
+    fetch('/api/service').then(r => r.json()).then(st => {
+        svcState = st;
+        if (!st || !st.supported) { block.style.display = 'none'; return; }
+        block.style.display = 'block';
+        const pill = document.getElementById('svc-status');
+        pill.textContent = st.installed ? (st.active ? T.svc_installed : T.svc_installed_inactive) : T.svc_not_installed;
+        pill.className = 'status-pill ' + (st.installed && st.active ? 'status-on' : st.installed ? 'status-cap' : '');
+        document.getElementById('svc-path').textContent = st.installed ? st.path : '';
+        const btn = document.getElementById('svc-btn');
+        btn.textContent = st.installed ? T.svc_uninstall : T.svc_install;
+        btn.disabled = !st.elevated;
+        document.getElementById('svc-msg').textContent = st.elevated ? '' : T.svc_needs_root;
+    }).catch(() => { block.style.display = 'none'; });
+}
+function serviceAction() {
+    if (!svcState) return;
+    const install = !svcState.installed;
+    if (!confirm(install ? T.svc_confirm_install : T.svc_confirm_uninstall)) return;
+    const msg = document.getElementById('svc-msg');
+    postJSON('/api/service', { action: install ? 'install' : 'uninstall' }).then(res => {
+        if (!res.ok) { msg.textContent = '⚠ ' + (res.error || 'error'); return; }
+        if (install) {
+            // This instance hands the port to the service and exits; the page
+            // reconnects to the service once it is up (~ port handoff time).
+            msg.textContent = T.svc_installing;
+            setTimeout(() => location.reload(), 6500);
+        } else {
+            msg.textContent = '✓';
+            setTimeout(loadServiceBlock, 1500);
+        }
+    }).catch(() => { msg.textContent = '⚠ error'; });
 }
 function closeSettings() { document.getElementById('settings-modal').style.display = 'none'; }
 function togglePw() {
