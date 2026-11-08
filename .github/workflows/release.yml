@@ -52,7 +52,7 @@ jobs:
       # Verify a download with:
       #   gh attestation verify efemon-windows-amd64.exe --repo eFeSpain/efe-process-monitor
       - name: Attest build provenance
-        uses: actions/attest-build-provenance@v2
+        uses: actions/attest-build-provenance@v4
         with:
           subject-path: dist/efemon-*
 
