@@ -2,8 +2,10 @@ package main
 
 import (
 	"encoding/csv"
+	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"testing"
@@ -112,3 +114,74 @@ func TestJSONHandlersRejectBadBodies(t *testing.T) {
 }
 
 func itoa(n int) string { return strconv.Itoa(n) }
+
+// withTempEnv points .env at a throwaway file and clears the password after.
+func withTempEnv(t *testing.T) {
+	t.Helper()
+	old := envPath
+	envPath = filepath.Join(t.TempDir(), ".env")
+	t.Cleanup(func() { setAuthPassword(""); envPath = old })
+}
+
+// Changing or removing an existing password needs the current one, so a
+// hijacked session cannot quietly take the gate down; enabling it the first
+// time needs nothing but the new password.
+func TestSettingsPasswordFlow(t *testing.T) {
+	withTempEnv(t)
+	post := func(body string) map[string]any {
+		w := jsonPost(handleSettings, "/api/settings", body)
+		var out map[string]any
+		if err := json.Unmarshal(w.Body.Bytes(), &out); err != nil {
+			t.Fatalf("settings response is not JSON: %v %q", err, w.Body.String())
+		}
+		return out
+	}
+	if out := post(`{"AuthEnabled":true,"AuthPassword":"short"}`); authEnabled() || out["auth_error"] == nil {
+		t.Fatalf("a short password must be refused with an error, got %v", out)
+	}
+	if out := post(`{"AuthEnabled":true,"AuthPassword":"longenough8"}`); !authEnabled() || out["auth_error"] != nil {
+		t.Fatalf("enabling with a valid password should work, got %v", out)
+	}
+	if out := post(`{"AuthEnabled":false}`); !authEnabled() || out["auth_error"] == nil {
+		t.Fatalf("disabling without the current password must be refused, got %v", out)
+	}
+	if out := post(`{"AuthEnabled":true,"AuthPassword":"anothergood1","CurrentPassword":"wrong"}`); !checkPassword("longenough8") || out["auth_error"] == nil {
+		t.Fatalf("replacing with a wrong current password must be refused, got %v", out)
+	}
+	if out := post(`{"AuthEnabled":false,"CurrentPassword":"longenough8"}`); authEnabled() || out["auth_error"] != nil {
+		t.Fatalf("disabling with the current password should work, got %v", out)
+	}
+}
+
+// The history exports must be well-formed documents of what is stored, and
+// deleting history needs an explicit confirm — a stray call cannot wipe it.
+func TestHistoryExportsAndGuardedDelete(t *testing.T) {
+	setupTestDB(t)
+	logEvent(Event{Kind: "remote", PID: 1, Process: "a", Exe: "/x/a", Remote: "8.8.8.8:443"})
+	logEvent(Event{Kind: "closed", PID: 1, Process: "a", Exe: "/x/a", Remote: "8.8.8.8:443"})
+	dbSaveScoreChange("/x/a", "8.8.8.8", 40, "path_staging/25;unsigned/15")
+
+	w := httptest.NewRecorder()
+	handleExportJSON(w, httptest.NewRequest(http.MethodGet, "/export.json", nil))
+	var evs []Event
+	if err := json.Unmarshal(w.Body.Bytes(), &evs); err != nil || len(evs) != 2 {
+		t.Errorf("export.json: err=%v n=%d", err, len(evs))
+	}
+	w = httptest.NewRecorder()
+	handleExportTimeline(w, httptest.NewRequest(http.MethodGet, "/export/timeline.json", nil))
+	var tl []map[string]any
+	if err := json.Unmarshal(w.Body.Bytes(), &tl); err != nil || len(tl) != 1 {
+		t.Errorf("timeline.json: err=%v n=%d body=%s", err, len(tl), w.Body.String())
+	}
+
+	w = httptest.NewRecorder()
+	handleAPIEvents(w, httptest.NewRequest(http.MethodDelete, "/api/events", nil))
+	if w.Code != http.StatusBadRequest || len(queryEvents(10, "")) != 2 {
+		t.Errorf("DELETE without confirm: code=%d events left=%d, want 400 and 2", w.Code, len(queryEvents(10, "")))
+	}
+	w = httptest.NewRecorder()
+	handleAPIEvents(w, httptest.NewRequest(http.MethodDelete, "/api/events?confirm=1&kind=closed", nil))
+	if w.Code != http.StatusOK || len(queryEvents(10, "")) != 1 {
+		t.Errorf("DELETE with confirm and a kind filter: code=%d events left=%d, want 200 and 1", w.Code, len(queryEvents(10, "")))
+	}
+}

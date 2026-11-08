@@ -23,3 +23,6 @@ Thumbs.db
 
 # Screenshots are tracked in docs/ — but ignore temp capture dirs
 *.tmp
+
+# Editor / agent local config
+.claude/

@@ -74,6 +74,12 @@ Versions follow [Semantic Versioning](https://semver.org/).
 - Database reads report an error that cut a scan short instead of returning a
   silently truncated history; the SSE keepalive uses one ticker instead of a
   timer per event.
+
+### Documentation
+- `ARCHITECTURE.md` catches up: the render-path rule (cache or queue, never a
+  wait), the single-flight render, `broadcast` vs `publish`, the new indexes and
+  retention, the audit diff keying, and the stale "cd go" / `.env` lookup
+  lines from before the repo root became the Go module.
 - The score breakdown is rendered in the language of the request that reads
   it. It used to be rendered from a process-wide "current language", so two
   browsers in different languages could each see the other's words.

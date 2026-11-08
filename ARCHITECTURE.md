@@ -10,7 +10,6 @@ A Python reference version lives in the parent folder (`../`) — **frozen**, do
 ## Build / run
 
 ```bash
-cd go
 go build -o efemon.exe .          # Windows
 GOOS=linux  go build -o efemon .  # Linux  (cgo-free, single command)
 GOOS=darwin go build -o efemon .  # macOS
@@ -25,12 +24,15 @@ GOOS=darwin go build -o efemon .  # macOS
   (`*_test.go` fail if a key is in one language only), and DB/session round-trips on a temp SQLite
   (`setupTestDB`, incl. the permanent-vs-session toggle). Network/OS code (VT, AbuseIPDB, Authenticode,
   `dpkg/rpm`) is intentionally not unit-tested.
-- `.github/workflows/ci.yml` (push/PR): gofmt-clean check, `go vet`, `go test`, and a cross-build matrix
-  (windows/linux/darwin, amd64+arm64) that keeps the binary cgo-free.
+- `.github/workflows/ci.yml` (push/PR): gofmt-clean check, `go vet`, `go test -race`, staticcheck, gosec,
+  **govulncheck** (the toolchain is pinned by `go.mod`; 0.4.0 shipped with 22 fixed stdlib CVEs because
+  nothing checked), and a cross-build matrix (windows/linux/darwin, amd64+arm64) that keeps the binary
+  cgo-free. Dependabot (`.github/dependabot.yml`) bumps modules and actions weekly.
 
 ## Where data lives (IMPORTANT)
 - **`efemon.db`** (SQLite) → next to the executable (`appDir` = dir of `os.Executable()`), set in `main.go`.
-- **`.env`** → searched: exe dir → cwd → `../.env` (dev: real keys are in `../.env`). `writeEnv` saves to the one found.
+- **`.env`** → next to the executable. The cwd → `../.env` fallback only exists with `EFEMON_DEV=1`
+  (dev: real keys are in `../.env`). `writeEnv` saves to the one found.
 - Keys/flags in `.env`: `VT_API_KEY`, `ABUSEIPDB_API_KEY`, `NOTIFY_DESKTOP`, `NOTIFY_SOUND`,
   `PERSIST_WHITELIST`, `PERSIST_BLOCKS`, `REFRESH_SECS`, `AUTH_HASH` (base64 of a bcrypt hash; "" = login off),
   `LISTEN_ADDR` ("" = `127.0.0.1:5000`), optional `LISTEN_CERT`/`LISTEN_KEY`,
@@ -107,6 +109,13 @@ GOOS=darwin go build -o efemon .  # macOS
 ## Runtime model
 - `GET /` returns only the **shell** (instant). The table is loaded async from `GET /api/connections`
   (renders `rows.html`), so the UI shows "procesando" then fills in.
+- **The render path never waits on the network or a subprocess.** VT hashes, signatures, IP reputation
+  (`enrichIPCached`) and LAN host info (`lanLookupCached`) are cache-only during a render; a miss is
+  reported as `nil`/`PENDING` (the row shows `~` partial, the IP block says "reputation pending") and
+  queued on a `lookupQueue` (queue.go) whose workers resolve it and `broadcast` a `refresh` SSE event —
+  not logged, it is a UI nudge — so the page redraws by itself. Concurrent `/api/connections` requests
+  coalesce onto one analysis (`sharedConnections`, flight.go); the analysis is language-neutral and
+  `localizedConnections` renders the breakdown per request.
 - A **live monitor** goroutine (`monitorLoop`, every 3s) diffs connection snapshots and pushes SSE
   events to `/events`; the browser shows a feed and reactively refreshes the table (debounced 1.5s,
   paused while a detail row/capture is open). Optional periodic refresh interval (Settings, localStorage).
@@ -114,10 +123,14 @@ GOOS=darwin go build -o efemon .  # macOS
   (`vtWorker`); the table shows `PENDING` then caches the verdict in SQLite. `NOT_IN_VT` is cached too.
 - **Single instance**: if port 5000 is taken, it opens the browser and exits.
 
-## File map (go/)
+## File map
 - **main.go** — HTTP server, all routes/handlers, `go:embed` of templates+static, startup (env, DB,
   elevation, monitor, vtWorker, primeIntel, browser, banner), `appDir`/`exeDir`, template `funcMap`
-  (trunc, threatClass, join, joinInts, json, deref, humanBytes).
+  (trunc, threatClass, join, joinInts, json, deref, humanBytes). Every JSON handler reads its body
+  through `decodeJSON` (64 KiB bound, 400 on a decode error — never act on the zero value); the CSV
+  export goes through `csvCell` (formula neutralization). `/api/kill` refuses `ownPID` and PID 1.
+- **flight.go** — `flightGroup[K, V]`: single-flight for the table render. **queue.go** — `lookupQueue`:
+  enqueue-once-while-pending + workers + `drained` callback, shared by the reputation and LAN passes.
 - **connections.go** — `analyzeConnections()` (the core): enumerate via gopsutil, dedupe per exe/PID/IP,
   concurrent VT-hash + IP-enrich + LAN-lookup, build `Conn` rows. Has `Conn` struct, `fileHash`,
   `analyzeExe` (VT hash via cache→queue), `checkSignatures` (L1 mem + L2 DB) → `queryAuthenticode` on Windows
@@ -126,20 +139,23 @@ GOOS=darwin go build -o efemon .  # macOS
   `getProcDetails`, `RemoteIPs`. `threatScore` also sets `Conn.Partial` via `coverageIncomplete` — a zero
   score with unresolved key signals (VT `PENDING`/`N/A`, public IP not yet enriched) is shown as `~`
   (muted, "datos incompletos") instead of a confident "limpio", so a low score never reads as "safe".
-- **intel.go** — `Enrichment`, `enrichIP` (geo ipwho.is, reverse DNS, `vtIP`, `abuseIPDB`, `torExits`,
-  `feodoC2`, `threatFoxLookup`, `spamhausHit`, `shodan`), provider attenuation (`detectProvider`), `ipReport`,
+- **intel.go** — `Enrichment`, `enrichIP` (geo ipwho.is, reverse DNS with a 3 s deadline, `vtIP`, `abuseIPDB`,
+  `torExits`, `feodoC2`, `threatFoxLookup`, `spamhausHit`, `shodan`), `enrichIPCached` + `enrichQueue` (the
+  render-path side, see Runtime model), provider attenuation (`detectProvider`), `ipReport`,
   HTTP helpers (`getJSON`/`getText`/`getZipCSV`), `vtKey`/`abuseKey`. **Keyless downloaded feeds**: ThreatFox
   (abuse.ch zipped CSV → `ip→malware family` map) and Spamhaus DROP (`drop_v4.json` → CIDR set, matched with
   `net.IPNet.Contains`); both cached 24h and auto-refreshed (no manual refresh — `primeIntel` warms all four at startup).
 - **vt.go** — VT token bucket (`vtBucket`, 4/min shared hash+IP), background hash queue + `vtWorker`, `resolveHash`.
 - **lan.go** — `LANInfo` (DNS/NetBIOS/MAC/**Vendor**), `lanLookup` (reverse DNS + `arpMAC` from ARP table +
-  `ouiVendor` from MAC + `netbiosName` via nbtstat/nmblookup), `isLAN`.
+  `ouiVendor` from MAC + `netbiosName` via nbtstat/nmblookup), `isLAN`. `lanLookupCached` serves the cache
+  (stale included, with a refresh queued on `lanQueue`) so the render never runs nmblookup inline.
 - **oui.go** — `ouiVendor(mac)`: IEEE OUI → vendor lookup, fully offline. Lazy-decompresses the embedded
   `ouidata.gz` (`go:embed`) into a map on first use; skips locally administered MACs; **longest-prefix
   match** (MA-S /36 → MA-M /28 → MA-L /24).
 - **ouidata.gz** — embedded merged IEEE OUI table (MA-L+MA-M+MA-S; PREFIX\tVendor, variable-length
   prefixes, gzip, ~52k vendors), regenerate with `go run ./tools/genoui`.
-- **monitor.go** — SSE pub/sub (`subscribe`/`publish`), `Event`, `snapshot`/diff, beaconing (`checkBeacon`),
+- **monitor.go** — SSE pub/sub (`subscribe`/`publish` = log + push, `broadcast` = push only), `Event`,
+  `snapshot`/diff (skips `ownPID` and `ownChild` — our own nmblookup/arp/tshark), beaconing (`checkBeacon`),
   `alertOnIntel` (background reputation alert on new public conns), desktop-notify triggers. (`baselineSeen` is in db.go.)
 - **notify.go** — `notify()` (throttled), `sendNotification`: Windows modern toast with a registered
   **AppUserModelID** (`eFe.ProcessMonitor`, so it shows the app name, not PowerShell), `IconUri` set to the
@@ -150,6 +166,8 @@ GOOS=darwin go build -o efemon .  # macOS
   **concurrently**, each sorted by severity. `AuditCheck{Category,Key,Name,Status,Detail,Items,New}`:
   `Key` is the i18n key (stable identity), `Items` the raw findings, `New` those first seen within
   `auditNewWindow` (24 h) per the `audit_seen` table (`applyAuditDiff`; the first scan marks nothing).
+  Items are keyed by `auditItemKey` (the "(pid N)" blanked: a PID is not identity, and keying on it made
+  every reboot mark the same processes NEW); `migrateAuditSeen` folds pre-existing rows in at start-up.
   Per-user files are checked for every real account (`userHomes`), not `$HOME` — under sudo that is /root.
   `auditStrings` = audit i18n (es/en/zh) via `atr(lang,key)`. `auditCached(lang,refresh)` per-language cache.
 - **audit_parse.go** — the audit's pure parsers (reg query, IFEO, schtasks, services, driverquery,
@@ -161,7 +179,10 @@ GOOS=darwin go build -o efemon .  # macOS
   `startupBanner`, `hasCmd`, `ensureNft`. (Relaunch handoff: the new process retries `net.Listen` ~10s
   while the old one frees the port.)
 - **db.go** — SQLite (modernc, `SetMaxOpenConns(1)`). Tables: hashes, events, signatures, baseline,
-  baseline_hash, whitelist, ip_whitelist, blocked, hostnames, score_history. **Pure persistence
+  baseline_hash, whitelist, ip_whitelist, blocked, hostnames, score_history. Indexes `events(exe, epoch)`
+  and `score_history(exe, ip, epoch)` back the per-render queries. `pruneEvents` (start-up + daily) applies
+  `EVENT_RETENTION_DAYS` to events, score_history **and hostnames**, then `incremental_vacuum`
+  (`ensureIncrementalVacuum` converts an older file once). Every `rows.Next` loop ends in `rowsDone`. **Pure persistence
   layer** (`db*` helpers: `dbAddWhitelist`, `dbAllBlocked`, …) + `baselineSeen(exe, hash)` → `(seen,
   changed)`: keyed by content, adopts pre-upgrade path-only rows silently. The session-aware public
   API is in store.go.
@@ -177,6 +198,8 @@ GOOS=darwin go build -o efemon .  # macOS
   (`tlsListener`: user `LISTEN_CERT`/`LISTEN_KEY`, else a cached self-signed cert next to the exe with
   SANs for loopback + every local IP). Sets `listenExposed`/`listenTLS`.
 - **auth.go** — transport hardening + optional single-password gate (no user management by design).
+  After the local token is exchanged for a cookie, GET/HEAD are redirected to the URL without `?t=`
+  (`tokenlessTarget`: local path only — "//evil.com" is an open redirect).
   `securityMiddleware` (wraps everything via `rootHandler`): **Host allow-list** (`hostAllowed` — loopback,
   plus IP-literal Hosts when exposed → anti DNS-rebinding), **same-origin Origin check** on writes (anti
   CSRF; `Referrer-Policy: same-origin` so form POSTs keep their Origin), then the auth gate. `sessionCookie`
@@ -229,6 +252,10 @@ GOOS=darwin go build -o efemon .  # macOS
 - **Always shell out via `command()`/`commandContext()`** (proc.go), never `exec.Command` directly: in a
   `-H windowsgui` (no-console) build, every console subprocess pops a command window unless spawned with
   `CREATE_NO_WINDOW` (set by `hideWindow` in proc_windows.go; no-op elsewhere).
+- **Nothing on the render path waits on the network or a subprocess.** New lookups follow the pattern:
+  cache hit or `nil`, miss queued on a `lookupQueue`, worker resolves, `broadcast` a `refresh`.
+- **JSON handlers decode through `decodeJSON`** and reject what does not parse; state-changing endpoints
+  declare their methods with `requireMethod`.
 - Test gotcha: due to single-instance, a stale `efemon.exe` keeps serving the OLD build — always
   `taskkill /F /IM efemon.exe` before re-running, or you'll test the old binary.
 - Many features (kill, block IP, full process names, Authenticode) need **admin/root**.
