@@ -125,6 +125,22 @@ func main() {
 	if trayHelperMain() {
 		return
 	}
+	opts, err := parseArgs(os.Args[1:])
+	if err != nil {
+		fmt.Fprintln(os.Stderr, err)
+		os.Exit(2)
+	}
+	if opts.Version {
+		fmt.Printf("efemon %s\n", appVersion)
+		return
+	}
+	if runServiceCommand(opts) {
+		return
+	}
+	// systemd sets INVOCATION_ID for every unit it starts: a unit written by
+	// hand without --service still runs as a service.
+	serviceMode = opts.Service || os.Getenv("INVOCATION_ID") != ""
+	noBrowser = opts.NoBrowser || serviceMode
 	// DB and .env live next to the executable, so the app behaves the same
 	// wherever it's launched from.
 	//
@@ -240,7 +256,9 @@ func main() {
 	initLocalToken()
 
 	startupBanner()
-	go func() { time.Sleep(1500 * time.Millisecond); openDashboard(url) }()
+	if !noBrowser {
+		go func() { time.Sleep(1500 * time.Millisecond); openDashboard(url) }()
+	}
 	log.Printf("[+] eFe Process Monitor → %s", url)
 	runApp(ln, url) // serves; on Windows also shows the tray icon + menu
 }

@@ -1,0 +1,70 @@
+package main
+
+import (
+	"flag"
+	"fmt"
+	"strings"
+)
+
+// Command-line options. Until 0.4.x the only argument was the internal
+// --tray-helper; running as a service needs a few more, and a service manager
+// or a script has no other interface to the binary than these.
+
+type options struct {
+	Version   bool // print the version and exit
+	NoBrowser bool // start without opening the browser
+	Service   bool // service mode: no browser, session watcher, systemctl for quit/restart
+	Install   bool // install as a systemd service and exit
+	Uninstall bool // remove the systemd service and exit
+	Status    bool // print the service status and exit
+}
+
+// serviceMode is set by main from --service, or from the INVOCATION_ID that
+// systemd puts in the environment of every unit it starts (a unit edited by
+// hand without --service still behaves as a service). noBrowser is --no-browser
+// or service mode.
+var serviceMode, noBrowser bool
+
+// parseArgs parses the arguments after the program name. An unknown flag, or
+// install and uninstall together, is an error whose text starts with "usage:".
+func parseArgs(args []string) (options, error) {
+	var o options
+	fs := flag.NewFlagSet("efemon", flag.ContinueOnError)
+	var discard strings.Builder
+	fs.SetOutput(&discard) // the usage text is ours, not flag's
+	fs.BoolVar(&o.Version, "version", false, "")
+	fs.BoolVar(&o.NoBrowser, "no-browser", false, "")
+	fs.BoolVar(&o.Service, "service", false, "")
+	fs.BoolVar(&o.Install, "install-service", false, "")
+	fs.BoolVar(&o.Uninstall, "uninstall-service", false, "")
+	fs.BoolVar(&o.Status, "service-status", false, "")
+	if err := fs.Parse(args); err != nil || fs.NArg() > 0 {
+		return options{}, fmt.Errorf("usage: %s", usage())
+	}
+	if o.Install && o.Uninstall {
+		return options{}, fmt.Errorf("usage: --install-service and --uninstall-service exclude each other\n%s", usage())
+	}
+	if o.Service {
+		o.NoBrowser = true // at boot there is nobody to open a browser for
+	}
+	return o, nil
+}
+
+func usage() string {
+	return `efemon [--no-browser] [--service]
+       efemon --version
+       efemon --install-service | --uninstall-service | --service-status   (Linux, root)
+
+  --version            print the version and exit
+  --no-browser         start without opening the dashboard in a browser
+  --service            service mode: no browser; the tray icon attaches to the
+                       desktop session when one appears; quit/restart via systemctl
+  --install-service    copy the binary to /opt/efemon, write and enable the systemd unit
+  --uninstall-service  stop, disable and remove the unit (data in /opt/efemon is kept)
+  --service-status     print installed/active/path; exit 0 when installed and active`
+}
+
+// runServiceCommand runs --install-service / --uninstall-service /
+// --service-status and exits; it returns false when none of them was asked.
+// Filled in with the service implementation.
+func runServiceCommand(o options) bool { return false }
