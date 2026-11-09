@@ -3,6 +3,8 @@
 package main
 
 import (
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -28,6 +30,11 @@ func TestDesktopUserCandidates(t *testing.T) {
 		{"sudo as root itself is not a user", map[string]string{"SUDO_UID": "0"}, []string{"1000"}, "1000"},
 		{"su -: the only logged-in user", map[string]string{}, []string{"0", "1000"}, "1000"},
 		{"su -: two users is a guess we do not make", map[string]string{}, []string{"1000", "1001"}, ""},
+		// The display manager's greeter (sddm, gdm: system uids) has a bus and a
+		// display too; at boot it is the only "session" for a while and the
+		// service tried to put the tray there. System accounts are not users.
+		{"greeter plus the user at login", map[string]string{}, []string{"111", "1000"}, "1000"},
+		{"greeter alone before login", map[string]string{}, []string{"111"}, ""},
 		{"nothing", map[string]string{}, nil, ""},
 	} {
 		got := strings.Join(desktopUserCandidates(env(tc.env), tc.run), ",")
@@ -241,5 +248,17 @@ func TestOtherInstancesExcludesSelf(t *testing.T) {
 		if pid == ownPID {
 			t.Fatal("our own process is not another instance")
 		}
+	}
+}
+
+func TestLoginDefsUIDMin(t *testing.T) {
+	dir := t.TempDir()
+	p := filepath.Join(dir, "login.defs")
+	os.WriteFile(p, []byte("# comment\nUID_MIN                  500\nUID_MAX 60000\n"), 0o644)
+	if got := loginDefsUIDMin(p); got != 500 {
+		t.Errorf("UID_MIN = %d, want 500", got)
+	}
+	if got := loginDefsUIDMin(filepath.Join(dir, "missing")); got != 1000 {
+		t.Errorf("missing file → %d, want the 1000 default", got)
 	}
 }

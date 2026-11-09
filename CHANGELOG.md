@@ -40,6 +40,12 @@ Versions follow [Semantic Versioning](https://semver.org/).
   notification. A single engine on a big provider's range (Chrome talking to
   claude.ai) used to raise a red alert and a notification. The reason reads
   `VirusTotal ×N`.
+
+### Fixed
+- Service mode no longer mistakes the display manager's login screen (sddm,
+  gdm — a system account with a display of its own) for the user's desktop
+  session at boot: only regular users (uid ≥ `UID_MIN`) are candidates, so the
+  tray attaches to your session even while the greeter is still alive.
 - **URLhaus** (abuse.ch, same Auth-Key as ThreatFox): a remote address that is
   serving a malware-distribution URL *right now* scores +35 — less than a C2
   listing, because distribution sites are often compromised legitimate

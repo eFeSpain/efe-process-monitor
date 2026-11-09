@@ -289,12 +289,15 @@ func desktopUserCandidates(getenv func(string) string, runUsers []string) []stri
 	if len(out) > 0 {
 		return out
 	}
-	// No sudo/pkexec (su -, a service): if exactly one logged-in user has a
+	// No sudo/pkexec (su -, a service): if exactly one logged-in *user* has a
 	// session bus, that is the desktop we are on. Two or more is a guess we
-	// don't make.
+	// don't make. System accounts are not users: the display manager's
+	// greeter (sddm, gdm) has a bus and a display of its own, and at boot it
+	// is the only "session" for a while — the service used to try to put the
+	// tray icon on the login screen.
 	var found []string
 	for _, u := range runUsers {
-		if u != "0" {
+		if isHumanUID(u) {
 			found = append(found, u)
 		}
 	}
@@ -302,6 +305,33 @@ func desktopUserCandidates(getenv func(string) string, runUsers []string) []stri
 		return found
 	}
 	return nil
+}
+
+// uidMin is the first uid of a regular user (UID_MIN in /etc/login.defs; 1000
+// on every mainstream distribution, read at start-up when present).
+var uidMin = loginDefsUIDMin("/etc/login.defs")
+
+func loginDefsUIDMin(path string) int {
+	b, err := os.ReadFile(path) // #nosec G304 -- fixed system path
+	if err != nil {
+		return 1000
+	}
+	for _, ln := range strings.Split(string(b), "\n") {
+		f := strings.Fields(ln)
+		if len(f) == 2 && f[0] == "UID_MIN" {
+			if n, err := strconv.Atoi(f[1]); err == nil && n > 0 {
+				return n
+			}
+		}
+	}
+	return 1000
+}
+
+// isHumanUID reports whether uid belongs to a regular user: at least UID_MIN
+// and not nobody (65534).
+func isHumanUID(uid string) bool {
+	n, err := strconv.Atoi(uid)
+	return err == nil && n >= uidMin && n != 65534
 }
 
 // sessionEnvKeys are the variables a graphical child needs from the user's
