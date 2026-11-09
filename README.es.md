@@ -18,18 +18,14 @@ sobre el binario y la IP remota.
 
 > **Estado: estable.** Funciona y se usa a diario. La interfaz y los datos guardados pueden evolucionar entre versiones.
 
-**Novedades de la 0.4.1** — una versión de seguridad y fontanería. El toolchain
-pasa a Go 1.26.10 (la 0.4.0 salió con 22 CVE ya corregidas en la biblioteca
-estándar, justo en los paquetes que usa el servidor) y `govulncheck` vigila
-cada build. ThreatFox vuelve a través de la API de abuse.ch con una Auth-Key
-gratuita — la exportación sin clave había muerto en silencio — y cada feed
-muestra su estado en el panel de privacidad. La tabla se renderiza en
-milisegundos en vez de segundos: la reputación y las consultas LAN salieron
-del camino de la petición y la base de datos tiene los índices que sus
-consultas necesitaban. Nuevo: **alerta DGA** por ráfagas de NXDOMAIN (Linux).
-Y endurecimiento: CSV sin fórmulas, el token local fuera de la barra de
-direcciones, *kill* que se niega a matar al propio monitor. Detalle completo
-en el [changelog](CHANGELOG.md).
+**Novedades de la 0.5.0** — el monitor ya puede **arrancar con el sistema en
+Linux**: `sudo efemon --install-service` (o ⚙ Ajustes → *Arranque con el
+sistema*) lo instala como servicio systemd en `/opt/efemon`; vigila antes de que
+nadie inicie sesión, y el icono de bandeja, las notificaciones y *Abrir panel*
+se enganchan a tu sesión cuando aparece. Nuevos flags `--version` y
+`--no-browser`. Nueva fuente de reputación, **URLhaus** (abuse.ch, la misma
+Auth-Key que ThreatFox), que señala direcciones que están distribuyendo malware
+ahora mismo. Detalle completo en el [changelog](CHANGELOG.md).
 
 <div align="center">
 <img src="docs/screenshot-main.png" alt="Panel principal" width="880">

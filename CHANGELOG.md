@@ -6,7 +6,7 @@ Versions follow [Semantic Versioning](https://semver.org/).
 
 ---
 
-## [Unreleased]
+## [0.5.0] — 2026-11-09
 
 ### Added
 - **Run at boot on Linux.** `sudo efemon --install-service` copies the binary
