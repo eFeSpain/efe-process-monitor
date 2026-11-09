@@ -29,6 +29,12 @@ Versions follow [Semantic Versioning](https://semver.org/).
   now* restarts it. The persistence the audit looks for runs at boot; now the
   monitor does too.
 - `--version` and `--no-browser`.
+- **URLhaus** (abuse.ch, same Auth-Key as ThreatFox): a remote address that is
+  serving a malware-distribution URL *right now* scores +35 — less than a C2
+  listing, because distribution sites are often compromised legitimate
+  servers — with the family or threat as the reason, in the details, the
+  live-feed alert and the privacy panel. Only online URLs on IP-literal hosts
+  count; the feed refreshes every six hours (the API returns the last ~20 h).
 
 ### Changed
 - The live-activity block is resizable: drag the handle at its bottom-right
@@ -42,18 +48,6 @@ Versions follow [Semantic Versioning](https://semver.org/).
   `VirusTotal ×N`.
 
 ### Fixed
-- Service mode no longer mistakes the display manager's login screen (sddm,
-  gdm — a system account with a display of its own) for the user's desktop
-  session at boot: only regular users (uid ≥ `UID_MIN`) are candidates, so the
-  tray attaches to your session even while the greeter is still alive.
-- **URLhaus** (abuse.ch, same Auth-Key as ThreatFox): a remote address that is
-  serving a malware-distribution URL *right now* scores +35 — less than a C2
-  listing, because distribution sites are often compromised legitimate
-  servers — with the family or threat as the reason, in the details, the
-  live-feed alert and the privacy panel. Only online URLs on IP-literal hosts
-  count; the feed refreshes every six hours (the API returns the last ~20 h).
-
-### Fixed
 - Service mode polish from the review: the session watcher never holds its
   lock across the `/proc` scan or the helper handshake, rescans `/proc` only
   when the set of logged-in users changes (or every 30 s), and is read
@@ -61,6 +55,10 @@ Versions follow [Semantic Versioning](https://semver.org/).
   `--no-browser` is honoured on the "already running" handoff; installing from
   the service itself or from the CLI while another efemon runs is refused with
   the reason.
+- Service mode no longer mistakes the display manager's login screen (sddm,
+  gdm — a system account with a display of its own) for the user's desktop
+  session at boot: only regular users (uid ≥ `UID_MIN`) are candidates, so the
+  tray attaches to your session even while the greeter is still alive.
 
 ## [0.4.1] — 2026-11-08
 
