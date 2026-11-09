@@ -374,9 +374,13 @@ func isPublicPath(p string) bool {
 func securityMiddleware(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		// Defensive headers on every response. The UI is fully self-contained
-		// (no external scripts/styles/fonts), so a tight CSP holds; 'unsafe-inline'
-		// is required only because the templates use inline <script>/<style> and
-		// onclick handlers — injected content is still neutralized by html/template.
+		// (no external scripts/styles/fonts), so a tight CSP holds. Scripts are
+		// 'self' only: the dashboard ships its JavaScript as /static/app.js and
+		// wires every control through data-action attributes, so there is no
+		// inline script or handler anywhere — an XSS that slipped past
+		// html/template could not execute. Styles still allow inline
+		// attributes (the templates use style="…" freely); CSS injection is not
+		// code execution and the trade was not worth sixty class names.
 		h := w.Header()
 		h.Set("Cache-Control", "no-store") // dynamic dashboard; never let the browser serve a stale shell
 		h.Set("X-Content-Type-Options", "nosniff")
@@ -384,7 +388,8 @@ func securityMiddleware(next http.Handler) http.Handler {
 		h.Set("Referrer-Policy", "same-origin") // not "no-referrer": that makes browsers send Origin:null on form POSTs, breaking the CSRF check below
 		h.Set("Content-Security-Policy",
 			"default-src 'self'; img-src 'self' data:; style-src 'self' 'unsafe-inline'; "+
-				"script-src 'self' 'unsafe-inline'; connect-src 'self'; frame-ancestors 'none'; base-uri 'none'")
+				"script-src 'self'; connect-src 'self'; object-src 'none'; form-action 'self'; "+
+				"frame-ancestors 'none'; base-uri 'none'")
 
 		if !hostAllowed(r.Host) {
 			http.Error(w, "forbidden: host not allowed", http.StatusForbidden)
@@ -525,7 +530,7 @@ func handleLogin(w http.ResponseWriter, r *http.Request) {
 
 const loginHTML = `<!doctype html><html lang="%s"><head><meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>%s</title><style>
+<title>%s</title><script src="/static/login.js" defer></script><style>
 *{box-sizing:border-box} body{margin:0;height:100vh;display:flex;align-items:center;justify-content:center;
 background:#0d1117;color:#c9d1d9;font-family:system-ui,Segoe UI,sans-serif}
 .box{background:#161b22;border:1px solid #30363d;border-radius:10px;padding:28px 32px;width:320px;text-align:center}
@@ -538,7 +543,7 @@ button:hover{background:#2ea043} .err{color:#f85149;font-size:12px;margin:10px 0
 <div class="lock">🔒</div><h1>eFe Process Monitor</h1><p>%s</p>
 <div style="position:relative">
 <input type="password" id="lpw" name="password" autofocus autocomplete="current-password" placeholder="••••••••" style="padding-right:34px">
-<span onclick="var p=document.getElementById('lpw');p.type=p.type=='password'?'text':'password'" style="position:absolute;right:11px;top:50%%;transform:translateY(-50%%);cursor:pointer;opacity:.55;user-select:none">👁</span>
+<span data-action="togglePw" style="position:absolute;right:11px;top:50%%;transform:translateY(-50%%);cursor:pointer;opacity:.55;user-select:none">👁</span>
 </div>
 <button type="submit">%s</button>%s</form></body></html>`
 

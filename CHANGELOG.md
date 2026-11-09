@@ -8,6 +8,15 @@ Versions follow [Semantic Versioning](https://semver.org/).
 
 ## [0.5.0] — 2026-11-09
 
+### Security
+- **Content-Security-Policy without `unsafe-inline` for scripts.** The
+  dashboard's JavaScript moved to `/static/app.js` and every control is wired
+  through `data-action` attributes and one delegated dispatcher, so the page
+  has no inline script or handler left and `script-src` is `'self'` alone
+  (plus `object-src 'none'`, `form-action 'self'`). An XSS that slipped past
+  `html/template` could no longer execute. A test fails the build on any
+  inline handler, and another on a `data-action` the script does not define.
+
 ### Added
 - **Run at boot on Linux.** `sudo efemon --install-service` copies the binary
   to `/opt/efemon`, moves the existing `.env`, database and TLS pair there and

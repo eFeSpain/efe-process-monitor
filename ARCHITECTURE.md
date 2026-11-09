@@ -256,7 +256,11 @@ GOOS=darwin go build -o efemon .  # macOS
   or `-in a.csv,b.csv,c.csv`); skips the "IEEE Registration Authority" placeholder so subdivided blocks
   resolve to the real owner.
 - **web/templates/report.html** — the shell: header, all modals (settings, history, blocked, whitelist,
-  audit, block-IP, **privacy/egress**), all CSS and all JS. **web/templates/rows.html** — the connection table rows partial.
+  audit, block-IP, **privacy/egress**) and all CSS. **No inline JavaScript**: the script is
+  **web/static/app.js** (translations arrive on `<body data-t data-refresh>`), and every control carries
+  `data-action` / `data-change` / `data-input` routed by one delegated dispatcher to the `actions` table at
+  the end of app.js — parameters go in `data-*` attributes, which the template escapes. **web/static/login.js**
+  does the same for the login page. **web/templates/rows.html** — the connection table rows partial.
 
 ## HTTP endpoints
 `/`, `/api/connections`, `/events` (SSE), `/api/interfaces`, `/capture` (SSE), `/capture.pcap`,
@@ -283,6 +287,9 @@ GOOS=darwin go build -o efemon .  # macOS
   cache hit or `nil`, miss queued on a `lookupQueue`, worker resolves, `broadcast` a `refresh`.
 - **JSON handlers decode through `decodeJSON`** and reject what does not parse; state-changing endpoints
   declare their methods with `requireMethod`.
+- **No inline JavaScript, ever** (CSP `script-src 'self'`). A new control gets `data-action="name"` in the
+  template and a `name: fn` entry in the `actions` table of app.js; `TestNoInlineScriptOrHandlers` and
+  `TestDataActionsAreWired` enforce both halves.
 - Test gotcha: due to single-instance, a stale `efemon.exe` keeps serving the OLD build — always
   `taskkill /F /IM efemon.exe` before re-running, or you'll test the old binary.
 - Many features (kill, block IP, full process names, Authenticode) need **admin/root**.

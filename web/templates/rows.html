@@ -6,7 +6,7 @@
 {{ $hasRemote := $c.Public }}
 {{ $d := $c.Details }}
 {{ $okd := and $d (eq $d.Err "") }}
-<tr class="main-row{{ if $c.Suspicious }} suspicious{{ end }}" data-search="{{ $c.Process }} {{ $c.Exe }} {{ $c.RemoteIP }} {{ $c.Port }} {{ $c.Known }} {{ $c.PID }}" data-sig="{{ $c.PID }}|{{ $c.LocalIP }}:{{ $c.Port }}|{{ $c.RemoteIP }}:{{ $c.RPort }}|{{ $c.Status }}" data-proc="{{ $c.Process }}" data-pid="{{ $c.PID }}" data-local="{{ $c.LocalIP }}:{{ $c.Port }}" data-remote="{{ if $c.RemoteIP }}{{ $c.RemoteIP }}:{{ $c.RPort }}{{ end }}" onclick="toggleDetails({{ $i }})">
+<tr class="main-row{{ if $c.Suspicious }} suspicious{{ end }}" data-search="{{ $c.Process }} {{ $c.Exe }} {{ $c.RemoteIP }} {{ $c.Port }} {{ $c.Known }} {{ $c.PID }}" data-sig="{{ $c.PID }}|{{ $c.LocalIP }}:{{ $c.Port }}|{{ $c.RemoteIP }}:{{ $c.RPort }}|{{ $c.Status }}" data-proc="{{ $c.Process }}" data-pid="{{ $c.PID }}" data-local="{{ $c.LocalIP }}:{{ $c.Port }}" data-remote="{{ if $c.RemoteIP }}{{ $c.RemoteIP }}:{{ $c.RPort }}{{ end }}" data-action="toggleDetails" data-i="{{ $i }}">
     <td data-sort="{{ $c.Threat }}"><span class="threat threat-{{ threatClass $c.Threat }}{{ if $c.Partial }} threat-partial{{ end }}" title="{{ $c.Breakdown }}">{{ $c.Threat }}{{ if $c.Partial }}<span class="partial-mark">~</span>{{ end }}</span></td>
     <td data-sort="{{ $c.Port }}">{{ $c.Port }}{{ if $c.RPort }} ↔ {{ $c.RPort }}{{ end }}</td>
     <td data-sort="{{ $c.PID }}">{{ if $c.PID }}{{ $c.PID }}{{ else }}—{{ end }}</td>
@@ -27,7 +27,7 @@
         {{ else }}<span class="sig-na">—</span>{{ end }}
     </td>
     <td title="{{ $c.Exe }}">{{ if $c.Suspicious }}⚠ {{ end }}{{ trunc 50 $c.Exe }}</td>
-    <td>{{ if $c.Capturable }}<button class="btn btn-sniff" onclick="event.stopPropagation(); openCapture({{ $i }}, '{{ $c.LocalIP }}', '{{ $c.RemoteIP }}')">⬡ Sniff</button>{{ end }}</td>
+    <td>{{ if $c.Capturable }}<button class="btn btn-sniff" data-action="openCapture" data-i="{{ $i }}" data-local="{{ $c.LocalIP }}" data-remote="{{ $c.RemoteIP }}">⬡ Sniff</button>{{ end }}</td>
 </tr>
 
 <tr id="d{{ $i }}" class="details-row" style="display:none"><td colspan="12">
@@ -107,7 +107,7 @@
         {{ if $a.Listening }}<div class="detail-line"><span class="detail-label">{{ $T.act_listen }}</span><span>{{ $a.ListeningStr }}</span></div>{{ end }}
         {{ if $a.Names }}<div class="detail-line"><span class="detail-label" title="{{ $T.asked_for_hint }}">{{ $T.asked_for }}</span><span>{{ range $a.Names }}<span class="hostchip">{{ . }}</span> {{ end }}</span></div>{{ end }}
         {{ if $a.LastSeen }}<div class="detail-line"><span class="detail-label">{{ $T.act_day }}</span><span>{{ $a.DayIPs }} {{ $T.act_ips }} · {{ $a.DayEvents }} {{ $T.act_events }}{{ if $a.Risk }} · {{ $a.Risk }} {{ $T.act_risk }}{{ end }}</span></div>
-        <div class="detail-line"><span class="detail-label">{{ $T.act_span }}</span><span>{{ $a.FirstSeen }} → {{ $a.LastSeen }} &nbsp; <a href="#" class="act-link" onclick="event.preventDefault(); event.stopPropagation(); openHistoryFor('{{ $c.Process }}')">{{ $T.act_history }} ↗</a></span></div>{{ end }}
+        <div class="detail-line"><span class="detail-label">{{ $T.act_span }}</span><span>{{ $a.FirstSeen }} → {{ $a.LastSeen }} &nbsp; <a href="#" class="act-link" data-action="openHistoryFor" data-proc="{{ $c.Process }}">{{ $T.act_history }} ↗</a></span></div>{{ end }}
     </div>
     {{ end }}
 
@@ -123,16 +123,16 @@
     <div class="detail-block actions-block">
         <h4>{{ $T.detail_actions }}</h4>
         <div class="action-btns">
-            <label class="lock-switch" title="{{ $T.lock_hint }}" onclick="event.stopPropagation()">
-                <input type="checkbox" onchange="toggleLock(this, {{ $i }})"><span class="lock-track"><span class="lock-thumb"></span></span>
+            <label class="lock-switch" title="{{ $T.lock_hint }}" data-action="noop">
+                <input type="checkbox" data-change="toggleLock" data-i="{{ $i }}"><span class="lock-track"><span class="lock-thumb"></span></span>
                 <span class="lock-text">🔒 {{ $T.lock }}</span>
             </label>
-            {{ if $c.PID }}<button class="btn btn-stop" onclick="killProc({{ $c.PID }}, '{{ $c.Process }}')">{{ $T.kill_proc }}</button>{{ end }}
-            {{ if gt (len $c.RemoteIPs) 1 }}<button class="btn btn-stop" data-ips="{{ join "," $c.RemoteIPs }}" onclick="openBlock(this)">{{ $T.block_ip }}</button>
-            {{ else if $c.RemoteIPs }}<button class="btn btn-stop" onclick="blockIp('{{ index $c.RemoteIPs 0 }}')">{{ $T.block_ip }}</button>
+            {{ if $c.PID }}<button class="btn btn-stop" data-action="killProc" data-pid="{{ $c.PID }}" data-name="{{ $c.Process }}">{{ $T.kill_proc }}</button>{{ end }}
+            {{ if gt (len $c.RemoteIPs) 1 }}<button class="btn btn-stop" data-ips="{{ join "," $c.RemoteIPs }}" data-action="openBlock">{{ $T.block_ip }}</button>
+            {{ else if $c.RemoteIPs }}<button class="btn btn-stop" data-action="blockIp" data-ip="{{ index $c.RemoteIPs 0 }}">{{ $T.block_ip }}</button>
             {{ else if $c.RemoteIP }}<button class="btn btn-stop" disabled>{{ $T.block_ip }}</button>{{ end }}
-            {{ if and (ne $c.Exe "N/A") (ne $c.Exe "ACCESS_DENIED") }}<button class="btn" onclick="toggleWhitelist('{{ $c.Exe }}', {{ $c.Whitelist }})">★ Whitelist</button>{{ end }}
-            {{ if $hasRemote }}<button class="btn" onclick="toggleIPWhitelist('{{ $c.RemoteIP }}', {{ $c.IPWhitelist }})">{{ $T.wl_ip_btn }}</button>{{ end }}
+            {{ if and (ne $c.Exe "N/A") (ne $c.Exe "ACCESS_DENIED") }}<button class="btn" data-action="toggleWhitelist" data-exe="{{ $c.Exe }}" data-listed="{{ $c.Whitelist }}">★ Whitelist</button>{{ end }}
+            {{ if $hasRemote }}<button class="btn" data-action="toggleIPWhitelist" data-ip="{{ $c.RemoteIP }}" data-listed="{{ $c.IPWhitelist }}">{{ $T.wl_ip_btn }}</button>{{ end }}
         </div>
     </div>
 
@@ -147,14 +147,14 @@
                     <option value="1000">1000</option>
                     <option value="0">∞</option>
                 </select>
-                <a class="btn" href="#" onclick="downloadPcap(event, {{ $i }})" title="{{ $T.cap_pcap_t }}">⬇ pcap</a>
+                <a class="btn" href="#" data-action="downloadPcap" data-i="{{ $i }}" title="{{ $T.cap_pcap_t }}">⬇ pcap</a>
                 <label class="live-toggle"><input type="checkbox" id="cap-auto-{{ $i }}" checked> scroll</label>
-                <button class="btn btn-stop" id="cap-btn-{{ $i }}" onclick="stopCapture({{ $i }})">■ Stop</button>
+                <button class="btn btn-stop" id="cap-btn-{{ $i }}" data-action="stopCapture" data-i="{{ $i }}">■ Stop</button>
             </span>
         </div>
         <div id="cap-stats-{{ $i }}" class="capture-stats">…</div>
         <div id="cap-doms-{{ $i }}" class="capture-doms"></div>
-        <input id="cap-filter-{{ $i }}" class="cap-filter" placeholder="{{ $T.cap_filter_ph }}" oninput="renderPackets({{ $i }})">
+        <input id="cap-filter-{{ $i }}" class="cap-filter" placeholder="{{ $T.cap_filter_ph }}" data-input="renderPackets" data-i="{{ $i }}">
         <pre id="cap-output-{{ $i }}" class="capture-output"></pre>
     </div>
     {{ end }}

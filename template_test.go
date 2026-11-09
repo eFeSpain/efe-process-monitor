@@ -1,7 +1,10 @@
 package main
 
 import (
+	"encoding/json"
+	"html"
 	"html/template"
+	"regexp"
 	"strings"
 	"testing"
 	"time"
@@ -43,9 +46,10 @@ func TestReportTemplateExecutes(t *testing.T) {
 	}
 }
 
-func TestRowsTemplateExecutes(t *testing.T) {
-	tm := testTemplates(t)
-
+// rowsTestConns is the fixture every rows.html test renders: one row per
+// branch of the template (full details, UDP, bare listen, bound UDP, legacy
+// port, pending reputation).
+func rowsTestConns() []Conn {
 	malicious := 7
 	abuse := 90
 	full := Conn{
@@ -122,11 +126,16 @@ func TestRowsTemplateExecutes(t *testing.T) {
 		Known: "Back Orifice (RAT)", LegacyPort: true, VT: "NOT_IN_VT",
 	}
 
+	return []Conn{full, udp, bare, bound, legacy, pending}
+}
+
+func TestRowsTemplateExecutes(t *testing.T) {
+	tm := testTemplates(t)
 	for _, lang := range testLangs {
 		var sb strings.Builder
 		data := map[string]any{
 			"T":     strings_(lang),
-			"Conns": []Conn{full, udp, bare, bound, legacy, pending},
+			"Conns": rowsTestConns(),
 		}
 		if err := tm.ExecuteTemplate(&sb, "rows.html", data); err != nil {
 			t.Fatalf("rows.html [%s]: %v", lang, err)
@@ -141,7 +150,7 @@ func TestRowsTemplateExecutes(t *testing.T) {
 			"Login Data", "/dev/video0", "memfd:payload", // access, media and memory lines
 			"bash ×2 · curl", "20 " + strings_(lang)["unit_min"], // provenance lines
 			"Acme Ltd · Suspicious Suite · Helper · v2.0", "EvilSvc — Evil Service", // file info and services
-			"openHistoryFor(", "www.google.com", "2026-09-01 10:00:00 → 2026-09-20 22:00:00", // activity block
+			`data-action="openHistoryFor"`, "www.google.com", "2026-09-01 10:00:00 → 2026-09-20 22:00:00", // activity block
 			strings_(lang)["enrich_pending"], "203.0.113.5", "cdn.example", // public peer awaiting reputation
 		} {
 			if !strings.Contains(out, want) {
@@ -202,5 +211,103 @@ func TestJoinArgOrder(t *testing.T) {
 	joinInts := funcMap["joinInts"].(func(string, []int) string)
 	if got := joinInts(",", []int{80, 443}); got != "80,443" {
 		t.Errorf(`joinInts(",", [80 443]) = %q, want "80,443"`, got)
+	}
+}
+
+// renderedPages is every HTML the app serves from templates, rendered with the
+// test fixtures: what the CSP tests look at.
+func renderedPages(t *testing.T) map[string]string {
+	t.Helper()
+	tm := testTemplates(t)
+	out := map[string]string{}
+	var sb strings.Builder
+	if err := tm.ExecuteTemplate(&sb, "report.html", map[string]any{
+		"T": strings_("es"), "Lang": "es", "Admin": true, "RefreshSecs": int64(30), "NoTray": true, "Version": appVersion,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	out["report.html"] = sb.String()
+	sb.Reset()
+	if err := tm.ExecuteTemplate(&sb, "rows.html", map[string]any{"T": strings_("es"), "Conns": rowsTestConns()}); err != nil {
+		t.Fatal(err)
+	}
+	out["rows.html"] = sb.String()
+	return out
+}
+
+var inlineHandlerRe = regexp.MustCompile(`\son(click|change|input|submit|load|keyup|keydown|mouseover)\s*=`)
+
+// The CSP is script-src 'self': no inline script and no on*= handler may
+// exist anywhere the browser would execute it — templates included, and the
+// HTML that app.js builds with innerHTML.
+func TestNoInlineScriptOrHandlers(t *testing.T) {
+	for name, html := range renderedPages(t) {
+		if m := inlineHandlerRe.FindString(html); m != "" {
+			t.Errorf("%s has an inline handler (%q)", name, strings.TrimSpace(m))
+		}
+		for _, tag := range regexp.MustCompile(`<script[^>]*>`).FindAllString(html, -1) {
+			if !strings.Contains(tag, "src=") {
+				t.Errorf("%s has an inline <script> block: %s", name, tag)
+			}
+		}
+	}
+	js, err := staticFS.ReadFile("web/static/app.js")
+	if err != nil {
+		t.Fatalf("app.js missing: %v", err)
+	}
+	if m := inlineHandlerRe.FindString(string(js)); m != "" {
+		t.Errorf("app.js builds HTML with an inline handler (%q)", strings.TrimSpace(m))
+	}
+}
+
+// Every data-action / data-change / data-input the pages (or app.js's own
+// generated HTML) reference must be a key of the actions table in app.js, or
+// the button does nothing and nobody finds out until they click it.
+func TestDataActionsAreWired(t *testing.T) {
+	js, err := staticFS.ReadFile("web/static/app.js")
+	if err != nil {
+		t.Fatal(err)
+	}
+	table := regexp.MustCompile(`(?s)const actions = \{(.*?)\n\};`).FindStringSubmatch(string(js))
+	if table == nil {
+		t.Fatal("app.js has no `const actions = { … };` table")
+	}
+	wired := map[string]bool{}
+	for _, m := range regexp.MustCompile(`(?m)^\s*(\w+)\s*[:(]`).FindAllStringSubmatch(table[1], -1) {
+		wired[m[1]] = true
+	}
+	refRe := regexp.MustCompile(`data-(?:action|change|input)="(\w+)"`)
+	sources := renderedPages(t)
+	sources["app.js"] = string(js)
+	for name, src := range sources {
+		for _, m := range refRe.FindAllStringSubmatch(src, -1) {
+			if !wired[m[1]] {
+				t.Errorf("%s references action %q, which app.js does not define", name, m[1])
+			}
+		}
+	}
+	if len(wired) < 40 {
+		t.Errorf("only %d actions wired; the pages used to have 68 inline handlers", len(wired))
+	}
+}
+
+// The translations and the refresh interval reach app.js through the <body>
+// dataset instead of an inline script; the JSON must survive the attribute
+// escaping round trip.
+func TestBodyCarriesTranslations(t *testing.T) {
+	page := renderedPages(t)["report.html"]
+	m := regexp.MustCompile(`<body[^>]*\sdata-t="([^"]*)"[^>]*\sdata-refresh="(\d+)"`).FindStringSubmatch(page)
+	if m == nil {
+		t.Fatal("<body> lacks data-t / data-refresh")
+	}
+	var got map[string]string
+	if err := json.Unmarshal([]byte(html.UnescapeString(m[1])), &got); err != nil {
+		t.Fatalf("data-t is not JSON after unescaping: %v", err)
+	}
+	if got["title"] != strings_("es")["title"] || len(got) != len(strings_("es")) {
+		t.Errorf("data-t does not carry the full translation map (%d keys)", len(got))
+	}
+	if m[2] != "30" {
+		t.Errorf("data-refresh = %q, want 30", m[2])
 	}
 }

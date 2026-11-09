@@ -196,8 +196,33 @@ func TestSecurityHeadersAlwaysSet(t *testing.T) {
 			t.Errorf("%s = %q, want %q", h, got, want)
 		}
 	}
-	if !strings.Contains(res.Header().Get("Content-Security-Policy"), "default-src 'self'") {
+	csp := res.Header().Get("Content-Security-Policy")
+	if !strings.Contains(csp, "default-src 'self'") {
 		t.Error("CSP header missing")
+	}
+	// Scripts come only from /static/: no inline, no nonce. (Styles still allow
+	// inline attributes; CSS injection is not code execution.)
+	if !strings.Contains(csp, "script-src 'self';") || strings.Contains(csp, "script-src 'self' 'unsafe-inline'") {
+		t.Errorf("script-src must be exactly 'self': %q", csp)
+	}
+	for _, want := range []string{"object-src 'none'", "form-action 'self'"} {
+		if !strings.Contains(csp, want) {
+			t.Errorf("CSP lacks %q", want)
+		}
+	}
+}
+
+// The login and gate pages are served under the same CSP: no inline handlers
+// there either (the password "eye" used to be one).
+func TestLoginAndGatePagesHaveNoInlineHandlers(t *testing.T) {
+	withLocalGate(t, "secrettoken")
+	gate := do(gateHandler(), "GET", "/", "127.0.0.1:5000", nil).Body.String()
+	w := httptest.NewRecorder()
+	renderLogin(w, "es", "")
+	for name, page := range map[string]string{"gate": gate, "login": w.Body.String()} {
+		if strings.Contains(page, "onclick=") || strings.Contains(page, "<script>") {
+			t.Errorf("%s page has inline script or handler", name)
+		}
 	}
 }
 
