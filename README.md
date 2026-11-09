@@ -24,8 +24,9 @@ a systemd service under `/opt/efemon`; it is watching before anyone logs in,
 and the tray icon, notifications and *Open panel* attach to your desktop
 session when it appears. New flags `--version` and `--no-browser`. A new
 reputation source, **URLhaus** (abuse.ch, same Auth-Key as ThreatFox), flags
-addresses that are serving malware right now. Full notes in the
-[changelog](CHANGELOG.md).
+addresses that are serving malware right now. And the dashboard runs under a
+strict Content-Security-Policy: no inline JavaScript anywhere. Full notes in
+the [changelog](CHANGELOG.md).
 
 <div align="center">
 <img src="docs/screenshot-main.png" alt="Main dashboard" width="880">

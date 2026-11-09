@@ -25,7 +25,8 @@ nadie inicie sesión, y el icono de bandeja, las notificaciones y *Abrir panel*
 se enganchan a tu sesión cuando aparece. Nuevos flags `--version` y
 `--no-browser`. Nueva fuente de reputación, **URLhaus** (abuse.ch, la misma
 Auth-Key que ThreatFox), que señala direcciones que están distribuyendo malware
-ahora mismo. Detalle completo en el [changelog](CHANGELOG.md).
+ahora mismo. Y el panel corre bajo una Content-Security-Policy estricta: sin
+JavaScript inline en ninguna parte. Detalle completo en el [changelog](CHANGELOG.md).
 
 <div align="center">
 <img src="docs/screenshot-main.png" alt="Panel principal" width="880">
