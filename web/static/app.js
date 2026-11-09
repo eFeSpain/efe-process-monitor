@@ -770,6 +770,22 @@ function applySort() {
 loadConnections();
 applyRefreshInterval();
 
+// ── Live feed height ──────────────────────────────────────────────────────
+// The block is resizable with the browser's own handle (CSS resize:vertical);
+// the chosen height is remembered per browser, like the column sort.
+(() => {
+    const feed = document.getElementById('live-feed');
+    if (!feed) return;
+    try {
+        const h = parseInt(localStorage.getItem('liveFeedHeight'), 10);
+        if (h >= 54) feed.style.height = h + 'px';
+    } catch (e) {}
+    if (!window.ResizeObserver) return;
+    new ResizeObserver(() => {
+        try { localStorage.setItem('liveFeedHeight', String(Math.round(feed.getBoundingClientRect().height))); } catch (e) {}
+    }).observe(feed);
+})();
+
 // ── Event delegation ──────────────────────────────────────────────────────
 // One listener per event type at the document; the innermost element with the
 // matching data-* attribute wins, so a button inside a clickable row does not

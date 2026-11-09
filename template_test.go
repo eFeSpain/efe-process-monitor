@@ -311,3 +311,17 @@ func TestBodyCarriesTranslations(t *testing.T) {
 		t.Errorf("data-refresh = %q, want 30", m[2])
 	}
 }
+
+// The live-activity block was a fixed 160 px window. It is resizable by
+// dragging (the browser's own handle) and the chosen height is remembered.
+func TestLiveFeedIsResizable(t *testing.T) {
+	page := renderedPages(t)["report.html"]
+	css := regexp.MustCompile(`\.live-feed\{[^}]*\}`).FindString(page)
+	if css == "" || !strings.Contains(css, "resize:vertical") || strings.Contains(css, "max-height:160px") {
+		t.Errorf(".live-feed must be user-resizable, got %q", css)
+	}
+	js, _ := staticFS.ReadFile("web/static/app.js")
+	if !strings.Contains(string(js), "liveFeedHeight") {
+		t.Error("app.js must remember the chosen height (localStorage key liveFeedHeight)")
+	}
+}

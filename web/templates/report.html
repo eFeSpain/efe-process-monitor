@@ -94,7 +94,8 @@ td { padding:6px 12px; border-bottom:1px solid #21262d; white-space:nowrap; vert
 .live-head .l{display:flex;align-items:center;gap:12px;}
 .live-toggle{display:flex;align-items:center;gap:5px;cursor:pointer;}
 #live-count{background:#21262d;border-radius:10px;padding:1px 8px;color:#58a6ff;}
-.live-feed{max-height:160px;overflow-y:auto;padding:6px 12px;font-size:12px;line-height:1.7;}
+/* Resizable by dragging the browser handle (bottom-right); the height is remembered per browser (app.js). */
+.live-feed{height:160px;min-height:54px;max-height:70vh;resize:vertical;overflow:auto;padding:6px 12px;font-size:12px;line-height:1.7;}
 .live-feed:empty::after{content:attr(data-empty);color:#484f58;}
 .live-ev{white-space:nowrap;} .live-ev .t{color:#484f58;}
 .ev-new{color:#3fb950;} .ev-remote{color:#58a6ff;} .ev-closed{color:#6e7681;} .ev-alert{color:#f85149;font-weight:bold;}

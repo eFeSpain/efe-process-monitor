@@ -29,6 +29,10 @@ Versions follow [Semantic Versioning](https://semver.org/).
   now* restarts it. The persistence the audit looks for runs at boot; now the
   monitor does too.
 - `--version` and `--no-browser`.
+
+### Changed
+- The live-activity block is resizable: drag the handle at its bottom-right
+  corner; the height is remembered per browser.
 - **URLhaus** (abuse.ch, same Auth-Key as ThreatFox): a remote address that is
   serving a malware-distribution URL *right now* scores +35 — less than a C2
   listing, because distribution sites are often compromised legitimate
