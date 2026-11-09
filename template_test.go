@@ -325,3 +325,26 @@ func TestLiveFeedIsResizable(t *testing.T) {
 		t.Error("app.js must remember the chosen height (localStorage key liveFeedHeight)")
 	}
 }
+
+// The privacy table has fixed column widths; its cells inherited the
+// connection table's td{white-space:nowrap} and, once the Status column was
+// added, long texts ran over the next column. Cells must wrap.
+func TestPrivacyTableCellsWrap(t *testing.T) {
+	page := renderedPages(t)["report.html"]
+	rule := regexp.MustCompile(`\.priv-table th,\.priv-table td\{[^}]*\}`).FindString(page)
+	if !strings.Contains(rule, "white-space:normal") {
+		t.Errorf("privacy table cells must wrap: %q", rule)
+	}
+}
+
+// The footnote used to say the abuse.ch lists are plain public downloads and
+// that only VirusTotal/AbuseIPDB need keys; since 2025 ThreatFox and URLhaus
+// need the abuse.ch Auth-Key, and the note must say so in every language.
+func TestPrivacyNoteMentionsAuthKey(t *testing.T) {
+	for _, lang := range testLangs {
+		note := strings_(lang)["priv_note"]
+		if !strings.Contains(note, "Auth-Key") || !strings.Contains(note, "ThreatFox") || !strings.Contains(note, "URLhaus") {
+			t.Errorf("[%s] priv_note does not explain the abuse.ch Auth-Key: %q", lang, note)
+		}
+	}
+}

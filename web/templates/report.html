@@ -146,11 +146,12 @@ select{background:#0d1117;color:#c9d1d9;border:1px solid #30363d;padding:3px 6px
 .wl-section:first-child{margin-top:0;}
 #privacy-modal{cursor:default;}
 .priv-table{width:100%;table-layout:fixed;border-collapse:collapse;font-size:12.5px;}
-.priv-table th,.priv-table td{padding:6px 8px;text-align:left;vertical-align:top;overflow-wrap:anywhere;cursor:default;}
+/* white-space:normal — the connection table's td{nowrap} is inherited otherwise, and with fixed column widths long texts ran over the next column */
+.priv-table th,.priv-table td{padding:6px 8px;text-align:left;vertical-align:top;white-space:normal;overflow-wrap:anywhere;cursor:default;}
 .priv-table th{color:#8b949e;border-bottom:1px solid #30363d;font-weight:600;}
 .priv-table td{border-bottom:1px solid #21262d;}
 .priv-table td:first-child{font-family:ui-monospace,monospace;color:#c9d1d9;}
-.priv-table col.c1{width:24%}.priv-table col.c2{width:34%}.priv-table col.c3{width:18%}.priv-table col.c4{width:24%}
+.priv-table col.c1{width:22%}.priv-table col.c2{width:32%}.priv-table col.c3{width:20%}.priv-table col.c4{width:26%}
 .feed-st{color:#8b949e;font-size:11.5px;} .feed-st.feed-ok{color:#3fb950;} .feed-st.feed-bad{color:#f85149;}
 .priv-safe{color:#3fb950;}
 .aud-row{padding:8px 10px;border-left:3px solid #30363d;margin-bottom:6px;background:#0d1117;border-radius:0 4px 4px 0;}
@@ -361,7 +362,7 @@ select{background:#0d1117;color:#c9d1d9;border:1px solid #30363d;padding:3px 6px
 </div>
 
 <div id="privacy-modal" class="modal" style="display:none" data-action="backdrop" data-close="closePrivacy">
-    <div class="modal-box" style="max-width:850px">
+    <div class="modal-box" style="max-width:980px;max-height:88vh;overflow-y:auto">
         <div class="modal-head"><span>{{ .T.priv_title }}</span><button class="btn" data-action="closePrivacy">✕</button></div>
         <div class="modal-body">
             <p style="color:#8b949e;font-size:13px;margin:0 0 14px;">{{ .T.priv_intro }}</p>

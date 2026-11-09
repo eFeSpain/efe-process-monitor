@@ -59,6 +59,9 @@ Versions follow [Semantic Versioning](https://semver.org/).
   gdm — a system account with a display of its own) for the user's desktop
   session at boot: only regular users (uid ≥ `UID_MIN`) are candidates, so the
   tray attaches to your session even while the greeter is still alive.
+- The privacy panel's table no longer runs texts over the next column (cells
+  inherited the connection table's no-wrap), and its footnote now says that
+  ThreatFox and URLhaus are fetched with the abuse.ch Auth-Key.
 
 ## [0.4.1] — 2026-11-08
 
