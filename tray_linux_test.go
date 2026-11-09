@@ -172,3 +172,74 @@ func TestSessionWatcherRespawnsAfterHelperExit(t *testing.T) {
 		t.Fatalf("respawn after the backoff, got %d spawns", spawns)
 	}
 }
+
+// desktopUser() is read from notification goroutines while tick() may be
+// inside probe() (a /proc scan) or spawn() (a 5 s handshake): the lock must
+// cover the state, not the slow calls.
+func TestSessionWatcherDoesNotBlockReadersDuringSpawn(t *testing.T) {
+	sess := &desktopSession{uid: 1000, name: "efe"}
+	release := make(chan struct{})
+	w := &sessionWatcher{
+		probe: func() *desktopSession { return sess },
+		alive: func(*desktopSession) bool { return true },
+		spawn: func(*desktopSession) (<-chan struct{}, func(), bool) {
+			<-release
+			return make(chan struct{}), func() {}, true
+		},
+	}
+	go w.tick(time.Now())
+	got := make(chan *desktopSession, 1)
+	go func() { got <- w.session() }()
+	select {
+	case <-got:
+	case <-time.After(500 * time.Millisecond):
+		t.Fatal("session() blocked behind a spawn in progress")
+	}
+	close(release)
+}
+
+// The production probe scans every process's environ. With a uid that has a
+// bus but no graphical session (an SSH login), scanning every 5 s forever is
+// waste: rescan when the set of uids changes, otherwise at most every 30 s.
+func TestSessionProbeRateLimit(t *testing.T) {
+	var p sessionProbe
+	t0 := time.Now()
+	if !p.shouldScan([]string{"1000"}, t0) {
+		t.Fatal("first sight of a uid must scan")
+	}
+	if p.shouldScan([]string{"1000"}, t0.Add(5*time.Second)) || p.shouldScan([]string{"1000"}, t0.Add(25*time.Second)) {
+		t.Error("same uids, under 30 s: no rescan")
+	}
+	if !p.shouldScan([]string{"1000"}, t0.Add(31*time.Second)) {
+		t.Error("same uids after 30 s: rescan")
+	}
+	if !p.shouldScan([]string{"1000", "1001"}, t0.Add(32*time.Second)) {
+		t.Error("a new uid must scan at once")
+	}
+	if p.shouldScan(nil, t0.Add(33*time.Second)) {
+		t.Error("no uids: nothing to scan")
+	}
+}
+
+// Before the watcher exists (the banner runs first) service mode has no
+// session and must not fall back to the sudo-style resolve-once scan.
+func TestDesktopUserServiceModeWithoutWatcher(t *testing.T) {
+	old, oldW := serviceMode, watcher.Load()
+	serviceMode = true
+	watcher.Store(nil)
+	t.Cleanup(func() { serviceMode = old; watcher.Store(oldW) })
+	if desktopUser() != nil || desktopSessionName() != "" {
+		t.Error("service mode without a watcher: no session")
+	}
+}
+
+// --install-service from the CLI while another efemon is running would rename
+// the database out from under it; the running instances are reported so the
+// operator stops them (or installs from that instance's Settings).
+func TestOtherInstancesExcludesSelf(t *testing.T) {
+	for _, pid := range otherInstances() {
+		if pid == ownPID {
+			t.Fatal("our own process is not another instance")
+		}
+	}
+}

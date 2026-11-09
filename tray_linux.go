@@ -63,10 +63,15 @@ func runApp(ln net.Listener, url string) {
 		// A service starts before anyone logs in: the watcher attaches the
 		// tray helper to the session when it appears, and again after a
 		// logout/login (see sessionWatcher).
-		watcher = &sessionWatcher{
+		var probe sessionProbe
+		w := &sessionWatcher{
 			interval: 5 * time.Second,
 			probe: func() *desktopSession {
-				for _, uid := range desktopUserCandidates(os.Getenv, runUsers()) {
+				uids := desktopUserCandidates(os.Getenv, runUsers())
+				if !probe.shouldScan(uids, time.Now()) {
+					return nil
+				}
+				for _, uid := range uids {
 					if s := sessionFor(uid); s != nil {
 						return s
 					}
@@ -87,6 +92,7 @@ func runApp(ln net.Listener, url string) {
 				log.Printf("[tray] sesión de %s cerrada; esperando otra", s.name)
 			},
 		}
+		watcher.Store(w)
 		viaHelper = true
 	case os.Geteuid() == 0:
 		// Root cannot join the user's session bus (see desktop_linux.go): the
@@ -109,8 +115,8 @@ func runApp(ln net.Listener, url string) {
 		}
 	}()
 
-	if watcher != nil {
-		go watcher.run(make(chan struct{}))
+	if w := watcher.Load(); w != nil {
+		go w.run(make(chan struct{}))
 	}
 	if viaHelper {
 		select {} // the helper relays Quit; the server runs in the goroutine above

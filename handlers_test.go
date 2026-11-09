@@ -265,3 +265,28 @@ func TestServiceEndpointGuards(t *testing.T) {
 		t.Errorf("bad body: %d, want 400", w.Code)
 	}
 }
+
+// The service hint goes before the token path, not after it: "the URL is in:"
+// must be followed by the path.
+func TestGatePageServiceHintPrecedesTokenPath(t *testing.T) {
+	withLocalGate(t, "secrettoken")
+	old := serviceMode
+	serviceMode = true
+	t.Cleanup(func() { serviceMode = old })
+	body := do(gateHandler(), "GET", "/", "127.0.0.1:5000", map[string]string{"Cookie": "lang=es"}).Body.String()
+	hint, code := strings.Index(body, "sudo efemon"), strings.Index(body, "<code>")
+	if hint < 0 || code < 0 || hint > code {
+		t.Errorf("hint at %d must come before the token path at %d", hint, code)
+	}
+}
+
+// Installing from an instance that already is the service would exit it for
+// nothing (and leave it stopped until boot).
+func TestServiceInstallRefusedInServiceMode(t *testing.T) {
+	oldE, oldS := elevated, serviceMode
+	elevated, serviceMode = true, true
+	t.Cleanup(func() { elevated, serviceMode = oldE, oldS })
+	if w := jsonPost(handleService, "/api/service", `{"action":"install"}`); w.Code != http.StatusBadRequest {
+		t.Errorf("install while running as the service: %d, want 400", w.Code)
+	}
+}

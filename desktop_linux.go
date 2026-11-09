@@ -13,6 +13,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"syscall"
 	"time"
 )
@@ -55,8 +56,13 @@ var (
 // service mode it is whatever the session watcher currently holds — the
 // service starts before anyone logs in, and the user may log out and in again.
 func desktopUser() *desktopSession {
-	if serviceMode && watcher != nil {
-		return watcher.session()
+	if serviceMode {
+		// Before the watcher exists (the banner runs first) there is no
+		// session; the sudo-style resolve-once scan must not run here.
+		if w := watcher.Load(); w != nil {
+			return w.session()
+		}
+		return nil
 	}
 	desktopOnce.Do(func() {
 		if os.Geteuid() != 0 {
@@ -122,8 +128,31 @@ type sessionWatcher struct {
 	onSession, onAttach, onDetach func(*desktopSession)
 }
 
-// watcher is the service-mode watcher; nil under sudo.
-var watcher *sessionWatcher
+// watcher is the service-mode watcher; nil under sudo. Atomic: runApp stores
+// it after the monitor goroutines, which read it through desktopUser(), are
+// already running.
+var watcher atomic.Pointer[sessionWatcher]
+
+// sessionProbe rate-limits the /proc scan sessionFor performs: a uid with a
+// bus but no graphical process (an SSH login) would otherwise be scanned every
+// tick forever. Rescan when the set of uids changes, else at most every 30 s.
+type sessionProbe struct {
+	lastUIDs string
+	lastScan time.Time
+}
+
+func (p *sessionProbe) shouldScan(uids []string, now time.Time) bool {
+	if len(uids) == 0 {
+		p.lastUIDs = ""
+		return false
+	}
+	key := strings.Join(uids, ",")
+	if key != p.lastUIDs || now.Sub(p.lastScan) >= 30*time.Second {
+		p.lastUIDs, p.lastScan = key, now
+		return true
+	}
+	return false
+}
 
 // helperBackoff is the wait before the n-th retry of the helper: 15 s, 30 s,
 // 1 min, then every 5 min.
@@ -140,39 +169,52 @@ func helperBackoff(n int) time.Duration {
 	}
 }
 
-// tick is one poll step at time now.
+// tick is one poll step at time now. The lock covers the state only: probe()
+// scans /proc and spawn() waits up to 5 s for the helper, and desktopUser()
+// is read from the notification goroutines meanwhile.
 func (w *sessionWatcher) tick(now time.Time) {
 	w.mu.Lock()
-	defer w.mu.Unlock()
 	if w.fails == nil {
 		w.fails, w.retryAt = map[uint32]int{}, map[uint32]time.Time{}
 	}
-	if w.current != nil && !w.alive(w.current) {
+	cur := w.current
+	w.mu.Unlock()
+
+	if cur != nil && !w.alive(cur) {
 		// Logout: the bus is gone and the helper is lingering. End it, forget
 		// the session and its failure history.
-		if w.kill != nil {
-			w.kill()
-		}
-		s := w.current
+		w.mu.Lock()
+		kill := w.kill
 		w.current, w.done, w.kill = nil, nil, nil
-		delete(w.fails, s.uid)
-		delete(w.retryAt, s.uid)
+		delete(w.fails, cur.uid)
+		delete(w.retryAt, cur.uid)
+		w.mu.Unlock()
+		if kill != nil {
+			kill()
+		}
 		if w.onDetach != nil {
-			w.onDetach(s)
+			w.onDetach(cur)
 		}
 		return
 	}
-	if w.current == nil {
+	if cur == nil {
 		s := w.probe()
 		if s == nil {
 			return
 		}
-		w.current = s
+		w.mu.Lock()
+		if w.current == nil {
+			w.current = s
+		}
+		cur = w.current
+		w.mu.Unlock()
 		if w.onSession != nil {
-			w.onSession(s)
+			w.onSession(cur)
 		}
 	}
-	uid := w.current.uid
+
+	w.mu.Lock()
+	uid := cur.uid
 	if w.done != nil {
 		select {
 		case <-w.done: // the helper died with the session still here
@@ -181,22 +223,30 @@ func (w *sessionWatcher) tick(now time.Time) {
 			w.retryAt[uid] = now.Add(helperBackoff(w.fails[uid] - 1))
 		default:
 		}
+		w.mu.Unlock()
 		return
 	}
 	if at, ok := w.retryAt[uid]; ok && now.Before(at) {
+		w.mu.Unlock()
 		return
 	}
-	done, kill, ok := w.spawn(w.current)
+	w.mu.Unlock()
+
+	done, kill, ok := w.spawn(cur)
+
+	w.mu.Lock()
 	if !ok {
 		w.fails[uid]++
 		w.retryAt[uid] = now.Add(helperBackoff(w.fails[uid] - 1))
+		w.mu.Unlock()
 		return
 	}
 	w.done, w.kill = done, kill
 	w.fails[uid] = 0
 	delete(w.retryAt, uid)
+	w.mu.Unlock()
 	if w.onAttach != nil {
-		w.onAttach(w.current)
+		w.onAttach(cur)
 	}
 }
 

@@ -5,6 +5,8 @@ import (
 	"fmt"
 	"os"
 	"strings"
+
+	"github.com/shirou/gopsutil/v4/process"
 )
 
 // Command-line options. Until 0.4.x the only argument was the internal
@@ -91,6 +93,13 @@ func usage() string {
 func runServiceCommand(o options) bool {
 	switch {
 	case o.Install:
+		if pids := otherInstances(); len(pids) > 0 {
+			// The install moves efemon.db and .env: doing that under a running
+			// instance leaves it writing a moved file with a stale .env path.
+			fmt.Fprintf(os.Stderr, "install refused: another efemon is running (pid %v). Stop it first,\n", pids)
+			fmt.Fprintln(os.Stderr, "or install from that instance's Settings → Run at boot.")
+			os.Exit(1)
+		}
 		if err := installService(false); err != nil {
 			fmt.Fprintln(os.Stderr, "install failed:", err)
 			os.Exit(1)
@@ -123,4 +132,20 @@ func runServiceCommand(o options) bool {
 	}
 	os.Exit(0)
 	return true
+}
+
+// otherInstances lists the PIDs of other efemon processes (by executable base
+// name), ours excluded.
+func otherInstances() []int32 {
+	var out []int32
+	procs, _ := process.Processes()
+	for _, p := range procs {
+		if p.Pid == ownPID {
+			continue
+		}
+		if n, err := p.Name(); err == nil && (n == "efemon" || n == "efemon.exe") {
+			out = append(out, p.Pid)
+		}
+	}
+	return out
 }

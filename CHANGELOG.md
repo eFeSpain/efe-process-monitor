@@ -27,6 +27,15 @@ Versions follow [Semantic Versioning](https://semver.org/).
   live-feed alert and the privacy panel. Only online URLs on IP-literal hosts
   count; the feed refreshes every six hours (the API returns the last ~20 h).
 
+### Fixed
+- Service mode polish from the review: the session watcher never holds its
+  lock across the `/proc` scan or the helper handshake, rescans `/proc` only
+  when the set of logged-in users changes (or every 30 s), and is read
+  atomically; the gate page puts the service hint before the token path;
+  `--no-browser` is honoured on the "already running" handoff; installing from
+  the service itself or from the CLI while another efemon runs is refused with
+  the reason.
+
 ## [0.4.1] — 2026-11-08
 
 ### Added

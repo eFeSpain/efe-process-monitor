@@ -147,6 +147,10 @@ func copyFile(src, dst string, mode os.FileMode) error {
 	return os.Chmod(dst, mode)
 }
 
+// serviceSupported is a constant, so a handler can check it without the
+// systemctl call serviceStatus() makes.
+const serviceSupported = true
+
 const (
 	serviceDir = "/opt/efemon"
 	serviceExe = serviceDir + "/efemon"

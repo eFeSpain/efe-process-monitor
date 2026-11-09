@@ -4,6 +4,8 @@ package main
 
 import "errors"
 
+const serviceSupported = false
+
 var errServiceUnsupported = errors.New("running as a service is not supported on this OS")
 
 // Running as a service is a Linux (systemd) feature for now; see

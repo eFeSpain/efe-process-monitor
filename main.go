@@ -255,6 +255,10 @@ func main() {
 	if err != nil {
 		// Hand off to the instance that owns the port, carrying its token so the
 		// browser is authorized by the local gate.
+		if noBrowser {
+			log.Printf("[!] Ya hay una instancia en %s — saliendo (--no-browser).", url)
+			os.Exit(0)
+		}
 		log.Printf("[!] Ya hay una instancia en %s — abriendo y saliendo.", url)
 		openBrowser(tokenURL(url, readLocalToken()))
 		os.Exit(0)
@@ -759,8 +763,14 @@ func handleService(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, `{"ok":false,"error":"unknown action"}`, http.StatusBadRequest)
 		return
 	}
-	if !serviceStatus().Supported {
+	if !serviceSupported {
 		http.Error(w, `{"ok":false,"error":"not supported on this OS"}`, http.StatusBadRequest)
+		return
+	}
+	if body.Action == "install" && serviceMode {
+		// Reinstalling from the service itself would only exit it, leaving the
+		// unit stopped until the next boot.
+		http.Error(w, `{"ok":false,"error":"already running as the service"}`, http.StatusBadRequest)
 		return
 	}
 	if !elevated {
