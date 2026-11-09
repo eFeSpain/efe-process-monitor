@@ -68,7 +68,7 @@ func TestRowsTemplateExecutes(t *testing.T) {
 			Country: "United States", City: "Norwell", ISP: "Edgecast",
 			Org: "Edgecast", ASN: "AS15133 Edgecast", DNS: "example.com",
 			VTMalicious: &malicious, AbuseScore: &abuse,
-			Tor: true, C2: true, ThreatFox: "Cobalt Strike", Spamhaus: true,
+			Tor: true, C2: true, ThreatFox: "Cobalt Strike", Spamhaus: true, URLhaus: "Mozi",
 			Ports: []int{80, 443}, Vulns: []string{"CVE-2021-1234"},
 			Provider: "",
 		},
@@ -133,7 +133,7 @@ func TestRowsTemplateExecutes(t *testing.T) {
 		}
 		out := sb.String()
 		for _, want := range []string{
-			"suspicious.exe", "UDP", "UDP-BOUND", "Cobalt Strike",
+			"suspicious.exe", "UDP", "UDP-BOUND", "Cobalt Strike", "URLhaus", "Mozi",
 			`class="udp"`,                // the bound-UDP row must get its own state class
 			"12.5 %", "150 MB", "SYSTEM", // the resource column and its detail line
 			"Back Orifice (RAT) <span class=\"vt-na\"",                           // legacy port label plus the localized note

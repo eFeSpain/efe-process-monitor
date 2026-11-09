@@ -19,6 +19,7 @@ func TestThreatScore(t *testing.T) {
 		{"whitelist ip", Conn{IPWhitelist: true, Enrich: &Enrichment{C2: true}}, 0, "whitelist"},
 		{"c2 feodo", Conn{VT: "N/A", Enrich: &Enrichment{C2: true}}, 60, "C2 Feodo"},
 		{"threatfox", Conn{VT: "N/A", Enrich: &Enrichment{ThreatFox: "Cobalt Strike"}}, 55, "ThreatFox: Cobalt Strike"},
+		{"urlhaus", Conn{VT: "N/A", Enrich: &Enrichment{URLhaus: "Mozi"}}, 35, "URLhaus: Mozi"},
 		{"spamhaus", Conn{VT: "N/A", Enrich: &Enrichment{Spamhaus: true}}, 30, "Spamhaus DROP"},
 		{"staging path", Conn{VT: "N/A", Suspicious: true}, 25, "staging"},
 		{"downloads path scores less than staging",

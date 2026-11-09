@@ -161,7 +161,8 @@ GOOS=darwin go build -o efemon .  # macOS
   last attempt, count, `gone` on a 410, last error — so a dead or keyless feed never reads as "no signals"),
   HTTP helpers (`getJSON`/`getText`/`postRaw`, non-200 → `httpStatusError`), `vtKey`/`abuseKey`/`abusechKey`.
   **Downloaded feeds**: ThreatFox (abuse.ch **API** `get_iocs`, Auth-Key required, last 7 days → `ip→malware
-  family` map), Spamhaus DROP (`drop_v4.json` → CIDR set, matched with `net.IPNet.Contains`), Tor exits and
+  family` map), URLhaus (same key, `urls/recent/limit/1000` ≈ 20 h, online IP-literal hosts only → `ip→family`,
+  own 6 h `ttl` on its `feedMeta`, weight 35: distribution ≠ C2), Spamhaus DROP (`drop_v4.json` → CIDR set, matched with `net.IPNet.Contains`), Tor exits and
   Feodo (keyless); all cached 24h and auto-refreshed (`primeIntel` warms all four at startup and logs their state).
 - **vt.go** — VT token bucket (`vtBucket`, 4/min shared hash+IP), background hash queue + `vtWorker`, `resolveHash`.
 - **lan.go** — `LANInfo` (DNS/NetBIOS/MAC/**Vendor**), `lanLookup` (reverse DNS + `arpMAC` from ARP table +

@@ -20,6 +20,12 @@ Versions follow [Semantic Versioning](https://semver.org/).
   now* restarts it. The persistence the audit looks for runs at boot; now the
   monitor does too.
 - `--version` and `--no-browser`.
+- **URLhaus** (abuse.ch, same Auth-Key as ThreatFox): a remote address that is
+  serving a malware-distribution URL *right now* scores +35 — less than a C2
+  listing, because distribution sites are often compromised legitimate
+  servers — with the family or threat as the reason, in the details, the
+  live-feed alert and the privacy panel. Only online URLs on IP-literal hosts
+  count; the feed refreshes every six hours (the API returns the last ~20 h).
 
 ## [0.4.1] — 2026-11-08
 

@@ -187,6 +187,9 @@ func alertOnIntel(ev Event, ip string) {
 	if e.ThreatFox != "" {
 		reasons = append(reasons, "ThreatFox: "+e.ThreatFox)
 	}
+	if e.URLhaus != "" {
+		reasons = append(reasons, "URLhaus: "+e.URLhaus)
+	}
 	if e.Spamhaus {
 		reasons = append(reasons, "Spamhaus DROP")
 	}

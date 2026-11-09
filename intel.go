@@ -24,6 +24,7 @@ type Enrichment struct {
 	Tor                               bool
 	C2                                bool
 	ThreatFox                         string // malware family if listed in ThreatFox, else ""
+	URLhaus                           string // family/threat if the host serves a live malware URL (URLhaus), else ""
 	Spamhaus                          bool   // in a Spamhaus DROP criminal/hijacked netblock
 	Ports                             []int
 	Vulns                             []string
@@ -178,6 +179,7 @@ func enrichIP(ip string) *Enrichment {
 	d.Tor = torExits()[ip]
 	d.C2 = feodoC2()[ip]
 	d.ThreatFox = threatFoxLookup(ip)
+	d.URLhaus = urlhausLookup(ip)
 	d.Spamhaus = spamhausHit(ip)
 	shodan(ip, d)
 	d.Provider = detectProvider(d)
@@ -343,11 +345,12 @@ var errNoKey = errors.New("no key configured")
 // This is what makes the difference visible (feedStatuses) and stops the
 // ten-minute retry loop on a dead endpoint.
 type feedMeta struct {
-	at      time.Time // last successful refresh
-	triedAt time.Time // last attempt, successful or not
-	count   int       // entries loaded by the last successful refresh
-	gone    bool      // 410: the endpoint no longer exists; never retry
-	lastErr error     // nil after a success
+	at      time.Time     // last successful refresh
+	triedAt time.Time     // last attempt, successful or not
+	count   int           // entries loaded by the last successful refresh
+	gone    bool          // 410: the endpoint no longer exists; never retry
+	lastErr error         // nil after a success
+	ttl     time.Duration // refresh cadence; 0 = feedTTL
 }
 
 // due reports whether a refresh should be attempted now. A feed waiting for a
@@ -359,7 +362,11 @@ func (m *feedMeta) due(now time.Time) bool {
 	if m.triedAt.IsZero() || errors.Is(m.lastErr, errNoKey) {
 		return true
 	}
-	return now.Sub(m.at) >= feedTTL && now.Sub(m.triedAt) >= feedFailTTL
+	ttl := m.ttl
+	if ttl == 0 {
+		ttl = feedTTL
+	}
+	return now.Sub(m.at) >= ttl && now.Sub(m.triedAt) >= feedFailTTL
 }
 
 // done records the outcome of an attempt. A failure keeps the last good data
@@ -503,6 +510,109 @@ func parseThreatFoxAPI(r io.Reader) (map[string]string, error) {
 
 func threatFoxLookup(ip string) string { return threatFox.refresh()[ip] }
 
+// ── URLhaus (abuse.ch API, Auth-Key required) ────────────────────────────────
+//
+// URLhaus lists URLs that distribute malware. A connection can only be
+// matched by address, so only URLs whose host is an IP literal count, and
+// only while the URL is online — a host that served a dropper last week says
+// little about today. It is not a C2 feed: distribution sites are often
+// compromised legitimate servers, hence the smaller weight. The API answers
+// with the last 1000 URLs (about 20 hours), so this feed refreshes every six
+// hours rather than daily.
+
+const (
+	urlhausAPI = "https://urlhaus-api.abuse.ch/v1/urls/recent/limit/1000"
+	urlhausTTL = 6 * time.Hour
+)
+
+type uhFeed struct {
+	mu sync.Mutex
+	feedMeta
+	m map[string]string // ip -> family or threat
+}
+
+var urlhaus = uhFeed{feedMeta: feedMeta{ttl: urlhausTTL}}
+
+func (f *uhFeed) refresh() map[string]string {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	now := time.Now()
+	if !f.due(now) {
+		return f.m
+	}
+	key := getAbuseChKey()
+	if key == "" {
+		f.done(errNoKey, 0, now)
+		return f.m
+	}
+	req, err := http.NewRequest("GET", urlhausAPI, nil)
+	if err != nil {
+		f.done(err, 0, now)
+		return f.m
+	}
+	req.Header.Set("Auth-Key", key)
+	resp, err := httpClient.Do(req)
+	if err != nil {
+		f.done(err, 0, now)
+		return f.m
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != 200 {
+		f.done(httpStatusError(resp.StatusCode), 0, now)
+		return f.m
+	}
+	m, err := parseURLhausAPI(io.LimitReader(resp.Body, maxFeedBytes))
+	if err != nil {
+		f.done(err, 0, now)
+		return f.m
+	}
+	f.m = m
+	f.done(nil, len(m), now)
+	return f.m
+}
+
+// parseURLhausAPI turns a urls/recent answer into an ip→label map: online
+// URLs on IP-literal hosts only. The label is the first tag that names a
+// family — URLhaus capitalizes those (Mozi, SmartLoader) and keeps format and
+// architecture tags lowercase (elf, mipsel, zip) — else the threat type.
+func parseURLhausAPI(r io.Reader) (map[string]string, error) {
+	var resp struct {
+		QueryStatus string `json:"query_status"`
+		URLs        []struct {
+			Host   string   `json:"host"`
+			Status string   `json:"url_status"`
+			Threat string   `json:"threat"`
+			Tags   []string `json:"tags"`
+		} `json:"urls"`
+	}
+	if err := json.NewDecoder(r).Decode(&resp); err != nil {
+		return nil, fmt.Errorf("urlhaus: %w", err)
+	}
+	if resp.QueryStatus != "ok" {
+		return nil, fmt.Errorf("urlhaus: %s", resp.QueryStatus)
+	}
+	m := map[string]string{}
+	for _, u := range resp.URLs {
+		if u.Status != "online" || net.ParseIP(u.Host) == nil {
+			continue
+		}
+		if _, seen := m[u.Host]; seen {
+			continue // first (most recent) entry wins
+		}
+		label := u.Threat
+		for _, t := range u.Tags {
+			if t != "" && t[0] >= 'A' && t[0] <= 'Z' {
+				label = t
+				break
+			}
+		}
+		m[u.Host] = label
+	}
+	return m, nil
+}
+
+func urlhausLookup(ip string) string { return urlhaus.refresh()[ip] }
+
 // ── Spamhaus DROP (criminal/hijacked netblocks, CIDR, no key) ────────────────
 
 type cidrFeed struct {
@@ -574,6 +684,7 @@ func primeIntel() {
 	torExits()
 	feodoC2()
 	threatFox.refresh()
+	urlhaus.refresh()
 	spamhaus.refresh()
 	for _, s := range feedStatuses("en") {
 		mark := "[+]"
@@ -623,6 +734,7 @@ func feedStatuses(lang string) []FeedStatus {
 		one("tor", "Tor exits", &torSet.mu, &torSet.feedMeta),
 		one("feodo", "Feodo C2", &feodoSet.mu, &feodoSet.feedMeta),
 		one("threatfox", "ThreatFox", &threatFox.mu, &threatFox.feedMeta),
+		one("urlhaus", "URLhaus", &urlhaus.mu, &urlhaus.feedMeta),
 		one("spamhaus", "Spamhaus", &spamhaus.mu, &spamhaus.feedMeta),
 	}
 }
@@ -652,6 +764,9 @@ func ipReport(ip string) string {
 	}
 	if e.ThreatFox != "" {
 		p = append(p, "ThreatFox: "+e.ThreatFox)
+	}
+	if e.URLhaus != "" {
+		p = append(p, "URLhaus: "+e.URLhaus)
 	}
 	if e.Spamhaus {
 		p = append(p, "Spamhaus DROP")

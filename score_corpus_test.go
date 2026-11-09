@@ -267,6 +267,29 @@ var scoreCorpus = []struct {
 		},
 	},
 	{
+		// A host that serves malware right now is not a C2: distribution sites
+		// are often compromised legitimate servers. On its own it is worth a
+		// look; from an unsigned binary it is an investigation.
+		name: "signed updater fetching from a live URLhaus host",
+		want: notable,
+		conn: Conn{
+			VT: "0", Exe: `C:\Program Files\Acme\updater.exe`,
+			Sig:      Signature{Status: "Valid", Signer: "Acme Ltd", Trusted: true},
+			RemoteIP: "203.0.113.10",
+			Enrich:   &Enrichment{URLhaus: "SmartLoader"},
+		},
+	},
+	{
+		name: "unsigned binary fetching from a live URLhaus host",
+		want: suspicious,
+		conn: Conn{
+			VT: "0", Exe: `C:\Users\efe\AppData\Roaming\svc.exe`,
+			Sig:      Signature{Status: "NotSigned"},
+			RemoteIP: "203.0.113.10",
+			Enrich:   &Enrichment{URLhaus: "Mozi"},
+		},
+	},
+	{
 		name: "ThreatFox-listed Cobalt Strike beacon from a staging dir",
 		want: malicious,
 		conn: Conn{

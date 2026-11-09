@@ -69,7 +69,7 @@ no para atacar a otros.
   malicioso controla su propio PTR, pero no lo que tu navegador escribe en un
   handshake.
 - IP remota: geolocalización / ISP / ASN, DNS inverso, **VirusTotal**, **AbuseIPDB**,
-  nodos de salida **Tor**, **abuse.ch** (Feodo + ThreatFox), **Spamhaus DROP** y
+  nodos de salida **Tor**, **abuse.ch** (Feodo, ThreatFox, URLhaus), **Spamhaus DROP** y
   **Shodan** (puertos abiertos / CVEs).
 - **Score de riesgo (0–100)** que combina todas las señales, ordenable, con el
   desglose por señal al pasar el ratón. Es heurístico: un valor bajo significa
@@ -224,7 +224,7 @@ Otros flags: `--version`, `--no-browser` (arrancar sin abrir el panel).
 
 ### Claves de API (opcional)
 
-Las consultas a VirusTotal, AbuseIPDB y ThreatFox necesitan claves gratuitas —
+Las consultas a VirusTotal, AbuseIPDB y abuse.ch (ThreatFox, URLhaus) necesitan claves gratuitas —
 añádelas en **⚙ Ajustes** (se guardan en `.env`) o crea un `.env` junto al binario:
 
 ```
@@ -234,8 +234,8 @@ ABUSECH_API_KEY=tu_auth_key_de_abuse.ch
 ```
 
 La Auth-Key de abuse.ch (gratuita, en el [portal de autenticación de abuse.ch](https://auth.abuse.ch/))
-es la que ThreatFox exige desde 2025, cuando abuse.ch retiró sus exportaciones sin
-clave. Sin ella el feed ThreatFox está apagado — y el panel **🛰 Privacidad** lo
+es la que ThreatFox y URLhaus exigen desde 2025, cuando abuse.ch retiró sus
+exportaciones sin clave. Sin ella esos dos feeds están apagados — y el panel **🛰 Privacidad** lo
 dice, junto al estado de cada uno de los demás feeds.
 
 > **El `.env` tiene que estar junto al binario.** Las versiones anteriores también
@@ -288,8 +288,8 @@ Sin telemetría; todo se guarda en local (`efemon.db`). Para enriquecer la
 información, la herramienta consulta servicios externos sobre las IPs/hashes que
 **tú inspeccionas**: ipwho.is, VirusTotal, AbuseIPDB y Shodan reciben esos valores;
 las listas de Feodo / Spamhaus / Tor son descargas públicas que no revelan nada
-de ti, y la lista de IOC de ThreatFox se descarga con tu Auth-Key de abuse.ch y
-nada más. Los resultados se cachean, así que cada binario/IP se consulta como mucho
+de ti, y las listas de ThreatFox y URLhaus se descargan con tu Auth-Key de
+abuse.ch y nada más. Los resultados se cachean, así que cada binario/IP se consulta como mucho
 una vez (cada hora las IPs). La auditoría del equipo corre 100% en local, y el DNS pasivo también: lee las respuestas DNS en tus propias interfaces y guarda los pares nombre↔dirección en `efemon.db`; no envía nada a ningún sitio. El panel
 **🛰 Privacidad** de la app detalla exactamente qué sale y a dónde.
 

@@ -209,4 +209,64 @@ func TestFeedStatusesDistinguishCauses(t *testing.T) {
 	if st["spamhaus"].OK || !strings.Contains(st["spamhaus"].Status, "410") {
 		t.Errorf("spamhaus gone: %+v", st["spamhaus"])
 	}
+	if _, ok := st["urlhaus"]; !ok {
+		t.Error("URLhaus must report its state like every other feed")
+	}
+}
+
+// URLhaus lists URLs that distribute malware. Only a host that is an IP
+// literal can be matched against a connection, and only a URL that is still
+// online says anything about the host now; the label is the first tag that
+// names a family, else the threat type.
+const uhAPIFixture = `{"query_status":"ok","urls":[
+ {"id":"1","url":"http://203.0.113.10:32772/i","url_status":"online","host":"203.0.113.10","threat":"malware_download","tags":["elf","mipsel","Mozi"]},
+ {"id":"2","url":"http://203.0.113.11/x.exe","url_status":"offline","host":"203.0.113.11","threat":"malware_download","tags":["exe"]},
+ {"id":"3","url":"https://github.com/x/y/raw/z.zip","url_status":"online","host":"github.com","threat":"malware_download","tags":["zip"]},
+ {"id":"4","url":"http://203.0.113.12/a","url_status":"online","host":"203.0.113.12","threat":"malware_download","tags":null},
+ {"id":"5","url":"http://[2001:db8::5]/b","url_status":"online","host":"2001:db8::5","threat":"malware_download","tags":["SmartLoader"]}
+]}`
+
+func TestParseURLhausAPI(t *testing.T) {
+	m, err := parseURLhausAPI(strings.NewReader(uhAPIFixture))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(m) != 3 {
+		t.Fatalf("got %d hosts, want 3 (online IP literals only): %v", len(m), m)
+	}
+	if m["203.0.113.10"] != "Mozi" {
+		t.Errorf("label = %q, want the family tag Mozi (not elf/mipsel)", m["203.0.113.10"])
+	}
+	if m["203.0.113.12"] != "malware_download" {
+		t.Errorf("no tags → threat type, got %q", m["203.0.113.12"])
+	}
+	if m["2001:db8::5"] != "SmartLoader" {
+		t.Errorf("IPv6 host kept: %q", m["2001:db8::5"])
+	}
+	if _, ok := m["203.0.113.11"]; ok {
+		t.Error("an offline URL says nothing about the host now")
+	}
+	if _, ok := m["github.com"]; ok {
+		t.Error("a domain host cannot be matched against a connection")
+	}
+	if _, err := parseURLhausAPI(strings.NewReader(`{"query_status":"unknown_auth_key"}`)); err == nil {
+		t.Error("a non-ok query_status must be an error")
+	}
+}
+
+// The API returns the last ~1000 URLs (about 20 hours), so URLhaus refreshes
+// every 6 h instead of the daily default; a feed without its own ttl keeps
+// the default.
+func TestFeedMetaOwnTTL(t *testing.T) {
+	now := time.Now()
+	var def feedMeta
+	def.done(nil, 1, now)
+	if def.due(now.Add(7 * time.Hour)) {
+		t.Error("default ttl is feedTTL (24 h): not due after 7 h")
+	}
+	short := feedMeta{ttl: 6 * time.Hour}
+	short.done(nil, 1, now)
+	if short.due(now.Add(5*time.Hour)) || !short.due(now.Add(7*time.Hour)) {
+		t.Error("a 6 h ttl is due after 7 h and not after 5 h")
+	}
 }

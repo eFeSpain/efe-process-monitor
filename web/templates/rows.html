@@ -81,6 +81,7 @@
             {{ else }}<span class="vt-na">N/A</span>{{ end }}</span></div>
         {{ if $e.C2 }}<div class="detail-line"><span class="detail-label">C2</span><span class="vt-bad">⚠ Feodo C2</span></div>{{ end }}
         {{ if $e.ThreatFox }}<div class="detail-line"><span class="detail-label">ThreatFox</span><span class="vt-bad">⚠ {{ $e.ThreatFox }}</span></div>{{ end }}
+        {{ if $e.URLhaus }}<div class="detail-line"><span class="detail-label">URLhaus</span><span class="vt-bad">⚠ {{ $e.URLhaus }}</span></div>{{ end }}
         {{ if $e.Spamhaus }}<div class="detail-line"><span class="detail-label">Spamhaus</span><span class="vt-bad">⚠ {{ $T.spamhaus_drop }}</span></div>{{ end }}
         {{ if $e.Tor }}<div class="detail-line"><span class="detail-label">Tor</span><span class="vt-bad">⚠ Tor exit</span></div>{{ end }}
         {{ if $e.Ports }}<div class="detail-line"><span class="detail-label">Shodan</span><span><span class="ports" title="{{ joinInts ", " $e.Ports }}">ports: {{ len $e.Ports }}</span>{{ if $e.Vulns }} &nbsp; <span class="vt-bad" title="{{ join ", " $e.Vulns }}">CVEs: {{ len $e.Vulns }}</span>{{ end }}</span></div>{{ end }}

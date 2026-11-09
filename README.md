@@ -65,7 +65,7 @@ attacking others.
   than reverse DNS, which is what the address *owner* claims — a malicious host
   controls its own PTR record but not what your browser writes into a handshake.
 - Remote IP: geolocation / ISP / ASN, reverse DNS, **VirusTotal**, **AbuseIPDB**,
-  **Tor** exit nodes, **abuse.ch** (Feodo + ThreatFox), **Spamhaus DROP** and
+  **Tor** exit nodes, **abuse.ch** (Feodo, ThreatFox, URLhaus), **Spamhaus DROP** and
   **Shodan** (open ports / CVEs).
 - **Threat score (0–100)** combining all signals, sortable, with a per-signal
   breakdown on hover. It's a heuristic: a low score means "no signals found",
@@ -212,7 +212,7 @@ Other flags: `--version`, `--no-browser` (start without opening the dashboard).
 
 ### API keys (optional)
 
-VirusTotal, AbuseIPDB and ThreatFox lookups need free keys — add them in
+VirusTotal, AbuseIPDB and abuse.ch (ThreatFox, URLhaus) lookups need free keys — add them in
 **⚙ Settings** (saved to `.env`) or create a `.env` next to the binary:
 
 ```
@@ -222,8 +222,8 @@ ABUSECH_API_KEY=your_abuse.ch_auth_key
 ```
 
 The abuse.ch Auth-Key (free, from the [abuse.ch authentication portal](https://auth.abuse.ch/))
-is what ThreatFox requires since 2025, when abuse.ch withdrew its keyless
-exports. Without it the ThreatFox feed is off — and the **🛰 Privacy** panel
+is what ThreatFox and URLhaus require since 2025, when abuse.ch withdrew its
+keyless exports. Without it those two feeds are off — and the **🛰 Privacy** panel
 says so, next to the state of every other feed.
 
 > **The `.env` must sit next to the binary.** Earlier versions also looked in the
@@ -273,8 +273,8 @@ and a same-origin `Origin` on every state-changing request (anti CSRF).
 No telemetry; everything is stored locally (`efemon.db`). To enrich data the tool
 queries external services for the IPs/hashes **you inspect**: ipwho.is, VirusTotal,
 AbuseIPDB and Shodan receive those values; the Feodo / Spamhaus / Tor lists are
-plain public downloads that reveal nothing about you, and the ThreatFox IOC list
-is downloaded with your abuse.ch Auth-Key and nothing else. Results are cached so each
+plain public downloads that reveal nothing about you, and the ThreatFox and
+URLhaus lists are downloaded with your abuse.ch Auth-Key and nothing else. Results are cached so each
 binary/IP is queried at most once (hourly for IPs). The machine audit runs fully
 locally, and so does the passive DNS listener: it reads DNS answers on your own
 interfaces and stores name↔address pairs in `efemon.db`; nothing is sent

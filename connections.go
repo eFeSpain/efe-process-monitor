@@ -692,6 +692,7 @@ const (
 	wAbuseAttenuated = 0.1  // same, when the IP belongs to a known big provider
 	wFeodoC2         = 60.0 // curated C2 tracker
 	wThreatFox       = 55.0 // curated IOC feed
+	wURLhaus         = 35.0 // host serving a live malware-distribution URL: often a compromised legitimate server, not a C2
 	wSpamhausDROP    = 30.0 // criminal / hijacked netblock
 	wBadSpawn        = 40.0 // ancestry pattern that should never happen
 	wUnsigned        = 15.0 // no code signature at all
@@ -803,6 +804,9 @@ func threatScore(c *Conn) int {
 		}
 		if e.ThreatFox != "" {
 			add(wThreatFox, "threatfox", e.ThreatFox)
+		}
+		if e.URLhaus != "" {
+			add(wURLhaus, "urlhaus", e.URLhaus)
 		}
 		if e.Spamhaus {
 			add(wSpamhausDROP, "spamhaus")
