@@ -33,6 +33,13 @@ Versions follow [Semantic Versioning](https://semver.org/).
 ### Changed
 - The live-activity block is resizable: drag the handle at its bottom-right
   corner; the height is remembered per browser.
+- **Graded reputation alerts in the live feed.** One VirusTotal engine
+  flagging an address is a yellow note, two an amber warning, three or more —
+  or any Feodo/ThreatFox/URLhaus/Spamhaus/Tor hit, or a high AbuseIPDB score
+  off a known provider — stays red; only red reaches the desktop
+  notification. A single engine on a big provider's range (Chrome talking to
+  claude.ai) used to raise a red alert and a notification. The reason reads
+  `VirusTotal ×N`.
 - **URLhaus** (abuse.ch, same Auth-Key as ThreatFox): a remote address that is
   serving a malware-distribution URL *right now* scores +35 — less than a C2
   listing, because distribution sites are often compromised legitimate

@@ -377,7 +377,7 @@ monitorES.onmessage = (e) => {
     if (ev.kind === 'refresh') { scheduleRefresh(); return; } // a background lookup landed: redraw, nothing to list
     const feed = document.getElementById('live-feed');
     const div = document.createElement('div');
-    div.className = 'live-ev ev-' + ev.kind;
+    div.className = 'live-ev ev-' + ev.kind + (ev.level ? ' lvl-' + ev.level : ''); // graded reputation alerts: low / med / high
     div.innerHTML = `<span class="t">[${esc(ev.ts)}]</span> ` + esc(eventLabel(ev));
     feed.prepend(div);
     while (feed.children.length > 200) feed.removeChild(feed.lastChild);

@@ -26,6 +26,7 @@ type Event struct {
 	Anomaly    bool    `json:"anomaly,omitempty"`
 	Beacon     float64 `json:"beacon,omitempty"`
 	Changed    bool    `json:"changed,omitempty"` // known path, different content: replaced on disk
+	Level      string  `json:"level,omitempty"`   // alert severity: "low" | "med" | "high" (see intelAlert)
 	Detail     string  `json:"detail,omitempty"`
 }
 
@@ -176,41 +177,75 @@ func snapshot() map[connKey]gnet.ConnectionStat {
 	return out
 }
 
-// alertOnIntel enriches a new public-remote connection and raises an alert
-// (feed event + desktop notification) when the IP has bad reputation.
-func alertOnIntel(ev Event, ip string) {
-	e := enrichIP(ip) // cached
-	var reasons []string
+// intelAlert grades the reputation of an address for the live feed. The grade
+// is not the score: it decides how loud the feed is. A single VirusTotal
+// engine flagging an address is noise — it happens all day on big providers'
+// ranges (Chrome talking to claude.ai raised a red alert over one engine) —
+// so VT alone is graded by count: 1 → low, 2 → med, 3+ → high. A curated
+// feed hit (Feodo, ThreatFox, URLhaus, Spamhaus), a Tor exit or a high
+// AbuseIPDB confidence on an address that is not a known provider is high
+// outright. Only "high" reaches the desktop notification.
+func intelAlert(e *Enrichment) (reasons []string, level string) {
+	raise := func(l string) {
+		rank := map[string]int{"": 0, "low": 1, "med": 2, "high": 3}
+		if rank[l] > rank[level] {
+			level = l
+		}
+	}
 	if e.C2 {
 		reasons = append(reasons, "C2 Feodo")
+		raise("high")
 	}
 	if e.ThreatFox != "" {
 		reasons = append(reasons, "ThreatFox: "+e.ThreatFox)
+		raise("high")
 	}
 	if e.URLhaus != "" {
 		reasons = append(reasons, "URLhaus: "+e.URLhaus)
+		raise("high")
 	}
 	if e.Spamhaus {
 		reasons = append(reasons, "Spamhaus DROP")
+		raise("high")
 	}
 	if e.Tor {
 		reasons = append(reasons, "Tor exit")
+		raise("high")
 	}
 	if e.VTMalicious != nil && *e.VTMalicious > 0 {
-		reasons = append(reasons, fmt.Sprintf("VT-IP %d", *e.VTMalicious))
+		reasons = append(reasons, fmt.Sprintf("VirusTotal ×%d", *e.VTMalicious))
+		switch n := *e.VTMalicious; {
+		case n >= 3:
+			raise("high")
+		case n == 2:
+			raise("med")
+		default:
+			raise("low")
+		}
 	}
-	// AbuseIPDB only counts as an alert when it's NOT a known provider (noise).
+	// AbuseIPDB only counts when it's NOT a known provider (noise).
 	if e.AbuseScore != nil && *e.AbuseScore >= 50 && e.Provider == "" {
 		reasons = append(reasons, fmt.Sprintf("AbuseIPDB %d%%", *e.AbuseScore))
+		raise("high")
 	}
+	return reasons, level
+}
+
+// alertOnIntel enriches a new public-remote connection and raises a graded
+// alert in the feed; the desktop notification only for the high grade.
+func alertOnIntel(ev Event, ip string) {
+	e := enrichIP(ip) // cached
+	reasons, level := intelAlert(e)
 	if len(reasons) == 0 {
 		return
 	}
 	detail := strings.Join(reasons, ", ")
-	publish(Event{Kind: "alert", PID: ev.PID, Process: ev.Process, Exe: ev.Exe,
+	publish(Event{Kind: "alert", Level: level, PID: ev.PID, Process: ev.Process, Exe: ev.Exe,
 		Remote: ev.Remote, Detail: detail})
-	notify(strings_(currentLang())["notif_intel"],
-		fmt.Sprintf("%s → %s (%s)", ev.Process, ip, detail), "intel:"+ev.Exe+ip)
+	if level == "high" {
+		notify(strings_(currentLang())["notif_intel"],
+			fmt.Sprintf("%s → %s (%s)", ev.Process, ip, detail), "intel:"+ev.Exe+ip)
+	}
 }
 
 func describe(c gnet.ConnectionStat) Event {

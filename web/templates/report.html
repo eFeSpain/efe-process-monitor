@@ -99,6 +99,8 @@ td { padding:6px 12px; border-bottom:1px solid #21262d; white-space:nowrap; vert
 .live-feed:empty::after{content:attr(data-empty);color:#484f58;}
 .live-ev{white-space:nowrap;} .live-ev .t{color:#484f58;}
 .ev-new{color:#3fb950;} .ev-remote{color:#58a6ff;} .ev-closed{color:#6e7681;} .ev-alert{color:#f85149;font-weight:bold;}
+/* reputation alerts are graded: one VirusTotal engine is a note, two a warning, three or a curated-feed hit stays red */
+.ev-alert.lvl-low{color:#d29922;font-weight:normal;} .ev-alert.lvl-med{color:#e3b341;}
 th{cursor:pointer;user-select:none;} th:hover{color:#58a6ff;}
 th.sort-asc,th.sort-desc{color:#c9d1d9;} th.sort-asc::after{content:' ▲';font-size:9px;} th.sort-desc::after{content:' ▼';font-size:9px;}
 .status-pill{font-size:11px;padding:3px 10px;border-radius:12px;border:1px solid #30363d;color:#8b949e;white-space:nowrap;}
