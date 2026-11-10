@@ -57,9 +57,23 @@ func openShortConnSource() (src *shortConnSource, err error) {
 	if s.drops, err = ebpf.NewMap(&ebpf.MapSpec{Name: "efemon_drops", Type: ebpf.Array, KeySize: 4, ValueSize: 8, MaxEntries: 1}); err != nil {
 		return nil, fmt.Errorf("drop counter: %w", err)
 	}
-	if s.prog, err = loadShortConnProgram(s.events.FD(), s.drops.FD(), nil); err != nil {
+	// With the byte counters if this kernel says where they are — and if it
+	// lets a program read them: a kernel locked down for confidentiality
+	// refuses any read of kernel memory, and then the program goes without.
+	vol, verr := tcpSockOffsets()
+	if verr != nil {
+		log.Printf("[short] brief connections will carry no byte counts: %v", verr)
+	}
+	s.prog, err = loadShortConnProgram(s.events.FD(), s.drops.FD(), vol)
+	if err != nil && vol != nil {
+		log.Printf("[short] the kernel refused the program with byte counters (%v); loading it without", err)
+		vol = nil
+		s.prog, err = loadShortConnProgram(s.events.FD(), s.drops.FD(), nil)
+	}
+	if err != nil {
 		return nil, err
 	}
+	s.vol = vol != nil
 	if s.tp, err = link.Tracepoint("sock", "inet_sock_set_state", s.prog, nil); err != nil {
 		return nil, fmt.Errorf("attach to sock:inet_sock_set_state: %w", err)
 	}

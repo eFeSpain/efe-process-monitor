@@ -404,3 +404,44 @@ func TestKernelEndToEnd(t *testing.T) {
 	}
 	t.Logf("history row: %s %s (%d) → %s — %s", rows[0].At, rows[0].Process, rows[0].PID, rows[0].Remote, rows[0].Detail)
 }
+
+// Where the byte counters live in this kernel's struct tcp_sock, from the
+// kernel's own type information.
+func TestKernelVolumeOffsets(t *testing.T) {
+	requireKernelTest(t)
+	vol, err := tcpSockOffsets()
+	if err != nil {
+		t.Skipf("no usable BTF on this kernel: %v", err)
+	}
+	if vol.sent <= 0 || vol.recv <= 0 || vol.sent == vol.recv || vol.sent%8 != 0 || vol.recv%8 != 0 {
+		t.Errorf("offsets of bytes_acked / bytes_received: %+v", vol)
+	}
+	t.Logf("tcp_sock: bytes_acked @%d, bytes_received @%d", vol.sent, vol.recv)
+}
+
+// A brief connection says how much it moved: 100,000 bytes out, 20,000 in.
+func TestKernelVolume(t *testing.T) {
+	if _, err := tcpSockOffsets(); err != nil {
+		requireKernelTest(t)
+		t.Skipf("no usable BTF on this kernel: %v", err)
+	}
+	src := openTestSource(t)
+	if !src.volume() {
+		t.Fatal("BTF is available but the program was loaded without byte counters")
+	}
+	client, server := exchange(t, "127.0.0.1:0", 100_000, 20_000)
+	isClient := func(r kernelRecord) bool { return r.Local == client && r.Remote == server }
+	recs := socketOf(collect(t, src, []uint16{client.Port(), server.Port()}, closedWith(isClient)), isClient)
+	if len(recs) != 3 {
+		t.Fatalf("kinds %v", kinds(recs))
+	}
+	closed := recs[2]
+	// The kernel counts in sequence space, where the SYN and the FIN take
+	// one number each: a few bytes over the payload, never under.
+	if closed.Sent < 100_000 || closed.Sent > 100_016 || closed.Recv < 20_000 || closed.Recv > 20_016 {
+		t.Errorf("closed: sent %d (want ≈100000), received %d (want ≈20000)", closed.Sent, closed.Recv)
+	}
+	if recs[0].Sent != 0 || recs[1].Sent != 0 || recs[0].Recv != 0 || recs[1].Recv != 0 {
+		t.Errorf("only the close carries byte counts: %+v", recs[:2])
+	}
+}

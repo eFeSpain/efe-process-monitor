@@ -3,7 +3,12 @@
 package main
 
 import (
+	"errors"
+	"fmt"
+	"math"
+
 	"github.com/cilium/ebpf/asm"
+	"github.com/cilium/ebpf/btf"
 )
 
 // The kernel half of brief connections: an eBPF program attached to the
@@ -171,4 +176,51 @@ func shortConnProgram(eventsFD, dropsFD int, vol *volumeOffsets) asm.Instruction
 		asm.Return(),
 	)
 	return ins
+}
+
+// tcpSockOffsets finds where this kernel keeps a socket's byte counters:
+// bytes_acked (sent and acknowledged) and bytes_received in struct tcp_sock.
+// The layout of that struct changes from one kernel to the next, so the
+// answer comes from the kernel's own type information (BTF) rather than
+// from a table: no BTF, no counters.
+func tcpSockOffsets() (*volumeOffsets, error) {
+	spec, err := btf.LoadKernelSpec()
+	if err != nil {
+		return nil, fmt.Errorf("kernel type information (BTF): %w", err)
+	}
+	var ts *btf.Struct
+	if err := spec.TypeByName("tcp_sock", &ts); err != nil {
+		return nil, fmt.Errorf("struct tcp_sock: %w", err)
+	}
+	sent, ok1 := memberOffset(ts.Members, "bytes_acked", 0, 0)
+	recv, ok2 := memberOffset(ts.Members, "bytes_received", 0, 0)
+	if !ok1 || !ok2 || sent > math.MaxInt16 || recv > math.MaxInt16 {
+		return nil, errors.New("struct tcp_sock has no bytes_acked / bytes_received where expected")
+	}
+	return &volumeOffsets{sent: int32(sent), recv: int32(recv)}, nil // #nosec G115 -- bounded just above
+}
+
+// memberOffset is the byte offset of a named member, looking through the
+// anonymous structs and unions the kernel groups fields in.
+func memberOffset(members []btf.Member, name string, base uint32, depth int) (uint32, bool) {
+	for _, m := range members {
+		off := base + m.Offset.Bytes()
+		if m.Name == name {
+			return off, true
+		}
+		if m.Name != "" || depth > 4 {
+			continue
+		}
+		var inner []btf.Member
+		switch t := btf.UnderlyingType(m.Type).(type) {
+		case *btf.Struct:
+			inner = t.Members
+		case *btf.Union:
+			inner = t.Members
+		}
+		if o, ok := memberOffset(inner, name, off, depth+1); ok {
+			return o, true
+		}
+	}
+	return 0, false
 }
