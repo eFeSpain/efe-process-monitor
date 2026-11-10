@@ -412,29 +412,53 @@ const (
 
 // shortSummary is what was not published individually.
 type shortSummary struct {
-	Sample  briefConn // the first connection of the group
-	Count   int       // connections counted in silence
-	Addrs   int       // distinct remote addresses (per-process summaries only)
-	PerProc bool      // the per-process overflow rather than one group's repeats
+	Sample     briefConn // the first connection of the group
+	Count      int       // connections counted in silence
+	Addrs      int       // distinct remote addresses (per-process summaries only)
+	PerProc    bool      // the per-process overflow rather than one group's repeats
+	Sent, Recv uint64    // what the counted connections moved, together
+	HasBytes   bool
+}
+
+// tally is what a group or a process's overflow has counted in silence.
+type tally struct {
+	count      int
+	sent, recv uint64
+	hasBytes   bool
+}
+
+func (t *tally) add(c briefConn) {
+	t.count++
+	t.sent += c.Sent
+	t.recv += c.Recv
+	t.hasBytes = t.hasBytes || c.HasBytes
+}
+
+func (t *tally) merge(o tally) {
+	t.count += o.count
+	t.sent += o.sent
+	t.recv += o.recv
+	t.hasBytes = t.hasBytes || o.hasBytes
 }
 
 type shortGroup struct {
 	start  time.Time
+	proc   string
 	sample briefConn
-	count  int
+	tally
 }
 
 type shortProc struct {
 	start     time.Time
 	published int
 	sample    briefConn // first connection over the cap
-	overflow  int
 	addrs     map[netip.Addr]bool
+	tally     // the overflow: connections past the cap
 }
 
 // shortGrouper decides which brief connections get a line of their own.
 type shortGrouper struct {
-	groups map[string]*shortGroup // direction + process + remote address (+ local port, inbound)
+	groups map[string]*shortGroup // direction + outcome + process + remote address (+ local port, inbound)
 	procs  map[string]*shortProc  // process
 }
 
@@ -456,14 +480,21 @@ func briefProc(c briefConn) string {
 // repeat of a group already open is counted; a new group is published unless
 // its process has used up its lines — but a new address is still new, and
 // still has to be checked, when nothing is shown for it.
+//
+// An attempt that never established is not a repeat of a connection that
+// worked, nor the other way round: they are separate groups.
 func (g *shortGrouper) add(c briefConn, now time.Time) (publish, fresh bool) {
 	proc := briefProc(c)
-	key := "out|" + proc + "|" + c.Remote.Addr().String()
+	key := "out|"
 	if c.Inbound {
-		key = "in|" + proc + "|" + c.Remote.Addr().String() + "|" + strconv.Itoa(int(c.Local.Port()))
+		key = "in|" + strconv.Itoa(int(c.Local.Port())) + "|"
 	}
+	if c.Failed {
+		key += "failed|"
+	}
+	key += proc + "|" + c.Remote.Addr().String()
 	if grp := g.groups[key]; grp != nil {
-		grp.count++
+		grp.add(c)
 		return false, false
 	}
 	p := g.procs[proc]
@@ -472,40 +503,54 @@ func (g *shortGrouper) add(c briefConn, now time.Time) (publish, fresh bool) {
 		g.procs[proc] = p
 	}
 	if p.published >= shortPerProcPerMin {
-		if p.overflow == 0 {
+		if p.count == 0 {
 			p.sample = c
 		}
-		p.overflow++
+		p.add(c)
 		fresh = !p.addrs[c.Remote.Addr()]
 		p.addrs[c.Remote.Addr()] = true
 		return false, fresh
 	}
 	p.published++
-	g.groups[key] = &shortGroup{start: now, sample: c}
+	g.groups[key] = &shortGroup{start: now, proc: proc, sample: c}
 	return true, true
 }
 
 // flush returns the summaries of every window that has closed, and forgets
-// those windows.
+// those windows. A process that went over its cap gets one line for
+// everything it was not shown — the overflow and the repeats of the
+// addresses that did get a line — instead of one per address.
 func (g *shortGrouper) flush(now time.Time) []shortSummary {
 	var out []shortSummary
+	for k, p := range g.procs {
+		if now.Sub(p.start) < shortGroupWindow {
+			continue
+		}
+		if p.count > 0 {
+			for gk, grp := range g.groups {
+				if grp.proc != k {
+					continue
+				}
+				if grp.count > 0 {
+					p.merge(grp.tally)
+					p.addrs[grp.sample.Remote.Addr()] = true
+				}
+				delete(g.groups, gk)
+			}
+			out = append(out, shortSummary{Sample: p.sample, Count: p.count, Addrs: len(p.addrs), PerProc: true,
+				Sent: p.sent, Recv: p.recv, HasBytes: p.hasBytes})
+		}
+		delete(g.procs, k)
+	}
 	for k, grp := range g.groups {
 		if now.Sub(grp.start) < shortGroupWindow {
 			continue
 		}
 		if grp.count > 0 {
-			out = append(out, shortSummary{Sample: grp.sample, Count: grp.count})
+			out = append(out, shortSummary{Sample: grp.sample, Count: grp.count,
+				Sent: grp.sent, Recv: grp.recv, HasBytes: grp.hasBytes})
 		}
 		delete(g.groups, k)
-	}
-	for k, p := range g.procs {
-		if now.Sub(p.start) < shortGroupWindow {
-			continue
-		}
-		if p.overflow > 0 {
-			out = append(out, shortSummary{Sample: p.sample, Count: p.overflow, Addrs: len(p.addrs), PerProc: true})
-		}
-		delete(g.procs, k)
 	}
 	return out
 }
@@ -528,10 +573,21 @@ func briefDetail(T map[string]string, c briefConn) string {
 }
 
 func summaryDetail(T map[string]string, s shortSummary) string {
-	if s.PerProc {
-		return fmt.Sprintf(T["ev_short_more_proc"], s.Count, s.Addrs)
+	var text string
+	switch {
+	case s.PerProc && s.Sample.Inbound:
+		text = fmt.Sprintf(T["ev_short_more_proc_in"], s.Count, s.Addrs)
+	case s.PerProc:
+		text = fmt.Sprintf(T["ev_short_more_proc"], s.Count, s.Addrs)
+	case s.Sample.Failed:
+		text = T["ev_short_failed"] + " · " + fmt.Sprintf(T["ev_short_more"], s.Count)
+	default:
+		text = fmt.Sprintf(T["ev_short_more"], s.Count)
 	}
-	return fmt.Sprintf(T["ev_short_more"], s.Count)
+	if s.HasBytes {
+		text += " · ↑" + humanRate(float64(s.Sent)) + " ↓" + humanRate(float64(s.Recv))
+	}
+	return text
 }
 
 // ── Switch and status ────────────────────────────────────────────────────────

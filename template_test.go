@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"html"
 	"html/template"
+	"os"
 	"regexp"
 	"strings"
 	"testing"
@@ -390,5 +391,17 @@ func TestHistoryKindShort(t *testing.T) {
 	page := renderedPages(t)["report.html"]
 	if !strings.Contains(page, `<option value="short">`) || !strings.Contains(page, ".ev-short{") {
 		t.Error("the history kind selector lacks `short`, or the feed has no style for it")
+	}
+}
+
+// Review minor: an alert raised by an inbound brief connection draws the
+// arrow the way the brief line does — the peer came to us.
+func TestFeedDrawsInboundArrowOnAlerts(t *testing.T) {
+	js, err := os.ReadFile("web/static/app.js")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if n := strings.Count(string(js), "ev.inbound ? ' ← ' : ' → '"); n < 2 {
+		t.Errorf("the feed uses the inbound arrow in %d places, want the brief line and the alert line", n)
 	}
 }

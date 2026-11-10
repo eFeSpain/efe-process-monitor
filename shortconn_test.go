@@ -429,25 +429,11 @@ func TestGrouperBurst(t *testing.T) {
 	if published != shortPerProcPerMin {
 		t.Errorf("published %d individually, want %d", published, shortPerProcPerMin)
 	}
+	// One line says it all: the repeats of the twenty published addresses are
+	// folded into the process's summary instead of twenty "×1 more" lines.
 	sums := g.flush(t0.Add(shortGroupWindow + time.Second))
-	var perProc, perAddr []shortSummary
-	for _, s := range sums {
-		if s.PerProc {
-			perProc = append(perProc, s)
-		} else {
-			perAddr = append(perAddr, s)
-		}
-	}
-	if len(perProc) != 1 || perProc[0].Count != 9960 || perProc[0].Addrs != 4980 || perProc[0].Sample.Name != "nmap" {
-		t.Errorf("per-process summary: %+v", perProc)
-	}
-	if len(perAddr) != shortPerProcPerMin {
-		t.Errorf("%d per-address summaries, want %d", len(perAddr), shortPerProcPerMin)
-	}
-	for _, s := range perAddr {
-		if s.Count != 1 {
-			t.Errorf("per-address summary count %d, want 1", s.Count)
-		}
+	if len(sums) != 1 || !sums[0].PerProc || sums[0].Count != 9980 || sums[0].Addrs != 5000 || sums[0].Sample.Name != "nmap" {
+		t.Errorf("want one per-process summary of 9980 connections to 5000 addresses: %+v", sums)
 	}
 	if len(g.groups) != 0 || len(g.procs) != 0 {
 		t.Errorf("state left after the flush: %d groups, %d procs", len(g.groups), len(g.procs))
@@ -463,7 +449,7 @@ func TestBriefDetail(t *testing.T) {
 		{briefConn{Duration: 200 * time.Millisecond, HasBytes: true, Sent: 38 << 20, Recv: 1024}, "conexión breve · 0.2 s · ↑38 MB ↓1 KB"},
 		{briefConn{Duration: 2400 * time.Millisecond}, "conexión breve · 2.4 s"},
 		{briefConn{Duration: 0}, "conexión breve · 0.0 s"},
-		{briefConn{Failed: true, Duration: 130 * time.Second}, "intento fallido"},
+		{briefConn{Failed: true, Duration: 130 * time.Second}, "intento no establecido"},
 		{briefConn{Inbound: true, Duration: 400 * time.Millisecond}, "entrante breve · 0.4 s"},
 		{briefConn{Inbound: true, Duration: time.Second, HasBytes: true}, "entrante breve · 1.0 s · ↑0 B ↓0 B"},
 	} {
@@ -471,7 +457,7 @@ func TestBriefDetail(t *testing.T) {
 			t.Errorf("briefDetail(%+v) = %q, want %q", c.conn, got, c.want)
 		}
 	}
-	if got := briefDetail(strings_("en"), briefConn{Failed: true}); got != "failed attempt" {
+	if got := briefDetail(strings_("en"), briefConn{Failed: true}); got != "attempt not established" {
 		t.Errorf("en: %q", got)
 	}
 }
@@ -797,5 +783,59 @@ func TestLoopbackRecord(t *testing.T) {
 		if got := loopbackRecord(r); got != want {
 			t.Errorf("loopbackRecord(%v → %v) = %v, want %v", r.Local, r.Remote, got, want)
 		}
+	}
+}
+
+// Review minors: a summary says how much the connections it stands for
+// moved; attempts that never established are not mixed with connections
+// that worked; an inbound per-process summary says "from".
+func TestGrouperSummaryTotals(t *testing.T) {
+	g := newShortGrouper()
+	t0 := time.Now()
+	up := brief("curl", "/usr/bin/curl", srvAddr)
+	up.HasBytes, up.Sent, up.Recv = true, 10<<20, 1024
+	failed := brief("curl", "/usr/bin/curl", srvAddr)
+	failed.Failed = true
+
+	if !groupAdd(g, up, t0) {
+		t.Fatal("first upload")
+	}
+	if !groupAdd(g, failed, t0) {
+		t.Error("an attempt that never established is not a repeat of a connection that worked")
+	}
+	for i := 0; i < 3; i++ {
+		groupAdd(g, up, t0)
+		groupAdd(g, failed, t0)
+	}
+	T := strings_("es")
+	var ok, ko *shortSummary
+	sums := g.flush(t0.Add(shortGroupWindow + time.Second))
+	for i := range sums {
+		if sums[i].Sample.Failed {
+			ko = &sums[i]
+		} else {
+			ok = &sums[i]
+		}
+	}
+	if len(sums) != 2 || ok == nil || ko == nil {
+		t.Fatalf("want two summaries, got %+v", sums)
+	}
+	if ok.Count != 3 || !ok.HasBytes || ok.Sent != 30<<20 || ok.Recv != 3*1024 {
+		t.Errorf("uploads: %+v", ok)
+	}
+	if got := summaryDetail(T, *ok); got != "×3 más en 60 s · ↑30 MB ↓3 KB" {
+		t.Errorf("%q", got)
+	}
+	if got := summaryDetail(T, *ko); got != "intento no establecido · ×3 más en 60 s" {
+		t.Errorf("%q", got)
+	}
+
+	in := shortSummary{PerProc: true, Count: 230, Addrs: 61, Sample: briefConn{Inbound: true}}
+	if got := summaryDetail(T, in); got != "×230 entrantes breves más desde 61 direcciones" {
+		t.Errorf("%q", got)
+	}
+	out := shortSummary{PerProc: true, Count: 230, Addrs: 61, HasBytes: true, Sent: 2 << 20, Recv: 4 << 20}
+	if got := summaryDetail(T, out); got != "×230 conexiones breves más a 61 direcciones · ↑2 MB ↓4 MB" {
+		t.Errorf("%q", got)
 	}
 }
