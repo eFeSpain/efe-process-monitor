@@ -34,6 +34,17 @@ jobs:
       - name: go test (race)
         run: go test -race ./...
 
+      # The eBPF program behind brief connections (shortconn_*_linux.go) has to
+      # be loaded into a real kernel to be tested: the verifier, the attachment
+      # to the tracepoint and real TCP connections. Those tests skip unless
+      # root, so the run above does not cover them; this one does, on the
+      # runner's kernel. Locally the same tests run in a VM
+      # (scripts/vm-kernel-test.sh). No -race: it needs cgo.
+      - name: kernel tests (eBPF, as root)
+        run: |
+          CGO_ENABLED=0 go test -c -o "$RUNNER_TEMP/efemon.test" .
+          sudo "$RUNNER_TEMP/efemon.test" -test.run '^TestKernel' -test.v
+
       - name: staticcheck
         uses: dominikh/staticcheck-action@v1
         with:

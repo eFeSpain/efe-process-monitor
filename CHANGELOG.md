@@ -47,6 +47,26 @@ Versions follow [Semantic Versioning](https://semver.org/).
   a small link in the header. The request carries no key and nothing about
   the machine or the version it runs; nothing is downloaded or installed; the
   privacy panel lists it. Off, the monitor never contacts GitHub.
+- **Brief connections (Linux).** The live monitor looks at the socket table
+  every 3 s, so a connection that opened and closed in between left nothing —
+  and a C2 check-in or a quick upload is shorter than that. An eBPF program
+  on the kernel tracepoint `sock:inet_sock_set_state` now reports every TCP
+  connection as it happens. The ones the poll never saw appear in the feed
+  and the history as a new kind, `short` (⚡): the process that made the
+  connection (taken inside its `connect()`), how long it lasted, bytes sent
+  and received, inbound ones attributed to whoever listens on the port, and
+  failed attempts marked as such. They go through the same checks as any
+  connection — reputation, C2 domains, new or replaced binary — and they
+  feed the beaconing detector, which until now only saw what the poll caught.
+  Repeats are grouped: the first is shown, the rest counted and summarised
+  after 60 s; at most 20 individual lines per process and minute.
+  Needs root and Linux ≥ 5.8; without them the monitor works as before and
+  says why at start-up and in ⚙ Settings, where there is a switch
+  (`SHORT_CONNS`, applied at the next start). The program is written in Go —
+  no compiled object in the repository — and is verified by the kernel at
+  load. New dependency: `github.com/cilium/ebpf` (pure Go, MIT).
+  Limits: TCP only; a process that exits within milliseconds is named but
+  has no path; byte counts need kernel BTF.
 - **New listening port.** A port that starts accepting connections from the
   network — a bind shell, a rogue proxy, a forgotten debug server — reached
   the feed as one more "new connection". The monitor now keeps a baseline of

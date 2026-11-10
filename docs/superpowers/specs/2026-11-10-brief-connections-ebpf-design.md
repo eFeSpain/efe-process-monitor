@@ -1,6 +1,6 @@
 # Brief connections on Linux via eBPF — design
 
-Date: 2026-11-10 · Status: design approved section by section; awaiting review of this document · Target: 0.6.0 · Checklist: `REVISION-0.6.md` item 5
+Date: 2026-11-10 · Status: approved and implemented; amended during implementation (see *Amendments*) · Target: 0.6.0 · Checklist: `REVISION-0.6.md` item 5
 
 ## Goal
 
@@ -297,3 +297,23 @@ tracker belongs to the monitor goroutine. CHANGELOG `[Unreleased]`.
 - Kernels before 5.8 (a perf-buffer fallback).
 - Connections in other network namespaces that outlive the poll interval.
 - Making the kernel the primary source of connection events.
+
+## Amendments (2026-11-10, during implementation)
+
+- **A start record has no local port.** The kernel binds the local port of an
+  outbound connection after the CLOSE→SYN_SENT state change, so the record
+  written there carries the local address with port 0 (seen on 6.12). The
+  tracker takes the endpoints from the `established` record, and from the
+  `closed` record for an attempt that never established. Pinned by
+  `TestKernelOutbound` / `TestKernelRefused` and `TestTrackerLocalPortArrivesLater`.
+- **Lost records are counted by the program**, in a one-slot array map it
+  increments when `bpf_ringbuf_output` fails; a ring buffer does not report
+  losses by itself.
+- **The loop's receive** is handled by `afterRecv` (the decision after the
+  receive) rather than a helper that does the receive, which could not share
+  a `select` with the poll timer.
+- **Privileges** are checked as effective UID 0, like passive DNS. A process
+  with `CAP_BPF` + `CAP_PERFMON` but not root is told it needs root.
+- **Not exercised by any test:** the reload without byte counters after the
+  kernel refuses the program with them (the refusal cannot be induced in the
+  VM), and kernels other than 6.12 until CI runs.

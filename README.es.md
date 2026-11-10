@@ -95,6 +95,18 @@ no para atacar a otros.
 - Feed por SSE de conexiones nuevas/cerradas y procesos nuevos, heurísticas de
   **beaconing/C2** (conexiones regulares al mismo host), binarios nuevos o reemplazados
   y **notificaciones de escritorio** opcionales.
+- **Conexiones breves (Linux).** El feed sale de mirar la tabla de sockets cada
+  3 s; una conexión que se abre y se cierra entre medias — un check-in de C2,
+  una subida rápida — no dejaba rastro. Un pequeño programa eBPF en un punto
+  de traza del kernel informa ahora de cada conexión TCP en el momento, y las
+  que el sondeo no vio aparecen como líneas ⚡ con el proceso que las hizo,
+  cuánto duraron y cuánto movieron, y pasan por los mismos controles
+  (reputación, binario nuevo, beaconing). Salientes, entrantes e intentos
+  fallidos; las repetidas se agrupan. Necesita root y Linux ≥ 5.8; interruptor
+  en ⚙ Ajustes (`SHORT_CONNS`). Límites: solo TCP; un proceso que termina en
+  milisegundos sale con nombre pero sin ruta; las conexiones dentro de otros
+  espacios de red (contenedores) solo se muestran si son breves. Nada sale del
+  equipo.
 - **Fija** una conexión para conservar una copia congelada de su tarjeta aunque se
   cierre.
 

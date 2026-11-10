@@ -28,6 +28,11 @@ GOOS=darwin go build -o efemon .  # macOS
   **govulncheck** (the toolchain is pinned by `go.mod`; 0.4.0 shipped with 22 fixed stdlib CVEs because
   nothing checked), and a cross-build matrix (windows/linux/darwin, amd64+arm64) that keeps the binary
   cgo-free. Dependabot (`.github/dependabot.yml`) bumps modules and actions weekly.
+- **Kernel tests** (`TestKernel…`, `shortconn_kernel_linux_test.go`): load the eBPF program into a real
+  kernel and open real TCP connections. They skip unless root. Locally: `bash scripts/vm-kernel-test.sh`
+  boots `/boot/vmlinuz-$(uname -r)` under QEMU/KVM with the test binary as PID 1 (`vmmain_linux_test.go`
+  mounts /proc, /sys, tracefs, brings `lo` up and re-executes itself) — root inside the VM, nothing
+  touched on the host; `verify.sh` (full) runs it. CI runs the same tests under `sudo`.
 
 ## Where data lives (IMPORTANT)
 - **`efemon.db`** (SQLite) → next to the executable (`appDir` = dir of `os.Executable()`), set in `main.go`.
@@ -122,11 +127,27 @@ GOOS=darwin go build -o efemon .  # macOS
 - A **live monitor** goroutine (`monitorLoop`, every 3s) diffs connection snapshots and pushes SSE
   events to `/events`; the browser shows a feed and reactively refreshes the table (debounced 1.5s,
   paused while a detail row/capture is open). Optional periodic refresh interval (Settings, localStorage).
+- **Brief connections (Linux, shortconn*.go)** are a second event source for that same goroutine. An eBPF
+  program on the tracepoint `sock:inet_sock_set_state` (written in Go with `cilium/ebpf/asm` — no C, no
+  object file in the repo) writes a 104-byte record per TCP socket entering SYN_SENT / ESTABLISHED / CLOSE
+  to a ring buffer; `startShortConns` (called from `main` before the loop) forwards them on a channel that
+  `monitorLoop` selects on next to the poll timer. `shortTracker` pairs starts with closes: a flow the poll
+  lists is dropped, one that closes unseen is brief (established, < 6 s) or a failed attempt.
+  `shortGrouper` decides what gets its own line. **Tracker and grouper belong to the monitor goroutine —
+  no locks, no other callers.** Both sources go through `announceConn`, so their checks cannot drift. The
+  start record has no local port yet (the kernel binds after the state change): endpoints come from the
+  `established` record. Without root / on an old kernel / switched off (`SHORT_CONNS=false`) the channel is
+  nil and nothing else changes.
 - **VT hash lookups** are rate-limited (4/min token bucket) and resolved by a **background worker**
   (`vtWorker`); the table shows `PENDING` then caches the verdict in SQLite. `NOT_IN_VT` is cached too.
 - **Single instance**: if port 5000 is taken, it opens the browser and exits.
 
 ## File map
+- **shortconn.go** — brief connections, the kernel-independent part: the record layout and decoder,
+  `shortTracker`, `shortGrouper`, wording, the `SHORT_CONNS` switch and the status.
+  **shortconn_prog_linux.go** — the eBPF program as Go assembly and the BTF lookup of the byte counters'
+  offsets in `struct tcp_sock`. **shortconn_linux.go** — load, attach, read (`shortConnSource`,
+  `startShortConns`); **shortconn_other.go** — stub.
 - **main.go** — HTTP server, all routes/handlers, `go:embed` of templates+static, startup (env, DB,
   elevation, monitor, vtWorker, primeIntel, browser, banner), `appDir`/`exeDir`, template `funcMap`
   (trunc, threatClass, join, joinInts, json, deref, humanBytes). Every JSON handler reads its body

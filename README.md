@@ -92,6 +92,17 @@ attacking others.
 - SSE feed of new/closed connections and new processes, **beaconing/C2**
   heuristics (regular connections to the same host), new or replaced binaries, and
   optional **desktop notifications**.
+- **Brief connections (Linux).** The feed is built from a look at the socket
+  table every 3 s; a connection that opens and closes in between — a C2
+  check-in, a quick upload — used to leave no trace. A small eBPF program on a
+  kernel tracepoint now reports every TCP connection as it happens, and the
+  ones the poll missed appear as ⚡ lines with the process that made them, how
+  long they lasted and how much they moved, and go through the same checks
+  (reputation, new binary, beaconing). Outbound, inbound and failed attempts;
+  repeats are grouped. Needs root and Linux ≥ 5.8; switch in ⚙ Settings
+  (`SHORT_CONNS`). Limits: TCP only; a process that exits within milliseconds
+  is named but has no path; connections inside other network namespaces
+  (containers) are shown only when brief. Nothing leaves the machine.
 - **Pin** a connection to keep a frozen copy of its card even after it closes.
 
 **Capture & audit**
