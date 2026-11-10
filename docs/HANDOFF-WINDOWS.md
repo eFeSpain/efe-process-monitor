@@ -97,8 +97,11 @@ source inherits every fix made on Linux:
 |---|---|---|
 | `recStart` | a process begins an outbound connect | `PID` of that process, `Comm` (image name; used if the path can no longer be read), `Remote`. `Local` may lack the port. |
 | `recEstablished` | handshake completed | full `Local` and `Remote`; `Old = tcpSynSent` for outbound, **`Old = tcpSynRecv` for inbound** (an inbound connection has no start record). |
-| `recClosed` | the connection is gone | `Old = tcpSynSent` **only** if the connect never completed (that is what makes it a "failed attempt"); `Sent` / `Recv` if available. |
+| `recClosed` | the connection is gone | `Old = tcpSynSent` **only** if the connect never completed (that is what makes it an "attempt not established"); `Sent` / `Recv` if available. |
 
+- On `recStart`, fill `Name` and `Exe` (who the PID is) in the reader, as
+  the record arrives — the monitor goroutine may be busy and the process
+  gone a moment later. Drop loopback records in the reader (`loopbackRecord`).
 - `Sock`: any 64-bit value that identifies the connection while it lives.
 - `TS`: a monotonic clock in nanoseconds; durations are differences of it.
 - Addresses unmapped (`netip.Addr.Unmap()`), ports in host order.

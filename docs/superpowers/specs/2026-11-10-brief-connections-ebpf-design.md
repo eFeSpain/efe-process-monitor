@@ -351,11 +351,25 @@ on the real machine; each fix has a test that failed first.
 - **The VM harness and the CI step require tests that ran and passed**: a
   pattern matching nothing, or skipped tests, no longer count as a pass.
 
-Known and not addressed in this delivery (see the changelog of a later one):
-a connection established just before a poll and closed before the next can
-be reported by both sources; loopback records travel the whole path before
-being discarded; the executable path is resolved by the monitor goroutine,
-so a process that exits during a poll pass keeps only its name; summaries
-carry no byte totals; the tracepoint layout is pinned by a test, not checked
-at start-up; an application that abandons a connect (happy eyeballs) is
-worded "failed attempt".
+The review's minor findings were addressed afterwards, at the owner's
+request:
+
+- The tracker remembers what the last poll listed as ESTABLISHED, so a
+  connection established just before a poll is not announced twice.
+- The reader goroutine resolves the process as a start record arrives and
+  drops loopback records; the tracker uses what the reader found.
+- Summaries add up bytes; an attempt that never established is a group of
+  its own; a process over its cap gets one summary line, not one per address.
+- The tracepoint's layout is checked at start-up, before loading.
+- "Failed attempt" is worded "attempt not established" (it also covers a
+  connect the application abandoned); inbound summaries say "from"; alerts
+  from inbound connections draw ←; brief events write IPv6 like polled ones.
+- The monitor's state is a type (`liveMonitor`) with `poll` and `record`, and
+  a test drives it with both sources. Kernel tests now cover another
+  process's connection, a full ring buffer, the reader's back-pressure and a
+  non-loopback path (an alias address on `lo`). The VM init requires a
+  marker file, not only PID 1.
+
+Left as it is: full-connect scans of an exposed port trigger reputation
+lookups and notifications for each scanner — whether that is noise depends
+on a machine that is exposed, which the development machine is not.

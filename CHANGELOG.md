@@ -55,7 +55,7 @@ Versions follow [Semantic Versioning](https://semver.org/).
   and the history as a new kind, `short` (⚡): the process that made the
   connection (taken inside its `connect()`), how long it lasted, bytes sent
   and received, inbound ones attributed to whoever listens on the port, and
-  failed attempts marked as such. They go through the same checks as any
+  attempts that never established marked as such. They go through the same checks as any
   connection — reputation, C2 domains, new or replaced binary — and they
   feed the beaconing detector, which until now only saw what the poll caught.
   Repeats are grouped: the first is shown, the rest counted and summarised
