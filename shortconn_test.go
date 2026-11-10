@@ -839,3 +839,37 @@ func TestGrouperSummaryTotals(t *testing.T) {
 		t.Errorf("%q", got)
 	}
 }
+
+// Review minor: the program reads the tracepoint's record at fixed offsets.
+// A kernel that lays it out differently — a vendor kernel with ring buffers
+// but the older one-byte protocol field — would be reported as "active" and
+// then report nothing. The layout is checked before the program is loaded.
+func TestTracepointLayout(t *testing.T) {
+	const good = "name: inet_sock_set_state\nID: 1403\nformat:\n" +
+		"\tfield:unsigned short common_type;\toffset:0;\tsize:2;\tsigned:0;\n" +
+		"\tfield:int common_pid;\toffset:4;\tsize:4;\tsigned:1;\n\n" +
+		"\tfield:const void * skaddr;\toffset:8;\tsize:8;\tsigned:0;\n" +
+		"\tfield:int oldstate;\toffset:16;\tsize:4;\tsigned:1;\n" +
+		"\tfield:int newstate;\toffset:20;\tsize:4;\tsigned:1;\n" +
+		"\tfield:__u16 sport;\toffset:24;\tsize:2;\tsigned:0;\n" +
+		"\tfield:__u16 dport;\toffset:26;\tsize:2;\tsigned:0;\n" +
+		"\tfield:__u16 family;\toffset:28;\tsize:2;\tsigned:0;\n" +
+		"\tfield:__u16 protocol;\toffset:30;\tsize:2;\tsigned:0;\n" +
+		"\tfield:__u8 saddr[4];\toffset:32;\tsize:4;\tsigned:0;\n" +
+		"\tfield:__u8 daddr[4];\toffset:36;\tsize:4;\tsigned:0;\n" +
+		"\tfield:__u8 saddr_v6[16];\toffset:40;\tsize:16;\tsigned:0;\n" +
+		"\tfield:__u8 daddr_v6[16];\toffset:56;\tsize:16;\tsigned:0;\n"
+	if err := tracepointLayout(good); err != nil {
+		t.Errorf("the layout the program was written for was refused: %v", err)
+	}
+	for name, bad := range map[string]string{
+		"one-byte protocol": strings.Replace(good, "field:__u16 protocol;\toffset:30;\tsize:2;", "field:__u8 protocol;\toffset:30;\tsize:1;", 1),
+		"a field moved":     strings.Replace(good, "saddr[4];\toffset:32;", "saddr[4];\toffset:36;", 1),
+		"a field missing":   strings.Replace(good, "\tfield:const void * skaddr;\toffset:8;\tsize:8;\tsigned:0;\n", "", 1),
+		"empty":             "",
+	} {
+		if err := tracepointLayout(bad); err == nil {
+			t.Errorf("%s: accepted", name)
+		}
+	}
+}

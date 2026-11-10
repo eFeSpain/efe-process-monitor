@@ -9,6 +9,7 @@ import (
 	"net/netip"
 	"os"
 	"strconv"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -640,4 +641,23 @@ func shortConnStatusText(T map[string]string) (text string, active bool) {
 		text = fmt.Sprintf(text, detail)
 	}
 	return text, code == "active"
+}
+
+// tracepointLayout checks the kernel's description of the tracepoint
+// sock:inet_sock_set_state (its `format` file) against the offsets the eBPF
+// program reads. They belong to a stable interface, but a kernel that lays
+// the record out differently must be refused, not read wrongly.
+func tracepointLayout(format string) error {
+	for _, field := range []string{
+		"skaddr;\toffset:8;\tsize:8;", "oldstate;\toffset:16;\tsize:4;", "newstate;\toffset:20;\tsize:4;",
+		"sport;\toffset:24;\tsize:2;", "dport;\toffset:26;\tsize:2;", "family;\toffset:28;\tsize:2;",
+		"protocol;\toffset:30;\tsize:2;", "saddr[4];\toffset:32;\tsize:4;", "daddr[4];\toffset:36;\tsize:4;",
+		"saddr_v6[16];\toffset:40;\tsize:16;", "daddr_v6[16];\toffset:56;\tsize:16;",
+	} {
+		if !strings.Contains(format, " "+field) {
+			name, _, _ := strings.Cut(field, ";")
+			return fmt.Errorf("tracepoint sock:inet_sock_set_state: field %s is not where the program expects it", name)
+		}
+	}
+	return nil
 }

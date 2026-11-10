@@ -46,6 +46,15 @@ func openShortConnSource() (src *shortConnSource, err error) {
 	} else if err != nil {
 		return nil, fmt.Errorf("probing for ring buffer support: %w", err)
 	}
+	// The program reads the tracepoint's record at fixed offsets: make sure
+	// this kernel lays it out that way before attaching anything to it.
+	format, err := readTracepointFormat()
+	if err != nil {
+		return nil, err
+	}
+	if err := tracepointLayout(format); err != nil {
+		return nil, err
+	}
 	s := &shortConnSource{}
 	defer func() {
 		if err != nil {
@@ -82,6 +91,19 @@ func openShortConnSource() (src *shortConnSource, err error) {
 		return nil, fmt.Errorf("ring buffer reader: %w", err)
 	}
 	return s, nil
+}
+
+// readTracepointFormat reads the kernel's description of the tracepoint's
+// record, wherever tracefs is mounted.
+func readTracepointFormat() (string, error) {
+	var err error
+	for _, dir := range []string{"/sys/kernel/tracing", "/sys/kernel/debug/tracing"} {
+		var b []byte
+		if b, err = os.ReadFile(dir + "/events/sock/inet_sock_set_state/format"); err == nil {
+			return string(b), nil
+		}
+	}
+	return "", fmt.Errorf("tracepoint sock:inet_sock_set_state not available: %w", err)
 }
 
 // loadShortConnProgram hands the program to the kernel's verifier. When it
