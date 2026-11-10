@@ -100,3 +100,42 @@ func TestAccessAndExecMapScore(t *testing.T) {
 		t.Errorf("exec anomaly from a staging path should be suspicious, got %d", s)
 	}
 }
+
+// Every Electron application — VS Code, Slack, Discord, Signal — keeps files
+// called Cookies and Local State in its own directory, and holds them open.
+// That is the application using its own store, not credential access; with
+// the local signals alerting live it raised a red alert for the editor at
+// every start. What the signal is about is a *browser's* store in the hands
+// of something that is not a browser.
+func TestOwnElectronStoreIsNotCredentialAccess(t *testing.T) {
+	for _, c := range []struct {
+		proc  string
+		files []string
+		want  int
+	}{
+		{"code", []string{"/home/efe/.config/Code/Cookies", "/home/efe/.config/Code/Local State"}, 0},
+		{"slack", []string{"/home/x/.config/Slack/Cookies", "/home/x/.config/Slack/Local State"}, 0},
+		{"signal-desktop", []string{"/home/x/.config/Signal/Cookies"}, 0},
+		{"Discord", []string{"/home/x/.config/discord/Cookies", "/home/x/.config/discord/Web Data"}, 0},
+
+		// A browser's store read by something else is still the signal…
+		{"python3", []string{"/home/x/.config/google-chrome/Default/Cookies", "/home/x/.config/google-chrome/Default/Login Data"}, 2},
+		{"code", []string{"/home/x/.config/chromium/Default/Login Data"}, 1},
+		{"stealer", []string{"/home/x/.mozilla/firefox/ab12.default-release/logins.json", "/home/x/.mozilla/firefox/ab12.default-release/key4.db"}, 2},
+		{"stealer", []string{"/home/x/snap/firefox/common/.mozilla/firefox/p/cookies.sqlite"}, 1},
+		{"stealer", []string{"/home/x/.var/app/com.brave.Browser/config/BraveSoftware/Brave-Browser/Default/Login Data"}, 1},
+		{"stealer", []string{"/home/x/.config/microsoft-edge/Default/Cookies"}, 1},
+		{"stealer", []string{"/home/x/.thunderbird/ab12.default/logins.json"}, 1},
+		{"stealer", []string{`C:\Users\x\AppData\Local\Google\Chrome\User Data\Default\Login Data`}, 1},
+
+		// …and a browser (or the mail client) reading it is not.
+		{"chrome", []string{"/home/x/.config/google-chrome/Default/Cookies"}, 0},
+		{"firefox", []string{"/home/x/.config/google-chrome/Default/Login Data"}, 0}, // importing from another browser
+		{"thunderbird", []string{"/home/x/.thunderbird/ab12.default/logins.json"}, 0},
+	} {
+		flagged, scored, _ := sensitiveOpenFiles(c.proc, c.files)
+		if scored != c.want {
+			t.Errorf("%s holding %v: %d flagged %v, want %d", c.proc, c.files, scored, flagged, c.want)
+		}
+	}
+}

@@ -90,6 +90,13 @@ Versions follow [Semantic Versioning](https://semver.org/).
   next starts (Linux) or the next time the address is blocked (Windows).
 
 ### Fixed
+- **An application's own `Cookies` file counted as credential access.** Every
+  Electron application (VS Code, Slack, Discord, Signal…) keeps files named
+  `Cookies` and `Local State` and holds them open; the check went by file
+  name alone, so they were scored — and, with local signals now alerting
+  live, would have raised a red alert at every start. The signal is now what
+  it says: a *browser's* store (or a mail client's) held by something that is
+  not a browser, on Linux, snap, flatpak, Windows and macOS layouts.
 - **Linux (iptables): a block could be skipped when ufw or another front-end
   was active.** The DROP rule was appended to the chain, after the chains
   those tools hook in — which accept new and established connections first.

@@ -40,15 +40,43 @@ var bulkReaders = set("rsync", "restic", "borg", "duplicity", "tar", "rclone", "
 	"dropbox", "megasync", "insync", "timeshift", "deja-dup", "kbackup", "kup", "kup-daemon", "baloo_file",
 	"baloo_file_extractor", "tracker-miner-fs-3", "updatedb", "plocate-build", "clamd", "clamscan", "freshclam")
 
+// browserProfileDirs mark a path as being inside a browser's profile (or a
+// mail client's built on the same engine), on any platform and through snap
+// or flatpak. The file names alone are not enough: every Electron application
+// — VS Code, Slack, Discord, Signal — keeps its own Cookies and Local State
+// and holds them open, which is the application using its own store.
+var browserProfileDirs = []string{
+	"/google-chrome", "/chromium/", "/bravesoftware/", "/microsoft-edge", "/vivaldi", "/.config/opera",
+	"/yandex-browser", "/thorium/", "/epiphany/",
+	"/.mozilla/", "/.librewolf/", "/.waterfox/", "/.zen/", "/.floorp/", "/.thunderbird/",
+	// Windows and macOS layouts.
+	"/google/chrome/", "/microsoft/edge/", "/mozilla/firefox/", "/application support/firefox/",
+	"/opera software/", "/thunderbird/profiles/",
+}
+
+// browserReaders may hold a browser's store: the browsers themselves (they
+// import each other's data) and the mail clients that share the format.
+var browserReaders = func() map[string]bool {
+	m := set("thunderbird", "thunderbird-bin", "betterbird", "betterbird-bin")
+	for b := range browsers2 {
+		m[b] = true
+	}
+	return m
+}()
+
 var fileCategories = []fileCategory{
 	{"browser", true, func(l, b string) bool {
 		switch b {
 		case "login data", "cookies", "web data", "local state", "key4.db", "key3.db", "logins.json",
 			"cookies.sqlite", "cert9.db", "signons.sqlite", "login data for account":
-			return true
+			for _, d := range browserProfileDirs {
+				if strings.Contains(l, d) {
+					return true
+				}
+			}
 		}
 		return false
-	}, browsers2},
+	}, browserReaders},
 	{"ssh", true, func(l, b string) bool {
 		return strings.Contains(l, "/.ssh/") && (strings.HasPrefix(b, "id_") || b == "authorized_keys" || b == "config")
 	}, set("ssh", "sshd", "ssh-agent", "ssh-add", "ssh-keygen", "scp", "sftp", "git", "git-remote-https",
@@ -94,7 +122,9 @@ func sensitiveOpenFiles(procName string, files []string) (flagged []string, scor
 	}
 	seen := map[string]bool{}
 	for _, f := range files {
-		l := strings.ToLower(f)
+		// Lower-cased and with forward slashes, so one set of patterns
+		// covers Windows paths too.
+		l := strings.ReplaceAll(strings.ToLower(f), `\`, "/")
 		b := path.Base(l)
 		for _, c := range fileCategories {
 			if !c.match(l, b) || c.readers[me] {
