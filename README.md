@@ -18,15 +18,19 @@ sources say about the binary and the remote IP.
 
 > **Status: stable.** Works and is used day to day. Interfaces and stored data may evolve between versions.
 
-**What's new in 0.5.0** — the monitor can now **run at boot on Linux**:
-`sudo efemon --install-service` (or ⚙ Settings → *Run at boot*) installs it as
-a systemd service under `/opt/efemon`; it is watching before anyone logs in,
-and the tray icon, notifications and *Open panel* attach to your desktop
-session when it appears. New flags `--version` and `--no-browser`. A new
-reputation source, **URLhaus** (abuse.ch, same Auth-Key as ThreatFox), flags
-addresses that are serving malware right now. And the dashboard runs under a
-strict Content-Security-Policy: no inline JavaScript anywhere. Full notes in
-the [changelog](CHANGELOG.md).
+**What's new in 0.6.0** — the monitor watches when nobody is looking. On
+Linux, **brief connections**: an eBPF program on a kernel tracepoint reports
+every TCP connection as it happens, so the ones that open and close between
+two looks at the socket table — a C2 check-in, a quick upload — are recorded
+with their process, duration and volume, and feed the beaconing detector.
+Spawn chains, credential access and anomalous executable memory now **alert
+live**; the machine audit **runs on a schedule** and reports what is new; a
+**new listening port** raises its own alert; and an **alert webhook** (ntfy,
+Slack, Discord) takes all of it off the machine nobody is sitting at. Also:
+ThreatFox **C2 domains** matched against the names processes ask for,
+**suspend/resume** a process instead of killing it, a **searchable history**,
+IP blocks in **both directions**, and sessions that survive a restart. Full
+notes in the [changelog](CHANGELOG.md).
 
 <div align="center">
 <img src="docs/screenshot-main.png" alt="Main dashboard" width="880">

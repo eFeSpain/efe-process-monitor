@@ -6,7 +6,17 @@ Versions follow [Semantic Versioning](https://semver.org/).
 
 ---
 
-## [Unreleased]
+## [0.6.0] — 2026-11-10
+
+The monitor watches when nobody is looking: what it used to compute only
+when someone opened a panel now raises alerts on its own, and what used to
+slip between two looks at the socket table is recorded.
+
+**Not yet exercised:** none of this release has been run on Windows — it is
+built for it and its unit tests pass, but the features that touch the system
+there (suspend/resume, the two-way block, the new-listening-port alert) are
+untested. On Linux, the two-way IP block has not been tried against a live
+firewall. Brief connections are Linux-only.
 
 ### Added
 - **Local signals alert live.** A spawn chain that should never happen (a

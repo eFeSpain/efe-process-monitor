@@ -22,14 +22,14 @@ Spanish.
    - Test first. `bash verify.sh --quick` green before every commit
      (`bash verify.sh` in full before merging: six cross-compiles).
    - The render path never waits on the network or a subprocess.
-2. `CHANGELOG.md` → `[Unreleased]`: everything added since 0.5.0.
+2. `CHANGELOG.md` → `[0.6.0]`: everything added since 0.5.0.
 3. `REVISION-0.6.md` is the owner's checklist; it is **untracked** and exists
    only on the Linux machine. Its Windows-relevant content is repeated here.
 
 ## State of the repository
 
-- `appVersion` is still `0.5.0`; the 0.6 work is in `main` under
-  `[Unreleased]`. Releasing 0.6.0 (bump `version.go`, date the changelog,
+- 0.6.0 was released on 2026-11-10. Its notes say plainly that it was not
+  run on Windows. Releasing anything (bump `version.go`, date the changelog,
   push, tag) is the owner's decision — do not do it on your own.
 - Nothing of the 0.6 round has ever **run** on Windows. It cross-compiles for
   windows/amd64 and windows/arm64 and its unit tests pass on Linux. Section 1

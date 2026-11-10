@@ -18,15 +18,20 @@ sobre el binario y la IP remota.
 
 > **Estado: estable.** Funciona y se usa a diario. La interfaz y los datos guardados pueden evolucionar entre versiones.
 
-**Novedades de la 0.5.0** — el monitor ya puede **arrancar con el sistema en
-Linux**: `sudo efemon --install-service` (o ⚙ Ajustes → *Arranque con el
-sistema*) lo instala como servicio systemd en `/opt/efemon`; vigila antes de que
-nadie inicie sesión, y el icono de bandeja, las notificaciones y *Abrir panel*
-se enganchan a tu sesión cuando aparece. Nuevos flags `--version` y
-`--no-browser`. Nueva fuente de reputación, **URLhaus** (abuse.ch, la misma
-Auth-Key que ThreatFox), que señala direcciones que están distribuyendo malware
-ahora mismo. Y el panel corre bajo una Content-Security-Policy estricta: sin
-JavaScript inline en ninguna parte. Detalle completo en el [changelog](CHANGELOG.md).
+**Novedades de la 0.6.0** — el monitor vigila aunque nadie mire. En Linux,
+**conexiones breves**: un programa eBPF en un punto de traza del kernel informa
+de cada conexión TCP en el momento, así que las que se abren y se cierran entre
+dos miradas a la tabla de sockets — un check-in de C2, una subida rápida —
+quedan registradas con su proceso, duración y volumen, y alimentan el detector
+de beaconing. Las cadenas de arranque anómalas, el acceso a credenciales y la
+memoria ejecutable anómala ahora **alertan en vivo**; la auditoría del equipo
+**se ejecuta sola** y avisa de lo nuevo; un **puerto nuevo a la escucha** tiene
+su propia alerta; y un **webhook de alertas** (ntfy, Slack, Discord) lo saca
+todo del equipo en el que no hay nadie sentado. Además: **dominios C2** de
+ThreatFox contra los nombres que piden los procesos, **suspender/reanudar** un
+proceso en vez de matarlo, **histórico con búsqueda**, bloqueo de IP en **ambos
+sentidos** y sesiones que sobreviven a un reinicio. Detalle completo en el
+[changelog](CHANGELOG.md).
 
 <div align="center">
 <img src="docs/screenshot-main.png" alt="Panel principal" width="880">
