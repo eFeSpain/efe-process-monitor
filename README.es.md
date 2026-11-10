@@ -115,8 +115,9 @@ no para atacar a otros.
   binarios o de IPs.
 - **Info de host LAN**: NetBIOS / DNS / MAC, con búsqueda offline de **fabricante
   (OUI)**.
-- **Histórico** forense en SQLite, exportable a CSV/JSON, con borrado por filtros
-  (por proceso, tipo o antigüedad). **Exportación de línea temporal**
+- **Histórico** forense en SQLite, con **búsqueda** sobre todo lo guardado
+  (cualquier texto del evento, tipo, rango de fechas), exportable a CSV/JSON y
+  borrable con ese mismo filtro. **Exportación de línea temporal**
   (`/export/timeline.json`): una entrada por (binario, IP remota) con sus eventos,
   cambios de riesgo, nombres pedidos y estado de bloqueo/whitelist — el informe
   del incidente en un solo documento.

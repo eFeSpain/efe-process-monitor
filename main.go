@@ -215,6 +215,7 @@ func main() {
 	http.HandleFunc("/capture", handleCapture)
 	http.HandleFunc("/capture.pcap", handleCapturePcap)
 	http.HandleFunc("/api/events", handleAPIEvents)
+	http.HandleFunc("/api/history", handleHistory)
 	http.HandleFunc("/export.csv", handleExportCSV)
 	http.HandleFunc("/export.json", handleExportJSON)
 	http.HandleFunc("/export/timeline.json", handleExportTimeline)
@@ -677,11 +678,17 @@ func handleAPIEvents(w http.ResponseWriter, r *http.Request) {
 			http.Error(w, `{"ok":false,"error":"confirm=1 required"}`, http.StatusBadRequest)
 			return
 		}
+		// The same filter as the list. One that cannot be understood is
+		// refused: dropping it would delete far more than was asked for.
+		f, err := parseEventFilter(r)
+		if err != nil {
+			http.Error(w, `{"ok":false,"error":"invalid filter"}`, http.StatusBadRequest)
+			return
+		}
 		older, _ := strconv.Atoi(r.URL.Query().Get("older"))
-		kind := r.URL.Query().Get("kind")
-		proc := r.URL.Query().Get("process")
-		n := clearEvents(kind, proc, older)
-		log.Printf("history cleared by operator (kind=%q process=%q older=%ds): %d events", kind, proc, older, n)
+		n := deleteEvents(f, older)
+		log.Printf("history cleared by operator (q=%q kind=%q process=%q from=%s to=%s older=%ds): %d events",
+			f.Text, f.Kind, f.Process, r.URL.Query().Get("from"), r.URL.Query().Get("to"), older, n)
 		writeJSON(w, map[string]any{"ok": true, "deleted": n})
 		return
 	}
@@ -692,9 +699,32 @@ func handleAPIEvents(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, queryEvents(limit, r.URL.Query().Get("kind")))
 }
 
+// exportLimit bounds an export: the newest matches, like the list.
+const exportLimit = 5000
+
+// exportEvents is what both exports contain: the events matching the filter
+// in the request (none = everything), newest first.
+func exportEvents(w http.ResponseWriter, r *http.Request) ([]HistEvent, bool) {
+	f, err := parseEventFilter(r)
+	if err != nil {
+		http.Error(w, "invalid filter", http.StatusBadRequest)
+		return nil, false
+	}
+	f.Limit, f.Before = exportLimit, 0
+	evs, _ := searchEvents(f)
+	if evs == nil {
+		evs = []HistEvent{}
+	}
+	return evs, true
+}
+
 func handleExportJSON(w http.ResponseWriter, r *http.Request) {
+	evs, ok := exportEvents(w, r)
+	if !ok {
+		return
+	}
 	w.Header().Set("Content-Disposition", "attachment; filename=events.json")
-	writeJSON(w, queryEvents(5000, ""))
+	writeJSON(w, evs)
 }
 
 // handleExportTimeline is the incident view: every (binary, remote address)
@@ -711,12 +741,18 @@ func handleExportTimeline(w http.ResponseWriter, r *http.Request) {
 }
 
 func handleExportCSV(w http.ResponseWriter, r *http.Request) {
+	evs, ok := exportEvents(w, r)
+	if !ok {
+		return
+	}
 	w.Header().Set("Content-Type", "text/csv")
 	w.Header().Set("Content-Disposition", "attachment; filename=events.csv")
 	cw := csv.NewWriter(w)
 	cw.Write([]string{"ts", "kind", "pid", "process", "exe", "local", "remote", "detail"})
-	for _, e := range queryEvents(5000, "") {
-		cw.Write([]string{csvCell(e.TS), csvCell(e.Kind), strconv.Itoa(int(e.PID)), csvCell(e.Process),
+	for _, e := range evs {
+		// ts is the full date and time: the history spans weeks, and a time
+		// of day alone does not say which day.
+		cw.Write([]string{csvCell(e.At), csvCell(e.Kind), strconv.Itoa(int(e.PID)), csvCell(e.Process),
 			csvCell(e.Exe), csvCell(e.Local), csvCell(e.Remote), csvCell(e.Detail)})
 	}
 	cw.Flush()

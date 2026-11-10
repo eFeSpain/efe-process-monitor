@@ -626,48 +626,66 @@ function formatPacket(p) {
 }
 
 // ── History ───────────────────────────────────────────────────────────────
-let histEvents = [];
-function openHistory() {
-    const m = document.getElementById('history-modal'), b = document.getElementById('history-body');
-    showingScoreHistory = false; // always open on the event list, not the risk view
-    m.style.display = 'flex'; b.textContent = '…';
-    fetch('/api/events?limit=500').then(r => r.json()).then(evs => {
-        // refresh the kind filter with the kinds actually present
-        const sel = document.getElementById('hist-kind'), cur = sel.value;
-        const kinds = [...new Set((evs || []).map(e => e.kind).filter(Boolean))].sort();
-        sel.innerHTML = `<option value="">${esc(T.hist_kind_all)}</option>` +
-            kinds.map(k => `<option value="${esc(k)}">${esc(k)}</option>`).join('');
-        sel.value = kinds.includes(cur) ? cur : '';
-        histEvents = evs || [];
-        renderHistory();
-    }).catch(() => { b.textContent = 'error'; });
+// The search runs in the database, over everything retained (history.go):
+// any text of the event, the kind, a date range — a page at a time.
+let histNext = 0, histShown = 0, histSeq = 0, histTimer = null;
+function histFilter() {
+    const qs = new URLSearchParams();
+    for (const [param, id] of [['q', 'hist-q'], ['kind', 'hist-kind'], ['from', 'hist-from'], ['to', 'hist-to']]) {
+        const v = document.getElementById(id).value.trim();
+        if (v) qs.set(param, v);
+    }
+    return qs;
 }
-// The process and kind filters apply to the list as well as to deletion: the
-// details block opens the history already narrowed to one process.
-function renderHistory() {
+function histRow(e) {
+    return `<div class="hist-row"><span class="t">${esc(e.at || e.ts || '')}</span>` +
+        `<span class="ev-${esc(e.kind || '')}">${esc(e.kind || '')}</span>` +
+        `<span title="${esc(e.exe || '')}">${esc(e.process || '')} (${e.pid || '—'})</span>` +
+        `<span title="${esc(e.detail || '')}">${esc(e.detail || e.remote || e.local || '')}</span></div>`;
+}
+function loadHistory(append) {
     if (showingScoreHistory) return;
-    const b = document.getElementById('history-body');
-    const proc = document.getElementById('hist-proc').value.trim().toLowerCase();
-    const kind = document.getElementById('hist-kind').value;
-    const evs = histEvents.filter(e => (!proc || (e.process || '').toLowerCase().includes(proc)) && (!kind || e.kind === kind));
-    if (!evs.length) { b.textContent = '—'; return; }
-    b.innerHTML = evs.map(e => `<div class="hist-row"><span class="t">${esc(e.ts||'')}</span>`+
-        `<span class="ev-${esc(e.kind||'')}">${esc(e.kind||'')}</span>`+
-        `<span>${esc(e.process||'')} (${e.pid||'—'})</span>`+
-        `<span>${esc(e.detail||e.remote||e.local||'')}</span></div>`).join('');
+    const b = document.getElementById('history-body'), more = document.getElementById('hist-more');
+    const filter = histFilter(), qs = new URLSearchParams(filter);
+    qs.set('limit', '200');
+    if (append && histNext) qs.set('before', String(histNext));
+    if (!append) { b.textContent = '…'; more.style.display = 'none'; }
+    const mine = ++histSeq; // an answer to an older query must not overwrite a newer one
+    fetch('/api/history?' + qs.toString()).then(r => r.ok ? r.json() : Promise.reject(new Error(r.status))).then(res => {
+        if (mine !== histSeq) return;
+        const evs = res.events || [];
+        if (append) b.insertAdjacentHTML('beforeend', evs.map(histRow).join(''));
+        else if (evs.length) b.innerHTML = evs.map(histRow).join('');
+        else b.textContent = T.hist_none;
+        histNext = res.next || 0;
+        histShown = (append ? histShown : 0) + evs.length;
+        more.style.display = histNext ? 'block' : 'none';
+        document.getElementById('hist-count').textContent = histShown + (histNext ? '+' : '');
+        // The exports follow the filter: what is on screen is what is exported.
+        const f = filter.toString();
+        document.querySelectorAll('#history-modal a[data-export]').forEach(a => { a.href = a.dataset.export + (f ? '?' + f : ''); });
+    }).catch(() => { if (mine === histSeq && !append) b.textContent = 'error'; });
 }
+function openHistory() {
+    showingScoreHistory = false; // always open on the event list, not the risk view
+    document.getElementById('history-modal').style.display = 'flex';
+    loadHistory(false);
+}
+// Typing searches after a short pause instead of on every key.
+function searchHistory() {
+    clearTimeout(histTimer);
+    histTimer = setTimeout(() => loadHistory(false), 250);
+}
+function moreHistory() { loadHistory(true); }
 function openHistoryFor(name) {
-    document.getElementById('hist-proc').value = name || '';
+    document.getElementById('hist-q').value = name || '';
     openHistory();
 }
 function deleteHistory() {
-    const kind = document.getElementById('hist-kind').value;
+    // The same filter as the list (search, kind, dates), plus the age.
     const older = document.getElementById('hist-age').value;
-    const proc = document.getElementById('hist-proc').value.trim();
     if (!confirm(T.hist_delete_confirm)) return;
-    const qs = new URLSearchParams();
-    if (kind) qs.set('kind', kind);
-    if (proc) qs.set('process', proc);
+    const qs = histFilter();
     if (older && older !== '0') qs.set('older', older);
     qs.set('confirm', '1'); // the server refuses a deletion without it
     fetch('/api/events?' + qs.toString(), { method: 'DELETE' })
@@ -683,6 +701,9 @@ function toggleScoreHistory() {
     showingScoreHistory = !showingScoreHistory;
     if (!showingScoreHistory) { openHistory(); return; }
     const b = document.getElementById('history-body');
+    histSeq++; // a search still in flight must not land on top of this view
+    document.getElementById('hist-more').style.display = 'none';
+    document.getElementById('hist-count').textContent = '';
     b.textContent = '…';
     fetch('/api/score_history?limit=500').then(r => r.json()).then(list => {
         if (!list || !list.length) { b.textContent = T.score_hist_none; return; }
@@ -890,7 +911,8 @@ const actions = {
     unpinCard: (el) => unpin(el.closest('.pinned-card').dataset.sig),
     sortBy: (el) => sortBy(num(el, 'col'), el.dataset.type),
     // history
-    renderHistory: () => renderHistory(),
+    searchHistory: () => searchHistory(),
+    moreHistory: () => moreHistory(),
     toggleScoreHistory: () => toggleScoreHistory(),
     deleteHistory: () => deleteHistory(),
     // blocked / whitelist

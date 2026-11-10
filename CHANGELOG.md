@@ -62,10 +62,22 @@ Versions follow [Semantic Versioning](https://semver.org/).
   and sockets in place to be analysed, or resumed if it turns out to be
   innocent. SIGSTOP/SIGCONT on Unix, NtSuspendProcess on Windows. A frozen
   process is marked ⏸ in its row, also when something else stopped it.
+- **History search.** The history window loaded the last 500 events and
+  filtered them in the browser by process name; anything older could not be
+  found. The search now runs in the database over everything retained: any
+  text of the event (process, path, addresses, detail, PID — several words
+  must all match), the type and a date range, a page at a time with *Load
+  more*. Each row shows the date, not only the time of day. `GET
+  /api/history?q=&kind=&from=&to=&limit=&before=`.
 - **Spamhaus DROP for IPv6** (`drop_v6.json`): only the IPv4 list was loaded,
   so an IPv6 connection into a hijacked netblock never scored.
 
 ### Changed
+- **The CSV/JSON exports and *Delete* follow the history filter**: what is on
+  screen is what is exported or deleted. The exports' `ts` is now the full
+  date and time (it was the time of day alone, over weeks of history); the
+  JSON adds `at` and `id`. A filter that cannot be parsed is refused instead
+  of being ignored.
 - **Browser sessions survive a restart.** With the monitor running as a
   service, a reboot or an update turned every open dashboard into the gate
   page (or the login). Live sessions are now kept in `efemon.db` — by the

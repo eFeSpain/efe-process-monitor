@@ -110,8 +110,9 @@ attacking others.
 - Kill or suspend/resume a process, block/unblock an IP at the firewall (both
   directions), whitelist binaries or IPs.
 - **LAN host info**: NetBIOS / DNS / MAC, with offline **OUI vendor** lookup.
-- Forensic **history** in SQLite, exportable to CSV/JSON, with filtered deletion
-  (by process, type or age). **Timeline export** (`/export/timeline.json`): one
+- Forensic **history** in SQLite, **searchable** over everything retained (any
+  text of the event, type, date range), exportable to CSV/JSON and deletable
+  by the same filter. **Timeline export** (`/export/timeline.json`): one
   record per (binary, remote IP) joining its events, risk changes, names asked
   for and block/whitelist state — the incident report as a single document.
 - **Risk timeline**: one entry each time the verdict for a (binary, remote IP) pair

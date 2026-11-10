@@ -6,6 +6,7 @@ import (
 	"os"
 	"path/filepath"
 	"strconv"
+	"strings"
 	"sync/atomic"
 	"time"
 
@@ -176,25 +177,127 @@ func logEvent(ev Event) {
 		ev.Exe, ev.Local, ev.Remote, ev.Detail)
 }
 
-// clearEvents deletes timeline events matching optional criteria: of a given
-// kind ("" = any), whose process name contains proc ("" = any), and/or older
-// than olderSecs seconds (0 = any age). Returns the number of rows deleted.
-func clearEvents(kind, proc string, olderSecs int) int {
-	q := "DELETE FROM events WHERE 1=1"
+// eventFilter selects events of the history: the list, the exports and the
+// deletion all go through it, so what is on screen is what gets exported or
+// deleted.
+type eventFilter struct {
+	Text    string  // every word must appear in the process, path, addresses or detail (or be the PID)
+	Kind    string  // exact kind ("" = any)
+	Process string  // process name contains (the older, narrower filter)
+	From    float64 // epoch >= From (0 = open)
+	To      float64 // epoch <  To   (0 = open)
+	Before  int64   // paging cursor: only rows older than this one (0 = from the newest)
+	Limit   int     // page size (0 = 200)
+}
+
+// HistEvent is an event as the history shows it: with the day it happened
+// (Event.TS is only the time, which is all the live feed needs) and the row
+// id the paging cursor is made of.
+type HistEvent struct {
+	Event
+	At string `json:"at"`
+	ID int64  `json:"id"`
+}
+
+const (
+	maxSearchWords = 8
+	likeEsc        = ` ESCAPE '\'`
+)
+
+// likePattern makes s a literal "contains" pattern: % and _ typed by the
+// operator are characters to look for, not wildcards.
+func likePattern(s string) string {
+	return "%" + strings.NewReplacer(`\`, `\\`, `%`, `\%`, `_`, `\_`).Replace(s) + "%"
+}
+
+// where builds the WHERE clause. Only fixed SQL is concatenated; every value
+// the operator typed travels as a parameter.
+func (f eventFilter) where() (string, []any) {
+	q := " WHERE 1=1"
 	var args []any
-	if kind != "" {
+	words := strings.Fields(f.Text)
+	if len(words) > maxSearchWords {
+		words = words[:maxSearchWords]
+	}
+	for _, w := range words {
+		pat := likePattern(w)
+		q += " AND (process LIKE ?" + likeEsc + " OR exe LIKE ?" + likeEsc + " OR local LIKE ?" + likeEsc +
+			" OR remote LIKE ?" + likeEsc + " OR detail LIKE ?" + likeEsc
+		args = append(args, pat, pat, pat, pat, pat)
+		if pid, err := strconv.Atoi(w); err == nil {
+			q += " OR pid=?"
+			args = append(args, pid)
+		}
+		q += ")"
+	}
+	if f.Kind != "" {
 		q += " AND kind=?"
-		args = append(args, kind)
+		args = append(args, f.Kind)
 	}
-	if proc != "" {
-		q += " AND process LIKE ?"
-		args = append(args, "%"+proc+"%")
+	if f.Process != "" {
+		q += " AND process LIKE ?" + likeEsc
+		args = append(args, likePattern(f.Process))
 	}
+	if f.From > 0 {
+		q += " AND epoch>=?"
+		args = append(args, f.From)
+	}
+	if f.To > 0 {
+		q += " AND epoch<?"
+		args = append(args, f.To)
+	}
+	if f.Before > 0 {
+		q += " AND rowid<?"
+		args = append(args, f.Before)
+	}
+	return q, args
+}
+
+// searchEvents returns one page of the history, newest first, and the cursor
+// for the next page (0 when there is none). Rows are inserted in the order
+// things happen, so the row id is the paging order: no two rows share it,
+// which a timestamp cannot promise.
+func searchEvents(f eventFilter) (evs []HistEvent, next int64) {
+	limit := f.Limit
+	if limit <= 0 {
+		limit = 200
+	}
+	where, args := f.where()
+	// #nosec G202 G701 -- where() concatenates only fixed SQL; every value is a bound parameter.
+	rows, err := db.Query("SELECT rowid, epoch, ts, kind, pid, process, exe, local, remote, detail FROM events"+
+		where+" ORDER BY rowid DESC LIMIT ?", append(args, limit+1)...)
+	if err != nil {
+		return nil, 0
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var e HistEvent
+		var epoch float64
+		if rows.Scan(&e.ID, &epoch, &e.TS, &e.Kind, &e.PID, &e.Process, &e.Exe, &e.Local, &e.Remote, &e.Detail) != nil {
+			continue
+		}
+		e.At = time.Unix(int64(epoch), 0).Format("2006-01-02 15:04:05")
+		evs = append(evs, e)
+	}
+	rowsDone(rows, "history")
+	if len(evs) > limit { // one more than asked for: there is another page
+		evs = evs[:limit]
+		next = evs[limit-1].ID
+	}
+	return evs, next
+}
+
+// deleteEvents deletes the events matching the filter and, when olderSecs is
+// set, older than that many seconds. Returns the number of rows deleted.
+func deleteEvents(f eventFilter, olderSecs int) int {
+	f.Before = 0 // a paging cursor is not a deletion criterion
+	where, args := f.where()
 	if olderSecs > 0 {
-		q += " AND epoch < ?"
+		where += " AND epoch<?"
 		args = append(args, float64(time.Now().Unix()-int64(olderSecs)))
 	}
-	res, err := db.Exec(q, args...)
+	// #nosec G202 G701 -- where() concatenates only fixed SQL; every value is a bound parameter.
+	res, err := db.Exec("DELETE FROM events"+where, args...)
 	if err != nil {
 		return 0
 	}

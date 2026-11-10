@@ -139,8 +139,10 @@ select{background:#0d1117;color:#c9d1d9;border:1px solid #30363d;padding:3px 6px
 .capture-doms{padding:4px 12px;font-size:11px;color:#8b949e;max-height:54px;overflow:auto;line-height:1.8;}
 .cap-dom{display:inline-block;background:#161b22;border:1px solid #30363d;border-radius:8px;padding:0 6px;margin:1px 2px;color:#d2a8ff;}
 .cap-filter{display:block;width:calc(100% - 24px);margin:6px 12px 0;background:#0d1117;color:#c9d1d9;border:1px solid #30363d;border-radius:4px;padding:3px 8px;font-family:inherit;font-size:12px;}
-.hist-row{display:grid;grid-template-columns:80px 90px 1fr 1fr;gap:8px;padding:3px 0;border-bottom:1px solid #21262d;white-space:nowrap;}
+.hist-row{display:grid;grid-template-columns:140px 70px 1fr 1fr;gap:8px;padding:3px 0;border-bottom:1px solid #21262d;white-space:nowrap;}
 .hist-row .t{color:#484f58;}
+.hist-row span{overflow:hidden;text-overflow:ellipsis;}
+.hist-count{color:#8b949e;font-size:11px;}
 .blk-row{display:flex;justify-content:space-between;align-items:center;gap:12px;padding:8px 0;border-bottom:1px solid #21262d;}
 .blk-row .t{color:#484f58;font-size:11px;} .blk-report{color:#8b949e;font-size:11px;}
 .wl-section{margin:14px 0 4px;color:#8b949e;font-size:12px;text-transform:uppercase;letter-spacing:.5px;border-bottom:1px solid #30363d;padding-bottom:4px;}
@@ -331,8 +333,11 @@ select{background:#0d1117;color:#c9d1d9;border:1px solid #30363d;padding:3px 6px
     <div class="modal-box" style="max-width:1000px;max-height:80vh;display:flex;flex-direction:column">
         <div class="modal-head"><span>{{ .T.history }}</span>
             <span class="hist-tools">
-                <input type="text" id="hist-proc" class="hist-sel" placeholder="{{ .T.hist_proc_ph }}" style="width:120px" data-input="renderHistory">
-                <select id="hist-kind" class="hist-sel" data-change="renderHistory"><option value="">{{ .T.hist_kind_all }}</option></select>
+                <input type="search" id="hist-q" class="hist-sel" placeholder="🔍 {{ .T.hist_q_ph }}" title="{{ .T.hist_q_hint }}" style="width:210px" data-input="searchHistory">
+                <select id="hist-kind" class="hist-sel" data-change="searchHistory"><option value="">{{ .T.hist_kind_all }}</option><option value="alert">alert</option><option value="remote">remote</option><option value="new">new</option><option value="closed">closed</option></select>
+                <input type="datetime-local" id="hist-from" class="hist-sel" title="{{ .T.hist_from }}" aria-label="{{ .T.hist_from }}" data-change="searchHistory">
+                <input type="datetime-local" id="hist-to" class="hist-sel" title="{{ .T.hist_to }}" aria-label="{{ .T.hist_to }}" data-change="searchHistory">
+                <span id="hist-count" class="hist-count"></span>
                 <select id="hist-age" class="hist-sel">
                     <option value="0">{{ .T.hist_age_any }}</option>
                     <option value="3600">{{ .T.hist_age_1h }}</option>
@@ -341,12 +346,15 @@ select{background:#0d1117;color:#c9d1d9;border:1px solid #30363d;padding:3px 6px
                 </select>
                 <button class="btn" data-action="toggleScoreHistory" id="score-hist-btn">📈 {{ .T.score_hist }}</button>
                 <button class="btn btn-stop" data-action="deleteHistory">🗑 {{ .T.hist_delete }}</button>
-                <a class="btn" href="/export.csv">⬇ CSV</a> <a class="btn" href="/export.json">⬇ JSON</a> <a class="btn" href="/export/timeline.json" title="{{ .T.export_timeline_t }}">⬇ {{ .T.export_timeline }}</a>
+                <a class="btn" href="/export.csv" data-export="/export.csv" title="{{ .T.hist_export_hint }}">⬇ CSV</a> <a class="btn" href="/export.json" data-export="/export.json" title="{{ .T.hist_export_hint }}">⬇ JSON</a> <a class="btn" href="/export/timeline.json" title="{{ .T.export_timeline_t }}">⬇ {{ .T.export_timeline }}</a>
                 <a class="btn" href="/logs.txt" target="_blank" title="{{ .T.log_hint }}">📄 {{ .T.log_btn }}</a>
                 <button class="btn" data-action="closeHistory">✕</button>
             </span>
         </div>
-        <div id="history-body" class="modal-body" style="overflow-y:auto">…</div>
+        <div class="modal-body" style="overflow-y:auto">
+            <div id="history-body">…</div>
+            <button class="btn" id="hist-more" data-action="moreHistory" style="display:none;margin:10px auto 0;">{{ .T.hist_more }}</button>
+        </div>
     </div>
 </div>
 
