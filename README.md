@@ -107,7 +107,8 @@ attacking others.
   locally — see *Privacy*.
 
 **Actions & history**
-- Kill a process, block/unblock an IP at the firewall, whitelist binaries or IPs.
+- Kill or suspend/resume a process, block/unblock an IP at the firewall (both
+  directions), whitelist binaries or IPs.
 - **LAN host info**: NetBIOS / DNS / MAC, with offline **OUI vendor** lookup.
 - Forensic **history** in SQLite, exportable to CSV/JSON, with filtered deletion
   (by process, type or age). **Timeline export** (`/export/timeline.json`): one

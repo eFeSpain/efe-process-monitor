@@ -11,10 +11,20 @@ import (
 	"strings"
 )
 
-func hasCmd(name string) bool {
+// hasCmd reports whether a tool is on PATH. A variable so the firewall tests
+// can say which tools exist.
+var hasCmd = func(name string) bool {
 	_, err := exec.LookPath(name)
 	return err == nil
 }
+
+// fwRun / fwOutput run one firewall command. Variables so the tests can
+// record what would be executed: the real thing needs root and changes the
+// machine's firewall.
+var (
+	fwRun    = func(name string, args ...string) error { return command(name, args...).Run() }
+	fwOutput = func(name string, args ...string) ([]byte, error) { return command(name, args...).Output() }
+)
 
 // ensureSbinPath adds the sbin directories to this process's PATH on Linux.
 // nft, iptables, ss and ufw live there, and a user shell's PATH usually does
@@ -58,21 +68,26 @@ func nftSetFor(ip string) string {
 	return "blocked"
 }
 
-// ensureNft creates the nftables table, one set per address family, the chain
-// and its two rules, once (every command is idempotent).
+// ensureNft creates the nftables table, one set per address family, one chain
+// per direction and their rules, once (every command is idempotent).
 func ensureNft() {
-	command("nft", "add", "table", "inet", "efepm").Run()
-	command("nft", "add", "set", "inet", "efepm", "blocked", "{ type ipv4_addr; }").Run()
-	command("nft", "add", "set", "inet", "efepm", "blocked6", "{ type ipv6_addr; }").Run()
-	command("nft", "add", "chain", "inet", "efepm", "out",
-		"{ type filter hook output priority 0 ; }").Run()
-	out, _ := command("nft", "list", "chain", "inet", "efepm", "out").Output()
-	// "@blocked6" contains "@blocked", so the v4 rule is looked up as a whole word.
-	if !strings.Contains(string(out), "daddr @blocked ") {
-		command("nft", "add", "rule", "inet", "efepm", "out", "ip", "daddr", "@blocked", "drop").Run()
-	}
-	if !strings.Contains(string(out), "@blocked6") {
-		command("nft", "add", "rule", "inet", "efepm", "out", "ip6", "daddr", "@blocked6", "drop").Run()
+	_ = fwRun("nft", "add", "table", "inet", "efepm")
+	_ = fwRun("nft", "add", "set", "inet", "efepm", "blocked", "{ type ipv4_addr; }")
+	_ = fwRun("nft", "add", "set", "inet", "efepm", "blocked6", "{ type ipv6_addr; }")
+	for _, c := range []struct{ chain, hook, field string }{
+		{"out", "output", "daddr"},
+		{"in", "input", "saddr"},
+	} {
+		_ = fwRun("nft", "add", "chain", "inet", "efepm", c.chain,
+			"{ type filter hook "+c.hook+" priority 0 ; }")
+		out, _ := fwOutput("nft", "list", "chain", "inet", "efepm", c.chain)
+		// "@blocked6" contains "@blocked", so the v4 rule is looked up as a whole word.
+		if !strings.Contains(string(out)+" ", c.field+" @blocked ") {
+			_ = fwRun("nft", "add", "rule", "inet", "efepm", c.chain, "ip", c.field, "@blocked", "drop")
+		}
+		if !strings.Contains(string(out), "@blocked6") {
+			_ = fwRun("nft", "add", "rule", "inet", "efepm", c.chain, "ip6", c.field, "@blocked6", "drop")
+		}
 	}
 }
 
@@ -85,26 +100,54 @@ func isElevated() bool {
 	return os.Geteuid() == 0
 }
 
-// blockIP adds an outbound block rule using the platform firewall.
-func blockIP(ip string) error {
-	switch runtime.GOOS {
+// iptablesBlockRules are the two rules of a block, as "CHAIN match… -j DROP":
+// what this machine sends to the address, and what the address sends here.
+func iptablesBlockRules(ip string) [][]string {
+	return [][]string{
+		{"OUTPUT", "-d", ip, "-j", "DROP"},
+		{"INPUT", "-s", ip, "-j", "DROP"},
+	}
+}
+
+// blockIP blocks an address at the platform firewall, in both directions.
+// Outbound alone left a blocked host free to connect to anything listening
+// here.
+func blockIP(ip string) error { return blockIPOn(runtime.GOOS, ip) }
+
+func blockIPOn(goos, ip string) error {
+	switch goos {
 	case "windows":
-		return command("netsh", "advfirewall", "firewall", "add", "rule",
-			"name=eFePM block "+ip, "dir=out", "action=block", "remoteip="+ip).Run()
+		// Same name for both rules: one delete by name removes the pair.
+		for _, dir := range []string{"out", "in"} {
+			if err := fwRun("netsh", "advfirewall", "firewall", "add", "rule",
+				"name=eFePM block "+ip, "dir="+dir, "action=block", "remoteip="+ip); err != nil {
+				return err
+			}
+		}
+		return nil
 	case "linux":
 		if ipt := iptablesFor(ip); hasCmd(ipt) { // works on most distros (incl. iptables-nft shim)
-			// -C first: -A appends unconditionally, so blocking the same IP twice
-			// used to leave two identical rules and a single unblock only removed
-			// one of them, leaving the IP silently still blocked.
-			if command(ipt, "-C", "OUTPUT", "-d", ip, "-j", "DROP").Run() == nil {
-				return nil // already blocked
+			for _, rule := range iptablesBlockRules(ip) {
+				// -C first: blocking the same IP twice used to leave two
+				// identical rules and a single unblock only removed one of
+				// them, leaving the IP silently still blocked.
+				if fwRun(ipt, append([]string{"-C"}, rule...)...) == nil {
+					continue // already there
+				}
+				// -I … 1, not -A: an appended rule sits after the chains that
+				// ufw and friends hook into INPUT/OUTPUT, which accept new and
+				// established connections before the DROP is ever reached.
+				insert := append([]string{"-I", rule[0], "1"}, rule[1:]...)
+				if err := fwRun(ipt, insert...); err != nil {
+					return err
+				}
 			}
-			return command(ipt, "-A", "OUTPUT", "-d", ip, "-j", "DROP").Run()
+			return nil
 		}
 		if hasCmd("nft") {
 			ensureNft()
 			// nft sets are inherently idempotent: adding a member twice is a no-op.
-			return command("nft", "add", "element", "inet", "efepm", nftSetFor(ip), "{ "+ip+" }").Run()
+			return fwRun("nft", "add", "element", "inet", "efepm", nftSetFor(ip), "{ "+ip+" }")
 		}
 		return fmt.Errorf("%s", strings_(currentLang())["no_fw_tool"])
 	case "darwin":
@@ -113,30 +156,41 @@ func blockIP(ip string) error {
 	return fmt.Errorf("unsupported OS")
 }
 
-// unblockIP removes the outbound block rule created by blockIP.
-func unblockIP(ip string) error {
-	switch runtime.GOOS {
+// unblockIP removes the rules created by blockIP.
+func unblockIP(ip string) error { return unblockIPOn(runtime.GOOS, ip) }
+
+func unblockIPOn(goos, ip string) error {
+	switch goos {
 	case "windows":
-		return command("netsh", "advfirewall", "firewall", "delete", "rule",
-			"name=eFePM block "+ip).Run()
+		return fwRun("netsh", "advfirewall", "firewall", "delete", "rule",
+			"name=eFePM block "+ip)
 	case "linux":
 		if ipt := iptablesFor(ip); hasCmd(ipt) {
-			// Delete every copy: rules added before the -C guard above existed (or
-			// by hand) can be duplicated, and leaving one behind means "unblocked"
-			// in the UI while the traffic is still dropped.
-			var err error
-			for i := 0; i < 16; i++ {
-				if e := command(ipt, "-D", "OUTPUT", "-d", ip, "-j", "DROP").Run(); e != nil {
-					if i == 0 {
-						err = e // nothing was removed at all — report it
+			// Delete every copy: rules added before the -C guard existed (or by
+			// hand) can be duplicated, and leaving one behind means "unblocked"
+			// in the UI while the traffic is still dropped. A block made by an
+			// earlier version has no inbound rule; that is not an error — only
+			// removing nothing at all is.
+			var first error
+			removed := 0
+			for _, rule := range iptablesBlockRules(ip) {
+				for i := 0; i < 16; i++ {
+					if err := fwRun(ipt, append([]string{"-D"}, rule...)...); err != nil {
+						if first == nil {
+							first = err
+						}
+						break
 					}
-					break
+					removed++
 				}
 			}
-			return err
+			if removed == 0 {
+				return first
+			}
+			return nil
 		}
 		if hasCmd("nft") {
-			return command("nft", "delete", "element", "inet", "efepm", nftSetFor(ip), "{ "+ip+" }").Run()
+			return fwRun("nft", "delete", "element", "inet", "efepm", nftSetFor(ip), "{ "+ip+" }")
 		}
 		return fmt.Errorf("%s", strings_(currentLang())["no_fw_tool"])
 	}

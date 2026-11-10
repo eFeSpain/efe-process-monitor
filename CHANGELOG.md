@@ -65,7 +65,17 @@ Versions follow [Semantic Versioning](https://semver.org/).
 - **Spamhaus DROP for IPv6** (`drop_v6.json`): only the IPv4 list was loaded,
   so an IPv6 connection into a hijacked netblock never scored.
 
+### Changed
+- **Blocking an IP blocks both directions.** It was outbound only, so a
+  blocked host could still connect to anything listening on the machine.
+  Blocks saved by an earlier version get their inbound rule when the monitor
+  next starts (Linux) or the next time the address is blocked (Windows).
+
 ### Fixed
+- **Linux (iptables): a block could be skipped when ufw or another front-end
+  was active.** The DROP rule was appended to the chain, after the chains
+  those tools hook in — which accept new and established connections first.
+  It is inserted at the head now.
 - **Linux: every unconnected UDP socket was logged as a connection to
   `0.0.0.0:0`.** The filter that keeps ephemeral UDP binds (one per DNS
   query) out of the feed and the history looked for an empty remote address,

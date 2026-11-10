@@ -111,7 +111,7 @@ no para atacar a otros.
   24 h se marca **NUEVO**. Se ejecuta 100% en local — ver *Privacidad*.
 
 **Acciones e histórico**
-- Matar un proceso, bloquear/desbloquear una IP en el firewall, whitelist de
+- Matar o suspender/reanudar un proceso, bloquear/desbloquear una IP en el firewall (en ambos sentidos), whitelist de
   binarios o de IPs.
 - **Info de host LAN**: NetBIOS / DNS / MAC, con búsqueda offline de **fabricante
   (OUI)**.
