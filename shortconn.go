@@ -72,6 +72,18 @@ type kernelRecord struct {
 	Local, Remote netip.AddrPort
 	Comm          string // recStart only: the kernel's name for that process, up to 15 bytes
 	Sent, Recv    uint64 // recClosed only, and only when the program reads them
+
+	// Not from the kernel: who the PID is, looked up by the reader the moment
+	// a recStart arrives ("" = not looked up; "N/A" = already gone).
+	Name, Exe string
+}
+
+// loopbackRecord reports whether a record is about a loopback connection,
+// which the monitor does not follow. The reader drops these before they take
+// room in the channel: a machine busy talking to itself must not crowd out
+// the records that matter.
+func loopbackRecord(r kernelRecord) bool {
+	return (r.Local.IsValid() && r.Local.Addr().IsLoopback()) || (r.Remote.IsValid() && r.Remote.Addr().IsLoopback())
 }
 
 // decodeKernelRecord parses one record. Anything of another size or with an
@@ -141,6 +153,9 @@ type listener struct {
 }
 
 // shortTracker turns kernel records and poll snapshots into brief connections.
+// endpoints identify a connection the way both sources can name it.
+type endpoints struct{ local, remote netip.AddrPort }
+
 type shortTracker struct {
 	who       func(pid int32) (name, exe string)
 	hostAddrs func() []netip.Addr // this machine's own addresses (a variable for the tests)
@@ -148,12 +163,14 @@ type shortTracker struct {
 	flows     map[uint64]*flow
 	listeners map[uint16][]listener // local port → who listens there, from the last poll
 	own       map[netip.Addr]bool   // hostAddrs at the last poll
+	announced map[endpoints]bool    // listed as ESTABLISHED by the last poll: the poll announced these
 	lost      int                   // established flows dropped as invisible to the poll
 }
 
 func newShortTracker(who func(pid int32) (name, exe string), volume bool) *shortTracker {
 	return &shortTracker{who: who, hostAddrs: interfaceAddrs, volume: volume,
-		flows: map[uint64]*flow{}, listeners: map[uint16][]listener{}, own: map[netip.Addr]bool{}}
+		flows: map[uint64]*flow{}, listeners: map[uint16][]listener{}, own: map[netip.Addr]bool{},
+		announced: map[endpoints]bool{}}
 }
 
 // interfaceAddrs are the addresses configured on this machine's interfaces.
@@ -188,9 +205,13 @@ func (t *shortTracker) record(r kernelRecord, now time.Time) (briefConn, bool) {
 		if pid == ownPID || ownChild(pid) {
 			return briefConn{}, false
 		}
-		// Resolved now: in a moment the process may be gone, and then the
-		// kernel's own name for it is all there is.
-		name, exe := t.who(pid)
+		// Who it is was looked up by the reader as the record arrived; if
+		// not (tests, another source), now. In a moment the process may be
+		// gone, and then the kernel's own name for it is all there is.
+		name, exe := r.Name, r.Exe
+		if name == "" {
+			name, exe = t.who(pid)
+		}
 		if name == "" || name == "N/A" {
 			name = r.Comm
 		}
@@ -213,6 +234,11 @@ func (t *shortTracker) record(r kernelRecord, now time.Time) (briefConn, bool) {
 			// local port; from here on the endpoints are complete.
 			if trackable(r) {
 				f.local, f.remote = r.Local, r.Remote
+			}
+			// Established just before the last poll read the socket table,
+			// its records processed after: the poll has announced it.
+			if t.announced[endpoints{f.local, f.remote}] {
+				delete(t.flows, r.Sock)
 			}
 		}
 
@@ -300,9 +326,9 @@ func (t *shortTracker) listenerOf(local netip.AddrPort) (pid int32, name, exe st
 // longer ours — it follows the ordinary path — and the listeners are whoever
 // inbound connections will be attributed to.
 func (t *shortTracker) polled(conns []gnet.ConnectionStat, now time.Time) {
-	type pair struct{ local, remote netip.AddrPort }
-	seen := map[pair]bool{}   // listed as ESTABLISHED: the poll announces these itself
-	listed := map[pair]bool{} // listed in a closing state: the poll never announces these
+	seen := t.announced            // listed as ESTABLISHED: the poll announces these itself
+	listed := map[endpoints]bool{} // listed in a closing state: the poll never announces these
+	clear(seen)
 	clear(t.listeners)
 	clear(t.own)
 	for _, a := range t.hostAddrs() {
@@ -327,13 +353,13 @@ func (t *shortTracker) polled(conns []gnet.ConnectionStat, now time.Time) {
 		// lists while closing — CLOSE_WAIT, FIN_WAIT… — it will never
 		// announce, so that connection is still the tracker's to report.
 		if c.Status == "ESTABLISHED" {
-			seen[pair{la, ra}] = true
+			seen[endpoints{la, ra}] = true
 		} else {
-			listed[pair{la, ra}] = true
+			listed[endpoints{la, ra}] = true
 		}
 	}
 	for sock, f := range t.flows {
-		p := pair{f.local, f.remote}
+		p := endpoints{f.local, f.remote}
 		if listed[p] {
 			f.visible = true
 		}

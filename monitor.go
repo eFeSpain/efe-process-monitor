@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"log"
 	"math"
+	"net/netip"
 	"strings"
 	"sync"
 	"time"
@@ -443,9 +444,18 @@ var startIntelCheck = func(ev Event, ip string) { go alertOnIntel(ev, ip) }
 func briefSighting(c briefConn, T map[string]string) connSighting {
 	return connSighting{
 		ev: Event{Kind: "short", PID: c.PID, Process: c.Name, Exe: c.Exe, Inbound: c.Inbound,
-			Local: c.Local.String(), Remote: c.Remote.String(), Detail: briefDetail(T, c)},
+			Local: hostPort(c.Local), Remote: hostPort(c.Remote), Detail: briefDetail(T, c)},
 		remoteIP: c.Remote.Addr().String(),
 	}
+}
+
+// hostPort writes an endpoint the way the poll's events do — "addr:port",
+// no brackets around IPv6 — so both kinds read and search alike.
+func hostPort(ap netip.AddrPort) string {
+	if !ap.IsValid() {
+		return ""
+	}
+	return fmt.Sprintf("%s:%d", ap.Addr(), ap.Port())
 }
 
 // announceBrief is what the loop does with a brief connection: the grouper

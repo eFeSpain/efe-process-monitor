@@ -740,3 +740,62 @@ func TestGrouperFreshAddress(t *testing.T) {
 		t.Errorf("past the cap, the same address again: publish=%v fresh=%v", publish, fresh)
 	}
 }
+
+// Review minor: a connection established just before the poll reads the
+// socket table is announced by the poll; its kernel records are processed
+// after that poll, when the tracker no longer has a flow to drop. It must
+// not be announced a second time as brief.
+func TestTrackerPolledJustBefore(t *testing.T) {
+	tr := newShortTracker(testWho, false)
+	now := time.Now()
+	tr.polled([]gnet.ConnectionStat{tcpEst(100, "192.168.1.24", 50000, "203.0.113.9", 443)}, now)
+	got := feed(tr, now, rec(recStart, 7, 1, 0, 100, "192.168.1.24:0", srvAddr),
+		rec(recEstablished, tcpSynSent, 1, 10, 0, cliAddr, srvAddr), rec(recClosed, tcpEstablished, 1, 900, 0, cliAddr, srvAddr))
+	if len(got) != 0 || len(tr.flows) != 0 {
+		t.Errorf("announced by the poll and again as brief: %+v (%d flows)", got, len(tr.flows))
+	}
+	// The next poll no longer lists it: a later connection on other ports is
+	// news again.
+	tr.polled(nil, now.Add(3*time.Second))
+	got = feed(tr, now, rec(recStart, 7, 2, 4000, 100, "192.168.1.24:0", srvAddr),
+		rec(recEstablished, tcpSynSent, 2, 4010, 0, "192.168.1.24:50001", srvAddr), rec(recClosed, tcpEstablished, 2, 4200, 0, "192.168.1.24:50001", srvAddr))
+	if len(got) != 1 {
+		t.Errorf("a later brief connection must be reported: %+v", got)
+	}
+}
+
+// Review minor: the reader resolves who the process is the moment the record
+// arrives; the tracker runs on the monitor goroutine, which may be busy with
+// a poll pass while a short-lived process exits. What the reader found wins.
+func TestTrackerUsesReaderResolvedProcess(t *testing.T) {
+	tr := newShortTracker(func(int32) (string, string) { return "N/A", "" }, false) // gone by now
+	start := rec(recStart, 7, 1, 0, 4242, cliAddr, srvAddr)
+	start.Comm, start.Name, start.Exe = "dropper", "dropper", "/tmp/.x/dropper"
+	got := feed(tr, time.Now(), start, rec(recClosed, tcpSynSent, 1, 3, 0, cliAddr, srvAddr))
+	if len(got) != 1 || got[0].Name != "dropper" || got[0].Exe != "/tmp/.x/dropper" {
+		t.Errorf("%+v", got)
+	}
+	// The reader looked and the process was already gone: the kernel's name.
+	start.Sock, start.Name, start.Exe = 2, "N/A", ""
+	got = feed(tr, time.Now(), start, rec(recClosed, tcpSynSent, 2, 3, 0, cliAddr, srvAddr))
+	if len(got) != 1 || got[0].Name != "dropper" || got[0].Exe != "" {
+		t.Errorf("%+v", got)
+	}
+}
+
+// Review minor: loopback records are discarded by the reader, before they
+// take room in the channel the monitor reads.
+func TestLoopbackRecord(t *testing.T) {
+	for r, want := range map[kernelRecord]bool{
+		rec(recStart, 7, 1, 0, 100, "127.0.0.1:0", "127.0.0.1:5000"):                  true,
+		rec(recEstablished, tcpSynRecv, 1, 0, 0, "[::1]:22", "[::1]:51000"):           true,
+		rec(recClosed, 1, 1, 0, 0, "127.0.0.1:40000", "127.0.0.53:53"):                true,
+		rec(recStart, 7, 1, 0, 100, "192.168.1.24:0", srvAddr):                        false,
+		rec(recClosed, 1, 1, 0, 0, cliAddr, srvAddr):                                  false,
+		rec(recEstablished, tcpSynRecv, 1, 0, 0, "192.168.1.24:22", "10.0.0.5:51000"): false,
+	} {
+		if got := loopbackRecord(r); got != want {
+			t.Errorf("loopbackRecord(%v → %v) = %v, want %v", r.Local, r.Remote, got, want)
+		}
+	}
+}

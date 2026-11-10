@@ -455,3 +455,17 @@ func TestBeaconPruneIsRateLimited(t *testing.T) {
 		t.Error("a minute later the idle pair must go")
 	}
 }
+
+// Review minor: a brief event writes its addresses the way a polled one
+// does — "addr:port", no brackets for IPv6 — so one search finds both.
+func TestBriefSightingAddressFormat(t *testing.T) {
+	c := briefConn{Name: "curl", Local: netip.MustParseAddrPort("[2001:db8::24]:50000"), Remote: netip.MustParseAddrPort("[2001:db8::9]:443")}
+	s := briefSighting(c, strings_("es"))
+	if s.ev.Local != "2001:db8::24:50000" || s.ev.Remote != "2001:db8::9:443" || s.remoteIP != "2001:db8::9" {
+		t.Errorf("local %q remote %q ip %q", s.ev.Local, s.ev.Remote, s.remoteIP)
+	}
+	c = testBrief("curl", "/usr/bin/curl")
+	if s = briefSighting(c, strings_("es")); s.ev.Remote != "203.0.113.9:443" {
+		t.Errorf("IPv4: %q", s.ev.Remote)
+	}
+}

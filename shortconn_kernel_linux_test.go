@@ -23,6 +23,9 @@ func requireKernelTest(t *testing.T) {
 	if os.Geteuid() != 0 {
 		t.Skip("kernel test: needs root (run scripts/vm-kernel-test.sh)")
 	}
+	// These tests talk to themselves over loopback, which the reader
+	// otherwise drops before the monitor sees it.
+	shortConnKeepLoopback = true
 }
 
 // The program reads the tracepoint's record at fixed offsets. They are part

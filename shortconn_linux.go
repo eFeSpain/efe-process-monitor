@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"log"
+	"math"
 	"os"
 	"time"
 
@@ -184,6 +185,10 @@ func startShortConns() (records <-chan kernelRecord, volume bool) {
 	return ch, src.volume()
 }
 
+// shortConnKeepLoopback makes the reader pass loopback records on. The
+// kernel tests set it: loopback is all a test VM has.
+var shortConnKeepLoopback bool
+
 // forwardShortConns moves records from the kernel to the monitor. The send
 // blocks on purpose: if the monitor is busy the records wait in the kernel's
 // buffer, where an overflow is counted, instead of piling up here.
@@ -198,7 +203,14 @@ func forwardShortConns(src *shortConnSource, ch chan<- kernelRecord) {
 		src.setDeadline(nextCheck)
 		r, err := src.next()
 		switch {
+		case err == nil && loopbackRecord(r) && !shortConnKeepLoopback:
+			// Not followed by the monitor; dropped here, not there.
 		case err == nil:
+			// Who the process is, while it is still there to ask: the
+			// monitor may be in the middle of a poll pass.
+			if r.Kind == recStart && r.PID > 0 && r.PID <= math.MaxInt32 && int32(r.PID) != ownPID {
+				r.Name, r.Exe = procNameExe(int32(r.PID))
+			}
 			ch <- r
 		case errors.Is(err, os.ErrDeadlineExceeded):
 		default:
