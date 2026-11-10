@@ -155,6 +155,23 @@ var systemLibDirs = []string{"/usr/lib", "/lib", "/usr/lib64", "/lib64", "/usr/l
 	"/usr/bin", "/usr/sbin", "/bin", "/sbin", "/opt/", "/snap/", "/var/lib/flatpak/", "/nix/store/",
 	"/usr/share/", "/var/lib/snapd/"}
 
+// jitMemfds are the names under which well-known runtimes keep generated
+// code in a memfd. They are executable memory by design, in every process
+// that uses the runtime: the Qt QML engine (all of KDE Plasma), Mesa's
+// generated GL code, libffi's closures, the .NET runtime.
+//
+// The name of a memfd is chosen by whoever creates it, so malware can borrow
+// one of these and not be flagged here. That is the price of not raising a
+// red alert for the desktop shell at every start; the other signals — where
+// the binary runs from, its signature, what it connects to — do not depend
+// on this one.
+var jitMemfds = map[string]bool{
+	"jitcode:qtqml": true, // Qt QML JIT
+	"/.glxxxxxx":    true, // Mesa (the X's are literal: an unlinked template name)
+	"libffi":        true, // libffi closure trampolines
+	"doublemapper":  true, // .NET W^X double mapping
+}
+
 // anomalousExecMaps scans /proc/<pid>/maps for executable regions backed by
 // something that should never be executed from: a memfd, a staging directory,
 // or a file deleted outside the system library tree. Anonymous executable
@@ -173,6 +190,10 @@ func anomalousExecMaps(maps string) []string {
 		var why string
 		switch {
 		case strings.HasPrefix(l, "/memfd:") || strings.HasPrefix(l, "memfd:"):
+			name := strings.TrimSuffix(l[strings.Index(l, "memfd:")+len("memfd:"):], " (deleted)")
+			if jitMemfds[name] {
+				continue
+			}
 			why = "memfd"
 		case strings.HasPrefix(l, "/dev/shm/") || strings.HasPrefix(l, "/tmp/") || strings.HasPrefix(l, "/var/tmp/"):
 			why = "staging"

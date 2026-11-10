@@ -139,3 +139,30 @@ func TestOwnElectronStoreIsNotCredentialAccess(t *testing.T) {
 		}
 	}
 }
+
+// Seen as root on a KDE desktop: plasmashell raised "executable memory from
+// a memfd" at every start. The Qt QML engine keeps its JIT output in a memfd
+// called JITCode:QtQml, and Mesa its generated code in one called
+// /.glXXXXXX — so does every QML application and every GL client. A memfd is
+// still what fileless malware executes from; what a named JIT maps is not
+// that.
+func TestJITMemfdsAreNotAnomalous(t *testing.T) {
+	maps := strings.Join([]string{
+		"7f10a0000000-7f10a0010000 r-xp 00000000 00:01 2049 /memfd:JITCode:QtQml (deleted)",
+		"7f10a0010000-7f10a0020000 rw-p 00000000 00:01 2049 /memfd:JITCode:QtQml (deleted)",
+		"7f10b0000000-7f10b0001000 r-xp 00000000 00:01 2050 /memfd:/.glXXXXXX (deleted)",
+		"7f10c0000000-7f10c0001000 r-xp 00000000 00:01 2051 /memfd:libffi (deleted)",
+		"7f10d0000000-7f10d0001000 r-xp 00000000 00:01 2052 /memfd:doublemapper (deleted)",
+	}, "\n")
+	if got := anomalousExecMaps(maps); len(got) != 0 {
+		t.Errorf("known JIT memfds were flagged: %v", got)
+	}
+	// Anything else in a memfd is still the signal, including a name that
+	// merely starts like a JIT's.
+	for _, name := range []string{"payload", "JITCode:QtQmlx", "x/.glXXXXXX", "", "libffi2"} {
+		line := "7f10e0000000-7f10e0001000 r-xp 00000000 00:01 2053 /memfd:" + name + " (deleted)"
+		if got := anomalousExecMaps(line); len(got) != 1 || !strings.HasPrefix(got[0], "memfd: ") {
+			t.Errorf("memfd %q: %v, want it flagged", name, got)
+		}
+	}
+}

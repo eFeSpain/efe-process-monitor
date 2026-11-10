@@ -115,6 +115,14 @@ Versions follow [Semantic Versioning](https://semver.org/).
   next starts (Linux) or the next time the address is blocked (Windows).
 
 ### Fixed
+- **The desktop shell raised "executable memory from a memfd".** The Qt QML
+  engine keeps its JIT output in a memfd (`JITCode:QtQml`) and Mesa its
+  generated code in another (`/.glXXXXXX`): every QML application — all of
+  KDE Plasma — and every GL client was flagged, and with local signals
+  alerting live `plasmashell` raised a red alert at every start (seen running
+  as root). Those, libffi's and .NET's are no longer flagged. A memfd's name
+  is chosen by its creator, so this signal can be evaded by borrowing one;
+  the others do not depend on it.
 - **An application's own `Cookies` file counted as credential access.** Every
   Electron application (VS Code, Slack, Discord, Signal…) keeps files named
   `Cookies` and `Local State` and holds them open; the check went by file
