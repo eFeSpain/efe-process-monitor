@@ -174,6 +174,8 @@ select{background:#0d1117;color:#c9d1d9;border:1px solid #30363d;padding:3px 6px
 .modal-box{background:#0d1117;border:1px solid #30363d;border-radius:8px;width:90%;max-width:520px;}
 .modal-head{display:flex;justify-content:space-between;padding:10px 16px;border-bottom:1px solid #30363d;color:#58a6ff;}
 .modal-body{padding:14px 16px;font-size:12px;}
+/* Save lives here, outside the scrolling body, so it is always on screen. */
+.modal-foot{padding:10px 16px;border-top:1px solid #30363d;display:flex;align-items:center;gap:10px;font-size:12px;}
 .modal-body label{display:block;color:#8b949e;margin-bottom:4px;}
 .modal-body label.live-toggle{display:flex;align-items:center;justify-content:flex-start;gap:6px;color:#c9d1d9;}
 .modal-body label.live-toggle input{margin:0;width:auto;flex:0 0 auto;}
@@ -253,9 +255,9 @@ select{background:#0d1117;color:#c9d1d9;border:1px solid #30363d;padding:3px 6px
 </table>
 
 <div id="settings-modal" class="modal" style="display:none" data-action="backdrop" data-close="closeSettings">
-    <div class="modal-box">
+    <div class="modal-box" style="max-width:600px;max-height:90vh;display:flex;flex-direction:column">
         <div class="modal-head"><span>{{ .T.settings }}</span><button class="btn" data-action="closeSettings">✕</button></div>
-        <div class="modal-body">
+        <div class="modal-body" style="overflow-y:auto">
             <label>VirusTotal API key <span id="vt-status"></span></label>
             <input type="password" id="vt-key" placeholder="VirusTotal API key">
             <label>AbuseIPDB API key <span id="abuse-status"></span></label>
@@ -268,6 +270,15 @@ select{background:#0d1117;color:#c9d1d9;border:1px solid #30363d;padding:3px 6px
             <label>{{ .T.audit_every }}</label>
             <input type="number" id="audit-every" min="0" max="168" value="6" style="width:90px">
             <div style="color:#484f58;font-size:11px;margin:-6px 0 12px;">{{ .T.audit_every_hint }}</div>
+            <label>{{ .T.webhook_label }} <span id="webhook-status"></span></label>
+            <input type="password" id="webhook-url" autocomplete="off" placeholder="https://ntfy.sh/…" style="margin-bottom:6px">
+            <div style="display:flex;gap:8px;align-items:center;margin-bottom:4px;">
+                <select id="webhook-format" style="max-width:none"><option value="json">{{ .T.webhook_fmt_json }}</option><option value="text">{{ .T.webhook_fmt_text }}</option></select>
+                <button class="btn btn-mini" data-action="testWebhook">{{ .T.webhook_test }}</button>
+                <button class="btn btn-mini" data-action="clearWebhook">{{ .T.webhook_clear }}</button>
+                <span id="webhook-msg" style="color:#8b949e;font-size:11px;"></span>
+            </div>
+            <div style="color:#484f58;font-size:11px;margin:0 0 12px;">{{ .T.webhook_hint }}</div>
             <label>{{ .T.retention_days }}</label>
             <input type="number" id="retention-days" min="0" max="3650" value="30" style="width:90px">
             <div style="color:#484f58;font-size:11px;margin:-6px 0 12px;">{{ .T.retention_days_hint }}</div>
@@ -303,6 +314,8 @@ select{background:#0d1117;color:#c9d1d9;border:1px solid #30363d;padding:3px 6px
                 <span id="svc-msg" style="margin-left:8px;color:#8b949e;font-size:11px;"></span>
                 <div style="border-bottom:1px solid #21262d;margin:12px 0;"></div>
             </div>
+        </div>
+        <div class="modal-foot">
             <button class="btn" data-action="saveSettings">{{ .T.save }}</button>
             <span id="settings-msg"></span>
         </div>
@@ -380,6 +393,7 @@ select{background:#0d1117;color:#c9d1d9;border:1px solid #30363d;padding:3px 6px
                     <tr><td>VirusTotal</td><td>{{ .T.priv_sends_haship }}</td><td>{{ .T.priv_when_vt }}</td><td class="feed-st">—</td></tr>
                     <tr><td>AbuseIPDB</td><td>{{ .T.priv_sends_ip }}</td><td>{{ .T.priv_when_abuse }}</td><td class="feed-st">—</td></tr>
                     <tr><td>Shodan InternetDB</td><td>{{ .T.priv_sends_ip }}</td><td>{{ .T.priv_when_always }}</td><td class="feed-st">—</td></tr>
+                    <tr><td>{{ .T.webhook_label }}</td><td>{{ .T.priv_sends_alerts }}</td><td>{{ .T.priv_when_webhook }}</td><td class="feed-st" id="priv-webhook">—</td></tr>
                     <tr data-feed="feodo"><td>abuse.ch Feodo Tracker</td><td class="priv-safe">{{ .T.priv_sends_nothing }}</td><td>{{ .T.priv_when_always }}</td><td class="feed-st">…</td></tr>
                     <tr data-feed="threatfox"><td>abuse.ch ThreatFox (API)</td><td class="priv-safe">{{ .T.priv_sends_iocs }}</td><td>{{ .T.priv_when_abusech }}</td><td class="feed-st">…</td></tr>
                     <tr data-feed="urlhaus"><td>abuse.ch URLhaus (API)</td><td class="priv-safe">{{ .T.priv_sends_iocs }}</td><td>{{ .T.priv_when_abusech }}</td><td class="feed-st">…</td></tr>

@@ -34,12 +34,21 @@ Versions follow [Semantic Versioning](https://semver.org/).
   VirusTotal report (the link is followed by your browser, on click).
 - **History retention in ⚙ Settings** (`EVENT_RETENTION_DAYS` was only
   reachable by editing `.env`).
+- **Alert webhook.** Alerts only reached the desktop of whoever was logged in.
+  One URL in ⚙ Settings now receives every alert the desktop notification
+  gets — even with desktop notifications off — as JSON (fields for Slack,
+  Discord and generic receivers) or as plain text with a `Title` header
+  (ntfy). Off unless configured; the URL is treated as a secret and never
+  shown back in full; a *Test* button sends a test alert; the privacy panel
+  lists it as an outbound connection.
 - **Spamhaus DROP for IPv6** (`drop_v6.json`): only the IPv4 list was loaded,
   so an IPv6 connection into a hijacked netblock never scored.
 
 ### Fixed
 - Ticking *require login* without typing a password did nothing and said
   nothing; it now says a password is needed and that nothing changed.
+- The Settings window had outgrown the screen — neither its title nor *Save*
+  were reachable. Its fields scroll and *Save* stays in a fixed footer.
 
 ## [0.5.0] — 2026-11-09
 

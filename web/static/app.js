@@ -169,6 +169,10 @@ function openSettings() {
         document.getElementById('refresh-interval').value = String(s.refresh_secs || 0);
         document.getElementById('audit-every').value = String(s.audit_every_hours == null ? 6 : s.audit_every_hours);
         document.getElementById('retention-days').value = String(s.event_retention_days == null ? 30 : s.event_retention_days);
+        document.getElementById('webhook-url').value = '';
+        document.getElementById('webhook-format').value = s.webhook_format || 'json';
+        document.getElementById('webhook-status').textContent = s.webhook_configured ? `(${s.webhook_hint})` : '✗';
+        document.getElementById('webhook-msg').textContent = '';
         document.getElementById('notify-desktop').checked = !!s.notify_desktop;
         document.getElementById('notify-sound').checked = !!s.notify_sound;
         document.getElementById('persist-whitelist').checked = !!s.persist_whitelist;
@@ -192,6 +196,24 @@ function openSettings() {
             s.abusech_configured ? `(${s.abusech_hint})` : '✗';
     });
     loadServiceBlock();
+}
+
+// ── Alert webhook ─────────────────────────────────────────────────────────
+function testWebhook() {
+    const msg = document.getElementById('webhook-msg');
+    msg.textContent = '…';
+    // Save what is on screen first, so "Test" tests the URL just typed.
+    postJSON('/api/settings', settingsPayload())
+        .then(s => { if (s && s.webhook_error) throw new Error(s.webhook_error); return postJSON('/api/webhook_test', {}); })
+        .then(r => { msg.textContent = r.ok ? '✓' : '⚠ ' + r.error; openSettingsKeepMsg(msg.textContent); })
+        .catch(e => { msg.textContent = '⚠ ' + e.message; });
+}
+function clearWebhook() {
+    postJSON('/api/settings', { WebhookURL: '' }).then(() => openSettings());
+}
+function openSettingsKeepMsg(text) {
+    openSettings();
+    setTimeout(() => { document.getElementById('webhook-msg').textContent = text; }, 400);
 }
 
 // ── Run at boot (systemd service; Linux) ───────────────────────────────────
@@ -261,6 +283,9 @@ function settingsPayload() {
         RefreshSecs: clampSecs(),
         AuditEveryHours: Math.max(0, Math.min(168, parseInt(document.getElementById('audit-every').value || '0', 10) || 0)),
         EventRetentionDays: Math.max(0, Math.min(3650, parseInt(document.getElementById('retention-days').value || '0', 10) || 0)),
+        // The URL is only sent when typed: an empty field means "leave it".
+        ...(document.getElementById('webhook-url').value.trim() ? { WebhookURL: document.getElementById('webhook-url').value.trim() } : {}),
+        WebhookFormat: document.getElementById('webhook-format').value,
         AuthEnabled: document.getElementById('auth-enabled').checked,
         AuthPassword: document.getElementById('auth-password').value,
         CurrentPassword: document.getElementById('auth-current').value,
@@ -278,6 +303,7 @@ function saveSettings() {
     applyRefreshInterval();
     postJSON('/api/settings', settingsPayload()).then(s => {
         if (s && s.auth_error) { document.getElementById('settings-msg').textContent = '⚠ ' + s.auth_error; return; }
+        if (s && s.webhook_error) { document.getElementById('settings-msg').textContent = '⚠ ' + s.webhook_error; return; }
         document.getElementById('settings-msg').textContent = '✓'; loadConnections(); openSettings();
     });
 }
@@ -715,6 +741,9 @@ function openPrivacy() {
     document.getElementById('privacy-modal').style.display = 'flex';
     // The feed column is live: a withdrawn source, a missing key or a failing
     // download must not read as "no signals".
+    fetch('/api/settings').then(r => r.json()).then(s => {
+        document.getElementById('priv-webhook').textContent = s.webhook_configured ? s.webhook_hint : '—';
+    }).catch(() => {});
     fetch('/api/feeds').then(r => r.json()).then(list => (list || []).forEach(f => {
         const cell = document.querySelector(`#privacy-modal tr[data-feed="${f.id}"] .feed-st`);
         if (!cell) return;
@@ -837,6 +866,8 @@ const actions = {
     togglePw: () => togglePw(),
     authToggled: () => authToggled(),
     serviceAction: () => serviceAction(),
+    testWebhook: () => testWebhook(),
+    clearWebhook: () => clearWebhook(),
     // table rows (rows.html)
     toggleDetails: (el) => toggleDetails(num(el, 'i')),
     openCapture: (el) => openCapture(num(el, 'i'), el.dataset.local, el.dataset.remote),

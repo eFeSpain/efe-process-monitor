@@ -30,6 +30,20 @@ var translations = map[string]map[string]string{
 
 		// Run at boot (systemd service). Kept in its own aligned group: the long keys
 		// would otherwise realign every entry of the map.
+		// Alert webhook (webhook.go).
+		"webhook_label":      "Webhook de alertas",
+		"webhook_hint":       "Todo lo que el monitor notifica en el escritorio (alertas, binarios nuevos, hallazgos de la auditoría) se envía también a esta URL: ntfy, Slack, Discord o tu propio receptor. Vacío = no cambiar.",
+		"webhook_fmt_json":   "JSON (Slack, Discord, genérico)",
+		"webhook_fmt_text":   "Texto (ntfy)",
+		"webhook_test":       "Probar",
+		"webhook_clear":      "Quitar",
+		"webhook_invalid":    "La URL del webhook no es válida (debe ser http:// o https:// con host). No se ha cambiado.",
+		"webhook_none":       "No hay webhook configurado.",
+		"webhook_test_title": "eFe Process Monitor — prueba",
+		"webhook_test_body":  "Si lees esto, las alertas del monitor llegan a este destino.",
+		"priv_sends_alerts":  "título y texto de cada aviso (proceso, dirección, motivo)",
+		"priv_when_webhook":  "solo si configuras un webhook",
+
 		"svc_title":              "Arranque con el sistema",
 		"svc_installed":          "instalado y activo",
 		"svc_installed_inactive": "instalado, detenido",
@@ -320,6 +334,20 @@ var translations = map[string]map[string]string{
 
 		// Run at boot (systemd service). Kept in its own aligned group: the long keys
 		// would otherwise realign every entry of the map.
+		// Alert webhook (webhook.go).
+		"webhook_label":      "Alert webhook",
+		"webhook_hint":       "Everything the monitor notifies on the desktop (alerts, new binaries, audit findings) is also sent to this URL: ntfy, Slack, Discord or your own receiver. Empty = leave unchanged.",
+		"webhook_fmt_json":   "JSON (Slack, Discord, generic)",
+		"webhook_fmt_text":   "Text (ntfy)",
+		"webhook_test":       "Test",
+		"webhook_clear":      "Remove",
+		"webhook_invalid":    "The webhook URL is not valid (it must be http:// or https:// with a host). Nothing was changed.",
+		"webhook_none":       "No webhook is configured.",
+		"webhook_test_title": "eFe Process Monitor — test",
+		"webhook_test_body":  "If you can read this, the monitor's alerts reach this destination.",
+		"priv_sends_alerts":  "the title and text of each alert (process, address, reason)",
+		"priv_when_webhook":  "only if you configure a webhook",
+
 		"svc_title":              "Run at boot",
 		"svc_installed":          "installed and active",
 		"svc_installed_inactive": "installed, stopped",
@@ -608,6 +636,20 @@ var translations = map[string]map[string]string{
 
 		// Run at boot (systemd service). Kept in its own aligned group: the long keys
 		// would otherwise realign every entry of the map.
+		// Alert webhook (webhook.go).
+		"webhook_label":      "告警 Webhook",
+		"webhook_hint":       "监控器在桌面上通知的所有内容（告警、新程序、审计发现）也会发送到此 URL：ntfy、Slack、Discord 或你自己的接收端。留空 = 不更改。",
+		"webhook_fmt_json":   "JSON（Slack、Discord、通用）",
+		"webhook_fmt_text":   "文本（ntfy）",
+		"webhook_test":       "测试",
+		"webhook_clear":      "移除",
+		"webhook_invalid":    "Webhook URL 无效（必须是带主机名的 http:// 或 https://）。未做任何更改。",
+		"webhook_none":       "尚未配置 Webhook。",
+		"webhook_test_title": "eFe Process Monitor — 测试",
+		"webhook_test_body":  "如果你能看到这条消息，说明监控器的告警可以送达此处。",
+		"priv_sends_alerts":  "每条告警的标题和内容（进程、地址、原因）",
+		"priv_when_webhook":  "仅在配置了 Webhook 时",
+
 		"svc_title":              "随系统启动",
 		"svc_installed":          "已安装且运行中",
 		"svc_installed_inactive": "已安装，已停止",

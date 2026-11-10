@@ -53,9 +53,13 @@ func notifyIcon() string {
 	return iconPath
 }
 
-// notify shows a best-effort desktop notification, throttled per key.
+// notify raises an alert for the operator, throttled per key: a best-effort
+// desktop notification when those are on, and the alert webhook when one is
+// configured (webhook.go). The two are independent — the webhook exists for
+// the machine nobody is sitting at.
 func notify(title, message, key string) {
-	if !notifyDesktop.Load() {
+	desktop, hook := notifyDesktop.Load(), webhookURL.Load() != ""
+	if !desktop && !hook {
 		return
 	}
 	if key == "" {
@@ -76,7 +80,12 @@ func notify(title, message, key string) {
 	}
 	lastNotify[key] = time.Now()
 	notifyMu.Unlock()
-	go sendNotification(title, message)
+	if desktop {
+		go sendNotification(title, message)
+	}
+	if hook {
+		go forwardAlert(title, message)
+	}
 }
 
 func sendNotification(title, message string) {

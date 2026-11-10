@@ -351,3 +351,25 @@ func TestPrivacyNoteMentionsAuthKey(t *testing.T) {
 		}
 	}
 }
+
+// The Settings modal grew past the viewport: neither its title nor Save were
+// reachable and nothing scrolled. Its body scrolls, and Save lives in a footer
+// outside the scrolling area so it is always on screen.
+func TestSettingsModalScrollsWithFixedFooter(t *testing.T) {
+	page := renderedPages(t)["report.html"]
+	i := strings.Index(page, `id="settings-modal"`)
+	j := strings.Index(page, `id="history-modal"`)
+	if i < 0 || j < i {
+		t.Fatal("settings modal not found")
+	}
+	modal := page[i:j]
+	if !strings.Contains(modal, "max-height:") || !strings.Contains(modal, "overflow-y:auto") {
+		t.Error("the settings modal must be height-bounded with a scrolling body")
+	}
+	foot := strings.Index(modal, `class="modal-foot"`)
+	save := strings.Index(modal, `data-action="saveSettings"`)
+	lastField := strings.Index(modal, `id="svc-block"`)
+	if foot < 0 || save < foot || lastField > foot {
+		t.Errorf("Save must sit in a footer after the scrolling fields (foot=%d save=%d svc=%d)", foot, save, lastField)
+	}
+}

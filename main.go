@@ -181,6 +181,7 @@ func main() {
 	if n, err := strconv.Atoi(os.Getenv("EVENT_RETENTION_DAYS")); err == nil && n >= 0 {
 		eventRetentionDays.Store(int64(n)) // 0 = keep forever
 	}
+	loadWebhook() // ALERT_WEBHOOK / ALERT_WEBHOOK_FORMAT (webhook.go)
 	loadAuth(os.Getenv("AUTH_HASH"))
 	listenAddr.Store(os.Getenv("LISTEN_ADDR"))
 
@@ -227,6 +228,7 @@ func main() {
 	http.HandleFunc("/api/score_history", handleScoreHistory)
 	http.HandleFunc("/api/feeds", handleFeeds)
 	http.HandleFunc("/api/service", handleService)
+	http.HandleFunc("/api/webhook_test", handleWebhookTest)
 	http.HandleFunc("/logs.txt", handleLogs)
 	http.HandleFunc("/api/audit", handleAudit)
 	http.HandleFunc("/audit.json", handleAuditJSON)
@@ -349,7 +351,7 @@ func handleEvents(w http.ResponseWriter, r *http.Request) {
 }
 
 func handleSettings(w http.ResponseWriter, r *http.Request) {
-	var authErr string
+	var authErr, webhookErr string
 	if r.Method == "POST" {
 		var body struct {
 			VTKey, AbuseKey    string
@@ -361,6 +363,8 @@ func handleSettings(w http.ResponseWriter, r *http.Request) {
 			RefreshSecs        *int
 			AuditEveryHours    *int
 			EventRetentionDays *int
+			WebhookURL         *string
+			WebhookFormat      *string
 			AuthEnabled        *bool
 			AuthPassword       *string
 			CurrentPassword    *string
@@ -420,6 +424,9 @@ func handleSettings(w http.ResponseWriter, r *http.Request) {
 		if body.EventRetentionDays != nil {
 			setEventRetention(*body.EventRetentionDays)
 		}
+		if err := setWebhook(body.WebhookURL, body.WebhookFormat); err != nil {
+			webhookErr = strings_(langFrom(r))["webhook_invalid"]
+		}
 		if body.ListenAddr != nil {
 			setListenAddr(*body.ListenAddr)
 		}
@@ -428,6 +435,9 @@ func handleSettings(w http.ResponseWriter, r *http.Request) {
 	resp := getSettings()
 	if authErr != "" {
 		resp["auth_error"] = authErr
+	}
+	if webhookErr != "" {
+		resp["webhook_error"] = webhookErr
 	}
 	writeJSON(w, resp)
 }
@@ -821,6 +831,25 @@ func handleService(w http.ResponseWriter, r *http.Request) {
 		log.Println("[service] instalado; esta instancia sale para dejar el puerto al servicio")
 		os.Exit(0)
 	}()
+}
+
+// handleWebhookTest sends one test alert to the configured webhook and reports
+// what the receiver answered, so a typo in the URL is found now and not when
+// the first real alert goes nowhere.
+func handleWebhookTest(w http.ResponseWriter, r *http.Request) {
+	if !requireMethod(w, r, http.MethodPost) {
+		return
+	}
+	if webhookURL.Load() == "" {
+		writeJSON(w, map[string]any{"ok": false, "error": strings_(langFrom(r))["webhook_none"]})
+		return
+	}
+	T := strings_(langFrom(r))
+	if err := sendWebhook(T["webhook_test_title"], T["webhook_test_body"]); err != nil {
+		writeJSON(w, map[string]any{"ok": false, "error": err.Error()})
+		return
+	}
+	writeJSON(w, map[string]any{"ok": true})
 }
 
 // handleLogs serves the tail of the log. It's the only way to read the operator
