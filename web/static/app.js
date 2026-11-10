@@ -129,6 +129,20 @@ function killProc(pid, name) {
     });
 }
 
+// Suspend freezes the process without destroying it (memory, files and
+// sockets stay for analysis); resume lets it go on. Resuming needs no
+// confirmation: it only undoes.
+function setSuspended(pid, resume) {
+    postJSON('/api/suspend', { PID: pid, Resume: resume }).then(res => {
+        if (!res.ok) alert('Error: ' + res.error);
+        loadConnections();
+    });
+}
+function suspendProc(pid, name) {
+    if (confirm(`${T.suspend_proc} — ${name} (${pid})?`)) setSuspended(pid, false);
+}
+function resumeProc(pid) { setSuspended(pid, true); }
+
 function toggleWhitelist(exe, listed) {
     postJSON('/api/whitelist', { Exe: exe }, listed ? 'DELETE' : 'POST').then(() => loadConnections());
 }
@@ -898,6 +912,8 @@ const actions = {
     openHistoryFor: (el, e) => { e.preventDefault(); openHistoryFor(el.dataset.proc); },
     toggleLock: (el) => toggleLock(el, num(el, 'i')),
     killProc: (el) => killProc(num(el, 'pid'), el.dataset.name),
+    suspendProc: (el) => suspendProc(num(el, 'pid'), el.dataset.name),
+    resumeProc: (el) => resumeProc(num(el, 'pid')),
     openBlock: (el) => openBlock(el),
     blockIp: (el) => blockIp(el.dataset.ip),
     toggleWhitelist: (el) => toggleWhitelist(el.dataset.exe, el.dataset.listed === 'true'),

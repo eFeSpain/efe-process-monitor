@@ -119,6 +119,7 @@ type Conn struct {
 	Sig           Signature
 	Info          *FileInfo // Windows version resource; nil elsewhere or unknown
 	Whitelist     bool
+	Suspended     bool // frozen: stopped by a signal or suspended from here (suspend.go)
 	IPWhitelist   bool
 	Partial       bool // key signals (VT/enrichment) couldn't be resolved → low score ≠ clean
 	Enrich        *Enrichment
@@ -1126,6 +1127,7 @@ func analyzeConnections(hideSelf bool) []Conn {
 	hostMap := dbAllHostnames()            // one query, not one per row
 	children := childrenMap()              // one /proc pass, not one per PID
 	detailsMap := map[int32]*ProcDetails{} // deduped per PID
+	stopped := map[int32]bool{}            // frozen state, one look per PID
 
 	out := make([]Conn, 0, len(rows))
 	for _, r := range rows {
@@ -1145,6 +1147,7 @@ func analyzeConnections(hideSelf bool) []Conn {
 			VT:          orNA(vt[1]),
 			Undetected:  vt[2],
 			Suspicious:  isSuspiciousPath(r.exe),
+			Suspended:   pidStopped(stopped, r.c.Pid),
 			Untrusted:   isUntrustedPath(r.exe),
 			SuspPort:    suspPort,
 			LegacyPort:  legacyPort,

@@ -57,6 +57,12 @@ var translations = map[string]map[string]string{
 		"ev_newlisten":    "puerto nuevo a la escucha: %s/%d",
 		"notif_newlisten": "⚠ Puerto nuevo a la escucha",
 
+		"suspend_proc":   "⏸ Suspender proceso",
+		"resume_proc":    "▶ Reanudar proceso",
+		"suspended":      "suspendido",
+		"suspended_hint": "Proceso congelado: no se ejecuta ni comunica, pero sigue en memoria. Reanúdalo desde sus detalles.",
+		"suspend_hint":   "Suspender congela el proceso sin destruirlo: deja de ejecutarse y de comunicar, y su memoria, ficheros y conexiones quedan intactos para analizarlos. Se puede reanudar.",
+
 		"svc_title":              "Arranque con el sistema",
 		"svc_installed":          "instalado y activo",
 		"svc_installed_inactive": "instalado, detenido",
@@ -374,6 +380,12 @@ var translations = map[string]map[string]string{
 		"ev_newlisten":    "new listening port: %s/%d",
 		"notif_newlisten": "⚠ New listening port",
 
+		"suspend_proc":   "⏸ Suspend process",
+		"resume_proc":    "▶ Resume process",
+		"suspended":      "suspended",
+		"suspended_hint": "Frozen process: it neither runs nor talks, but it is still in memory. Resume it from its details.",
+		"suspend_hint":   "Suspending freezes the process without destroying it: it stops running and talking, and its memory, files and connections stay intact for analysis. It can be resumed.",
+
 		"svc_title":              "Run at boot",
 		"svc_installed":          "installed and active",
 		"svc_installed_inactive": "installed, stopped",
@@ -688,6 +700,12 @@ var translations = map[string]map[string]string{
 
 		"ev_newlisten":    "新的监听端口：%s/%d",
 		"notif_newlisten": "⚠ 新的监听端口",
+
+		"suspend_proc":   "⏸ 挂起进程",
+		"resume_proc":    "▶ 恢复进程",
+		"suspended":      "已挂起",
+		"suspended_hint": "进程已冻结：不再运行或通信，但仍在内存中。可在其详情中恢复。",
+		"suspend_hint":   "挂起会冻结进程而不销毁它：它停止运行和通信，其内存、文件和连接保持原样以供分析。可以恢复。",
 
 		"svc_title":              "随系统启动",
 		"svc_installed":          "已安装且运行中",

@@ -56,6 +56,12 @@ Versions follow [Semantic Versioning](https://semver.org/).
   Seeded silently the first time; after that a listener that appeared while
   the monitor was stopped is announced when it starts. All the random high
   ports of one program count as a single entry.
+- **Suspend / resume a process.** Killing a suspicious process destroys the
+  evidence with it. *Suspend* (in the process details, next to *Kill*)
+  freezes it — it stops running and talking — and leaves its memory, files
+  and sockets in place to be analysed, or resumed if it turns out to be
+  innocent. SIGSTOP/SIGCONT on Unix, NtSuspendProcess on Windows. A frozen
+  process is marked ⏸ in its row, also when something else stopped it.
 - **Spamhaus DROP for IPv6** (`drop_v6.json`): only the IPv4 list was loaded,
   so an IPv6 connection into a hijacked netblock never scored.
 

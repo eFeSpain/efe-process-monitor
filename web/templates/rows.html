@@ -11,7 +11,7 @@
     <td data-sort="{{ $c.Port }}">{{ $c.Port }}{{ if $c.RPort }} ↔ {{ $c.RPort }}{{ end }}</td>
     <td data-sort="{{ $c.PID }}">{{ if $c.PID }}{{ $c.PID }}{{ else }}—{{ end }}</td>
     <td class="{{ if eq $c.Status "ESTABLISHED" }}{{ if $hasRemote }}remote-yes{{ else }}established{{ end }}{{ else if eq $c.Status "UDP" }}{{ if $hasRemote }}remote-yes{{ else }}udp{{ end }}{{ else if eq $c.Status "UDP-BOUND" }}udp{{ else }}listen{{ end }}">{{ $c.Status }}</td>
-    <td{{ if $c.Info }} title="{{ $c.Info }}"{{ end }}><strong>{{ $c.Process }}</strong>{{ if $c.Whitelist }} <span class="badge-wl" title="whitelist">✓</span>{{ end }}</td>
+    <td{{ if $c.Info }} title="{{ $c.Info }}"{{ end }}><strong>{{ $c.Process }}</strong>{{ if $c.Suspended }} <span class="badge-susp" title="{{ $T.suspended_hint }}">⏸ {{ $T.suspended }}</span>{{ end }}{{ if $c.Whitelist }} <span class="badge-wl" title="whitelist">✓</span>{{ end }}</td>
     <td data-sort="{{ if $c.ResOK }}{{ pct $c.CPU }}{{ else }}-1{{ end }}" title="{{ $T.res_hint }}">{{ if $c.ResOK }}<span class="res-cpu{{ if $c.HighCPU }} vt-bad{{ else if ge $c.CPU 50.0 }} res-hot{{ end }}">{{ if $c.HighCPU }}⚠ {{ end }}{{ pct $c.CPU }} %</span> <span class="res-mem">{{ mem $c.RSS }}</span>{{ else }}<span class="vt-na">—</span>{{ end }}</td>
     <td>{{ if $okd }}{{ $d.ParentName }}{{ else }}—{{ end }}</td>
     <td>{{ if $c.SuspPort }}<span class="vt-bad" title="{{ $T.malware_port_t }}">⚠ {{ $c.Known }}</span>{{ else }}{{ $c.Known }}{{ if $c.LegacyPort }} <span class="vt-na" title="{{ $T.port_legacy_t }}">({{ $T.port_legacy }})</span>{{ end }}{{ end }}</td>
@@ -129,7 +129,8 @@
                 <input type="checkbox" data-change="toggleLock" data-i="{{ $i }}"><span class="lock-track"><span class="lock-thumb"></span></span>
                 <span class="lock-text">🔒 {{ $T.lock }}</span>
             </label>
-            {{ if $c.PID }}<button class="btn btn-stop" data-action="killProc" data-pid="{{ $c.PID }}" data-name="{{ $c.Process }}">{{ $T.kill_proc }}</button>{{ end }}
+            {{ if $c.PID }}{{ if $c.Suspended }}<button class="btn" data-action="resumeProc" data-pid="{{ $c.PID }}" title="{{ $T.suspend_hint }}">{{ $T.resume_proc }}</button>{{ else }}<button class="btn btn-stop" data-action="suspendProc" data-pid="{{ $c.PID }}" data-name="{{ $c.Process }}" title="{{ $T.suspend_hint }}">{{ $T.suspend_proc }}</button>{{ end }}
+            <button class="btn btn-stop" data-action="killProc" data-pid="{{ $c.PID }}" data-name="{{ $c.Process }}">{{ $T.kill_proc }}</button>{{ end }}
             {{ if gt (len $c.RemoteIPs) 1 }}<button class="btn btn-stop" data-ips="{{ join "," $c.RemoteIPs }}" data-action="openBlock">{{ $T.block_ip }}</button>
             {{ else if $c.RemoteIPs }}<button class="btn btn-stop" data-action="blockIp" data-ip="{{ index $c.RemoteIPs 0 }}">{{ $T.block_ip }}</button>
             {{ else if $c.RemoteIP }}<button class="btn btn-stop" disabled>{{ $T.block_ip }}</button>{{ end }}

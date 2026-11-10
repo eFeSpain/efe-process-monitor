@@ -9,7 +9,6 @@ import (
 	"io"
 	"io/fs"
 	"log"
-	"math"
 	"net"
 	"net/http"
 	"os"
@@ -223,6 +222,7 @@ func main() {
 	http.HandleFunc("/api/whitelist", handleWhitelist)
 	http.HandleFunc("/api/ip_whitelist", handleIPWhitelist)
 	http.HandleFunc("/api/kill", handleKill)
+	http.HandleFunc("/api/suspend", handleSuspend)
 	http.HandleFunc("/api/block_ip", handleBlockIP)
 	http.HandleFunc("/api/blocked", handleBlocked)
 	http.HandleFunc("/api/unblock", handleUnblock)
@@ -540,23 +540,16 @@ func handleKill(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var body struct{ PID int }
-	// The upper bound matters: PID is an int from JSON and int32() below would
-	// wrap a huge value round into a different, valid PID — killing a process the
-	// caller never named.
+	// Never ourselves (the monitor used to be able to kill itself from its own
+	// API), never init, never a PID that would wrap: see validTargetPID.
 	if !decodeJSON(w, r, &body) {
 		return
 	}
-	if body.PID <= 0 || body.PID > math.MaxInt32 {
-		http.Error(w, `{"ok":false,"error":"invalid pid"}`, 400)
+	pid, ok := validTargetPID(w, body.PID)
+	if !ok {
 		return
 	}
-	// Never ourselves (the monitor used to be able to kill itself from its own
-	// API) and never init: neither is a response action, both are an outage.
-	if int32(body.PID) == ownPID || body.PID == 1 {
-		http.Error(w, `{"ok":false,"error":"refusing to kill the monitor or init"}`, http.StatusBadRequest)
-		return
-	}
-	p, err := process.NewProcess(int32(body.PID))
+	p, err := process.NewProcess(pid)
 	if err != nil {
 		writeJSON(w, map[string]any{"ok": false, "error": "process not found"})
 		return
