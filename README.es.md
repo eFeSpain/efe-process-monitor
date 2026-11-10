@@ -105,8 +105,10 @@ no para atacar a otros.
   fallidos; las repetidas se agrupan. Necesita root y Linux ≥ 5.8; interruptor
   en ⚙ Ajustes (`SHORT_CONNS`). Límites: solo TCP; un proceso que termina en
   milisegundos sale con nombre pero sin ruta; las conexiones dentro de otros
-  espacios de red (contenedores) solo se muestran si son breves. Nada sale del
-  equipo.
+  espacios de red (contenedores) solo se muestran si son breves. El enganche
+  en el kernel no envía nada a ningún sitio; las direcciones que saca a la luz
+  reciben las mismas consultas de reputación que cualquier otra conexión (ver
+  *Privacidad*).
 - **Fija** una conexión para conservar una copia congelada de su tarjeta aunque se
   cierre.
 

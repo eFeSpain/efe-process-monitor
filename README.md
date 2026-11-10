@@ -102,7 +102,9 @@ attacking others.
   repeats are grouped. Needs root and Linux ≥ 5.8; switch in ⚙ Settings
   (`SHORT_CONNS`). Limits: TCP only; a process that exits within milliseconds
   is named but has no path; connections inside other network namespaces
-  (containers) are shown only when brief. Nothing leaves the machine.
+  (containers) are shown only when brief. The kernel hook itself sends nothing
+  anywhere; the addresses it brings to light get the same reputation lookups
+  as any other connection (see *Privacy*).
 - **Pin** a connection to keep a frozen copy of its card even after it closes.
 
 **Capture & audit**

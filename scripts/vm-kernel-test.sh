@@ -36,10 +36,16 @@ timeout 180 qemu-system-x86_64 -enable-kvm -cpu host -m 1024 -nographic -no-rebo
   2>&1 | tr -d '\r' | tee "$tmp/out.log" | grep -a -v '^$' | sed -n '/^=== RUN\|^--- \|^    \|^PASS\|^FAIL\|^ok\|^VMTEST\|^panic\|^\t/p'
 set -e
 
-if grep -a -q '^VMTEST: exit 0' "$tmp/out.log"; then
-  echo "vm-kernel-test: passed ($(uname -r))"
+# Passed means tests ran and passed: an exit status of 0 with nothing run (a
+# pattern that matches no test) or with tests skipped is not a pass.
+passed=$(grep -a -c '^--- PASS' "$tmp/out.log" || true)
+skipped=$(grep -a -c '^--- SKIP' "$tmp/out.log" || true)
+if grep -a -q '^VMTEST: exit 0' "$tmp/out.log" && [ "$passed" -gt 0 ] && [ "$skipped" -eq 0 ]; then
+  echo "vm-kernel-test: passed — $passed tests ($(uname -r))"
   exit 0
 fi
+[ "$passed" -eq 0 ] && echo "vm-kernel-test: no test ran (pattern $pattern)" >&2
+[ "$skipped" -gt 0 ] && echo "vm-kernel-test: $skipped tests were skipped" >&2
 echo "vm-kernel-test: FAILED — full console output follows" >&2
 cat "$tmp/out.log" >&2
 exit 1

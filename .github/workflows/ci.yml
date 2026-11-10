@@ -43,7 +43,11 @@ jobs:
       - name: kernel tests (eBPF, as root)
         run: |
           CGO_ENABLED=0 go test -c -o "$RUNNER_TEMP/efemon.test" .
-          sudo "$RUNNER_TEMP/efemon.test" -test.run '^TestKernel' -test.v
+          sudo "$RUNNER_TEMP/efemon.test" -test.run '^TestKernel' -test.v | tee "$RUNNER_TEMP/kernel.log"
+          # Ran and passed, not "nothing failed": a kernel test that skips
+          # here (no root, no BTF, no loopback) is a test that did not run.
+          grep -q '^--- PASS: TestKernel' "$RUNNER_TEMP/kernel.log"
+          ! grep '^--- SKIP: TestKernel' "$RUNNER_TEMP/kernel.log"
 
       - name: staticcheck
         uses: dominikh/staticcheck-action@v1

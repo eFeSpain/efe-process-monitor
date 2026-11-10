@@ -95,7 +95,7 @@ step "kernel tests (VM)"
 if [ -x scripts/vm-kernel-test.sh ] && [ "$(uname -s)" = Linux ]; then
   out=$(bash scripts/vm-kernel-test.sh 2>&1); rc=$?
   case $rc in
-    0) ok "$(printf '%s\n' "$out" | grep -c '^--- PASS') kernel tests, $(uname -r)" ;;
+    0) ok "$(printf '%s\n' "$out" | tail -1 | sed 's/^vm-kernel-test: passed — //')" ;;
     2) printf '   \033[33mSKIP\033[0m %s\n' "$(printf '%s\n' "$out" | tail -1)" ;;
     *) bad; printf '%s\n' "$out" | tail -40 ;;
   esac
