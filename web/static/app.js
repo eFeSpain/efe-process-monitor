@@ -167,6 +167,7 @@ function openSettings() {
     document.getElementById('settings-msg').textContent = '';
     fetch('/api/settings').then(r => r.json()).then(s => {
         document.getElementById('refresh-interval').value = String(s.refresh_secs || 0);
+        document.getElementById('audit-every').value = String(s.audit_every_hours == null ? 6 : s.audit_every_hours);
         document.getElementById('notify-desktop').checked = !!s.notify_desktop;
         document.getElementById('notify-sound').checked = !!s.notify_sound;
         document.getElementById('persist-whitelist').checked = !!s.persist_whitelist;
@@ -257,6 +258,7 @@ function settingsPayload() {
         PersistWhitelist: document.getElementById('persist-whitelist').checked,
         PersistBlocks: document.getElementById('persist-blocks').checked,
         RefreshSecs: clampSecs(),
+        AuditEveryHours: Math.max(0, Math.min(168, parseInt(document.getElementById('audit-every').value || '0', 10) || 0)),
         AuthEnabled: document.getElementById('auth-enabled').checked,
         AuthPassword: document.getElementById('auth-password').value,
         CurrentPassword: document.getElementById('auth-current').value,

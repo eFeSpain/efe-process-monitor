@@ -53,6 +53,7 @@ func getSettings() map[string]any {
 		"persist_whitelist":  persistWhitelist.Load(),
 		"persist_blocks":     persistBlocks.Load(),
 		"refresh_secs":       refreshSecs.Load(),
+		"audit_every_hours":  auditEveryHours.Load(),
 		"auth_enabled":       authEnabled(),
 		"listen_addr":        listenAddr.Load(),
 		"exposed":            listenExposed,

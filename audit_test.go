@@ -2,6 +2,7 @@ package main
 
 import (
 	"os"
+	"path/filepath"
 	"runtime"
 	"strings"
 	"testing"
@@ -319,5 +320,50 @@ func TestMigrateAuditSeenNormalizesLegacyRows(t *testing.T) {
 	}
 	if _, ok := seen["rk_hidden"]["pid 77"]; !ok {
 		t.Error("a PID-only item has nothing else to key on and must be left alone")
+	}
+}
+
+// The audit only ran when somebody opened its panel. On a schedule, what
+// matters is what is NEW since the baseline — a Run key, a systemd unit, an
+// authorized SSH key — reported once, not at every pass while it stays inside
+// the 24 h "new" window.
+func TestNewAuditFindingsReportedOnce(t *testing.T) {
+	notified := map[string]bool{}
+	checks := []AuditCheck{
+		{Key: "pl_cron", Name: "Tareas cron", Status: "info", Items: []string{"a", "b"}, New: []string{"b"}},
+		{Key: "hl_authkeys", Name: "Claves SSH", Status: "warn", Items: []string{"k1"}, New: []string{"k1"}},
+		{Key: "hl_ssh", Name: "SSH", Status: "ok"},
+	}
+	lines := newAuditFindings(checks, notified)
+	if len(lines) != 2 || lines[0] != "Tareas cron: b" || lines[1] != "Claves SSH: k1" {
+		t.Fatalf("first pass: %q", lines)
+	}
+	if again := newAuditFindings(checks, notified); len(again) != 0 {
+		t.Errorf("the same findings must not be reported twice: %q", again)
+	}
+	checks[0].New = append(checks[0].New, "c")
+	if more := newAuditFindings(checks, notified); len(more) != 1 || more[0] != "Tareas cron: c" {
+		t.Errorf("only the genuinely new item: %q", more)
+	}
+}
+
+func TestAuditEverySetting(t *testing.T) {
+	old := envPath
+	envPath = filepath.Join(t.TempDir(), ".env")
+	t.Cleanup(func() { envPath = old; auditEveryHours.Store(defaultAuditEveryHours) })
+	setAuditEvery(12)
+	if auditEveryHours.Load() != 12 || getSettings()["audit_every_hours"] != int64(12) {
+		t.Errorf("setting not applied: %v", getSettings()["audit_every_hours"])
+	}
+	setAuditEvery(-3)
+	if auditEveryHours.Load() != 0 {
+		t.Error("negative means off (0)")
+	}
+	setAuditEvery(10000)
+	if auditEveryHours.Load() != 168 {
+		t.Error("capped at a week")
+	}
+	if b, _ := os.ReadFile(envPath); !strings.Contains(string(b), "AUDIT_EVERY_HOURS=168") {
+		t.Errorf(".env: %q", b)
 	}
 }

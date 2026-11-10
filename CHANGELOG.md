@@ -24,6 +24,12 @@ Versions follow [Semantic Versioning](https://semver.org/).
   listed address (+55, never twice) and raises a red alert. More specific than
   the address on shared hosting. Payload-delivery domains and URLhaus hosts
   are deliberately not matched: they include the likes of `github.com`.
+- **Scheduled audit.** The machine audit ran only when its panel was opened.
+  It now also runs on its own — two minutes after start-up, then every six
+  hours (⚙ Settings, `AUDIT_EVERY_HOURS`; 0 = off) — and reports what is
+  **new** against the baseline: a Run key, a cron job, a systemd unit, an
+  authorized SSH key, a UID-0 account. Each new item once, in the live feed,
+  the history and a desktop notification.
 - **Spamhaus DROP for IPv6** (`drop_v6.json`): only the IPv4 list was loaded,
   so an IPv6 connection into a hijacked netblock never scored.
 

@@ -265,6 +265,9 @@ select{background:#0d1117;color:#c9d1d9;border:1px solid #30363d;padding:3px 6px
             <label>{{ .T.refresh_int }}</label>
             <input type="number" id="refresh-interval" min="0" max="3600" value="0" style="width:90px">
             <div style="color:#484f58;font-size:11px;margin:-6px 0 12px;">{{ .T.refresh_int_hint }}</div>
+            <label>{{ .T.audit_every }}</label>
+            <input type="number" id="audit-every" min="0" max="168" value="6" style="width:90px">
+            <div style="color:#484f58;font-size:11px;margin:-6px 0 12px;">{{ .T.audit_every_hint }}</div>
             <label class="live-toggle" style="margin-bottom:8px;"><input type="checkbox" id="notify-desktop"> {{ .T.notify_desktop }}</label>
             <label class="live-toggle" style="margin-bottom:8px;"><input type="checkbox" id="notify-sound"> {{ .T.notify_sound }}</label>
             <label class="live-toggle" style="margin-bottom:4px;"><input type="checkbox" id="persist-whitelist"> {{ .T.persist_wl }}</label>

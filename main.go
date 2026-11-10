@@ -175,6 +175,9 @@ func main() {
 	if n, err := strconv.Atoi(os.Getenv("REFRESH_SECS")); err == nil {
 		refreshSecs.Store(int64(n))
 	}
+	if n, err := strconv.Atoi(os.Getenv("AUDIT_EVERY_HOURS")); err == nil && n >= 0 && n <= maxAuditEveryHours {
+		auditEveryHours.Store(int64(n)) // 0 = scheduled audit off
+	}
 	if n, err := strconv.Atoi(os.Getenv("EVENT_RETENTION_DAYS")); err == nil && n >= 0 {
 		eventRetentionDays = n // 0 = keep forever
 	}
@@ -188,9 +191,10 @@ func main() {
 	tmpl = template.Must(template.New("").Funcs(funcMap).ParseFS(tmplFS, "web/templates/*.html"))
 	go primeIntel()
 	go monitorLoop()
-	startPassiveDNS() // DNS answers → hostnames table, outside captures (see dns.go)
-	go vtWorker()     // resolves VT hashes in the background at 4/min
-	go sigWorker()    // resolves code signatures off the request path
+	startPassiveDNS()   // DNS answers → hostnames table, outside captures (see dns.go)
+	go vtWorker()       // resolves VT hashes in the background at 4/min
+	go auditScheduler() // machine audit on a schedule; notifies what is new (audit_schedule.go)
+	go sigWorker()      // resolves code signatures off the request path
 	// IP reputation and LAN host lookups off the request path too (see
 	// queue.go): the render reads caches, these resolve the misses.
 	enrichQueue.start(enrichWorkers, enrichResolve, lookupDrained)
@@ -355,6 +359,7 @@ func handleSettings(w http.ResponseWriter, r *http.Request) {
 			PersistWhitelist *bool
 			PersistBlocks    *bool
 			RefreshSecs      *int
+			AuditEveryHours  *int
 			AuthEnabled      *bool
 			AuthPassword     *string
 			CurrentPassword  *string
@@ -402,6 +407,9 @@ func handleSettings(w http.ResponseWriter, r *http.Request) {
 		}
 		if body.RefreshSecs != nil {
 			setRefreshSecs(*body.RefreshSecs)
+		}
+		if body.AuditEveryHours != nil {
+			setAuditEvery(*body.AuditEveryHours)
 		}
 		if body.ListenAddr != nil {
 			setListenAddr(*body.ListenAddr)
