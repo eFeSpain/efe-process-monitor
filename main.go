@@ -182,6 +182,7 @@ func main() {
 	}
 	loadWebhook()     // ALERT_WEBHOOK / ALERT_WEBHOOK_FORMAT (webhook.go)
 	loadUpdateCheck() // UPDATE_CHECK (update.go); off unless the operator turns it on
+	loadShortConns()  // SHORT_CONNS (shortconn.go); on unless the operator turns it off
 	loadAuth(os.Getenv("AUTH_HASH"))
 	listenAddr.Store(os.Getenv("LISTEN_ADDR"))
 
@@ -370,6 +371,7 @@ func handleSettings(w http.ResponseWriter, r *http.Request) {
 			WebhookURL         *string
 			WebhookFormat      *string
 			UpdateCheck        *bool
+			ShortConns         *bool
 			AuthEnabled        *bool
 			AuthPassword       *string
 			CurrentPassword    *string
@@ -435,12 +437,18 @@ func handleSettings(w http.ResponseWriter, r *http.Request) {
 		if body.UpdateCheck != nil {
 			setUpdateCheck(*body.UpdateCheck)
 		}
+		if body.ShortConns != nil {
+			setShortConns(*body.ShortConns)
+		}
 		if body.ListenAddr != nil {
 			setListenAddr(*body.ListenAddr)
 		}
 		log.Println("settings updated via UI")
 	}
 	resp := getSettings()
+	// What brief-connection detection is doing now, in the reader's language:
+	// the switch above is what it will do at the next start.
+	resp["short_conns_status"], resp["short_conns_active"] = shortConnStatusText(strings_(langFrom(r)))
 	if authErr != "" {
 		resp["auth_error"] = authErr
 	}

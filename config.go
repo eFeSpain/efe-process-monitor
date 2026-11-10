@@ -61,6 +61,7 @@ func getSettings() map[string]any {
 		"auth_enabled":         authEnabled(),
 		"listen_addr":          listenAddr.Load(),
 		"exposed":              listenExposed,
+		"short_conns":          shortConnsEnabled.Load(),
 	}
 	for k, v := range updateSettingsInfo() {
 		s[k] = v

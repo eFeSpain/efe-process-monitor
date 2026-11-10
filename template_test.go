@@ -373,3 +373,13 @@ func TestSettingsModalScrollsWithFixedFooter(t *testing.T) {
 		t.Errorf("Save must sit in a footer after the scrolling fields (foot=%d save=%d svc=%d)", foot, save, lastField)
 	}
 }
+
+// The switch for brief-connection detection lives in Settings, with the
+// current state next to it, inside the scrolling body.
+func TestSettingsHasShortConns(t *testing.T) {
+	page := renderedPages(t)["report.html"]
+	box, status, foot := strings.Index(page, `id="short-conns"`), strings.Index(page, `id="short-conns-status"`), strings.Index(page, `class="modal-foot"`)
+	if box < 0 || status < 0 || foot < 0 || box > foot || status > foot {
+		t.Errorf("short-conns checkbox (%d) and status (%d) must be in the Settings body, before the footer (%d)", box, status, foot)
+	}
+}

@@ -2,7 +2,11 @@ package main
 
 import (
 	"encoding/binary"
+	"encoding/json"
 	"net/netip"
+	"os"
+	"runtime"
+	"strings"
 	"syscall"
 	"testing"
 	"time"
@@ -480,5 +484,97 @@ func TestTrackerLocalPortArrivesLater(t *testing.T) {
 	got = feed(tr, now, rec(recStart, 7, 1, 0, 100, unbound, srvAddr), rec(recClosed, tcpSynSent, 1, 5, 0, cliAddr, srvAddr))
 	if len(got) != 1 || !got[0].Failed || got[0].Local.String() != cliAddr {
 		t.Errorf("failed attempt: %+v", got)
+	}
+}
+
+func withShortConnsState(t *testing.T) {
+	t.Helper()
+	oldOn := shortConnsEnabled.Load()
+	oldCode, oldDetail := shortConnStatus()
+	t.Cleanup(func() { shortConnsEnabled.Store(oldOn); setShortConnStatus(oldCode, oldDetail) })
+}
+
+// On by default; SHORT_CONNS=false turns it off; Settings persists the choice.
+func TestShortConnsSwitch(t *testing.T) {
+	withTempEnv(t)
+	withShortConnsState(t)
+	t.Setenv("SHORT_CONNS", "")
+	loadShortConns()
+	if !shortConnsEnabled.Load() {
+		t.Error("brief-connection detection is on unless switched off")
+	}
+	t.Setenv("SHORT_CONNS", "false")
+	loadShortConns()
+	if shortConnsEnabled.Load() {
+		t.Error("SHORT_CONNS=false must switch it off")
+	}
+
+	var out map[string]any
+	json.Unmarshal(jsonPost(handleSettings, "/api/settings", `{"ShortConns":true}`).Body.Bytes(), &out)
+	if out["short_conns"] != true || out["short_conns_status"] == nil || out["short_conns_status"] == "" {
+		t.Errorf("switching on: %v / %v", out["short_conns"], out["short_conns_status"])
+	}
+	out = map[string]any{}
+	json.Unmarshal(jsonPost(handleSettings, "/api/settings", `{}`).Body.Bytes(), &out)
+	if out["short_conns"] != true {
+		t.Error("a settings save that does not mention it must leave it alone")
+	}
+	out = map[string]any{}
+	json.Unmarshal(jsonPost(handleSettings, "/api/settings", `{"ShortConns":false}`).Body.Bytes(), &out)
+	env, _ := os.ReadFile(envPath)
+	if out["short_conns"] != false || !strings.Contains(string(env), "SHORT_CONNS=false") {
+		t.Errorf("switching off: %v, .env:\n%s", out["short_conns"], env)
+	}
+}
+
+// Without what it needs the feature is simply absent: no channel, and a
+// status that says why. Off is checked before privileges.
+func TestStartShortConnsInactive(t *testing.T) {
+	if os.Geteuid() == 0 {
+		t.Skip("as root on Linux it would really start")
+	}
+	withShortConnsState(t)
+	shortConnsEnabled.Store(true)
+	ch, volume := startShortConns()
+	if ch != nil || volume {
+		t.Errorf("startShortConns without privileges returned a channel (%v) or volume (%v)", ch != nil, volume)
+	}
+	want := "os"
+	if runtime.GOOS == "linux" {
+		want = "root"
+	}
+	if code, _ := shortConnStatus(); code != want {
+		t.Errorf("status %q, want %q", code, want)
+	}
+	if text, active := shortConnStatusText(strings_("es")); active || text != strings_("es")["short_st_"+want] {
+		t.Errorf("status text %q active=%v", text, active)
+	}
+
+	shortConnsEnabled.Store(false)
+	if ch, _ := startShortConns(); ch != nil {
+		t.Error("switched off, it must not start")
+	}
+	if code, _ := shortConnStatus(); runtime.GOOS == "linux" && code != "off" {
+		t.Errorf("switched off: status %q, want off", code)
+	}
+}
+
+func TestShortConnStatusTexts(t *testing.T) {
+	withShortConnsState(t)
+	for _, lang := range []string{"es", "en", "zh"} {
+		T := strings_(lang)
+		for _, code := range []string{"active", "root", "ringbuf", "refused", "off", "os", "stopped"} {
+			setShortConnStatus(code, "boom")
+			text, active := shortConnStatusText(T)
+			if text == "" || active != (code == "active") {
+				t.Errorf("%s/%s: text %q active %v", lang, code, text, active)
+			}
+			if code == "refused" && !strings.Contains(text, "boom") {
+				t.Errorf("%s: the kernel's reason is missing from %q", lang, text)
+			}
+			if strings.Contains(text, "%!") {
+				t.Errorf("%s/%s: bad format: %q", lang, code, text)
+			}
+		}
 	}
 }

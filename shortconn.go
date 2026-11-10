@@ -6,7 +6,10 @@ import (
 	"fmt"
 	"math"
 	"net/netip"
+	"os"
 	"strconv"
+	"sync"
+	"sync/atomic"
 	"time"
 
 	gnet "github.com/shirou/gopsutil/v4/net"
@@ -430,4 +433,56 @@ func summaryDetail(T map[string]string, s shortSummary) string {
 		return fmt.Sprintf(T["ev_short_more_proc"], s.Count, s.Addrs)
 	}
 	return fmt.Sprintf(T["ev_short_more"], s.Count)
+}
+
+// ── Switch and status ────────────────────────────────────────────────────────
+
+// shortConnsEnabled is the operator's switch (SHORT_CONNS; default on). It is
+// a kernel hook: it must be possible to turn it off without changing version.
+// Read once at start-up — a change takes effect at the next start.
+var shortConnsEnabled atomic.Bool
+
+func init() { shortConnsEnabled.Store(true) }
+
+func loadShortConns() { shortConnsEnabled.Store(os.Getenv("SHORT_CONNS") != "false") }
+
+func setShortConns(on bool) {
+	shortConnsEnabled.Store(on)
+	writeEnv(map[string]string{"SHORT_CONNS": fmt.Sprintf("%t", on)})
+}
+
+// shortState is what the feature is doing right now: written at start-up and
+// by the reader if it fails, read by the banner and by Settings.
+var shortState struct {
+	sync.Mutex
+	code, detail string
+}
+
+func setShortConnStatus(code, detail string) {
+	shortState.Lock()
+	shortState.code, shortState.detail = code, detail
+	shortState.Unlock()
+}
+
+// shortConnStatus returns the state as a code — "active", "root" (needs it),
+// "ringbuf" (kernel too old), "refused" (detail says why), "off", "os" (not
+// Linux), "stopped" (the reader failed, or nothing has started it) — and the
+// detail that goes with it.
+func shortConnStatus() (code, detail string) {
+	shortState.Lock()
+	defer shortState.Unlock()
+	if shortState.code == "" {
+		return "stopped", ""
+	}
+	return shortState.code, shortState.detail
+}
+
+// shortConnStatusText is the state in words, and whether it is working.
+func shortConnStatusText(T map[string]string) (text string, active bool) {
+	code, detail := shortConnStatus()
+	text = T["short_st_"+code]
+	if code == "refused" {
+		text = fmt.Sprintf(text, detail)
+	}
+	return text, code == "active"
 }

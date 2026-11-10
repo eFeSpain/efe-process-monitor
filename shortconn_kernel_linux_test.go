@@ -303,3 +303,36 @@ func TestKernelLostRecords(t *testing.T) {
 		t.Log("the program reads byte counters")
 	}
 }
+
+// The way the monitor uses it: started once, records arrive on a channel,
+// and the status says it is working.
+func TestKernelStartShortConns(t *testing.T) {
+	requireKernelTest(t)
+	oldOn := shortConnsEnabled.Load()
+	shortConnsEnabled.Store(true)
+	t.Cleanup(func() { shortConnsEnabled.Store(oldOn) })
+
+	ch, _ := startShortConns()
+	if ch == nil {
+		code, detail := shortConnStatus()
+		t.Fatalf("startShortConns as root returned no channel: %s %s", code, detail)
+	}
+	if code, _ := shortConnStatus(); code != "active" {
+		t.Errorf("status %q, want active", code)
+	}
+	if text, active := shortConnStatusText(strings_("en")); !active || text != "active — eBPF" {
+		t.Errorf("status text %q active=%v", text, active)
+	}
+	client, server := exchange(t, "127.0.0.1:0", 0, 0)
+	deadline := time.After(3 * time.Second)
+	for {
+		select {
+		case r := <-ch:
+			if r.Kind == recClosed && r.Local == client && r.Remote == server {
+				return
+			}
+		case <-deadline:
+			t.Fatal("the connection's close never arrived on the channel")
+		}
+	}
+}

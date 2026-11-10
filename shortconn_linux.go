@@ -5,6 +5,8 @@ package main
 import (
 	"errors"
 	"fmt"
+	"log"
+	"os"
 	"time"
 
 	"github.com/cilium/ebpf"
@@ -138,4 +140,64 @@ func (s *shortConnSource) Close() error {
 		s.drops.Close()
 	}
 	return nil
+}
+
+// startShortConns turns the feature on if it can: it returns the channel the
+// kernel's records arrive on and whether they carry byte counts. A nil
+// channel means it is not running, and shortConnStatus says why. Never fatal:
+// without it the monitor has the poll alone, as it always did.
+func startShortConns() (records <-chan kernelRecord, volume bool) {
+	switch {
+	case !shortConnsEnabled.Load():
+		setShortConnStatus("off", "")
+		return nil, false
+	case os.Geteuid() != 0:
+		setShortConnStatus("root", "")
+		return nil, false
+	}
+	src, err := openShortConnSource()
+	switch {
+	case errors.Is(err, errNoRingBuf):
+		setShortConnStatus("ringbuf", "")
+		return nil, false
+	case err != nil:
+		setShortConnStatus("refused", err.Error())
+		return nil, false
+	}
+	setShortConnStatus("active", "")
+	ch := make(chan kernelRecord, 1024)
+	go forwardShortConns(src, ch)
+	return ch, src.volume()
+}
+
+// forwardShortConns moves records from the kernel to the monitor. The send
+// blocks on purpose: if the monitor is busy the records wait in the kernel's
+// buffer, where an overflow is counted, instead of piling up here.
+//
+// The channel is never closed: a reader that fails stops sending, says so in
+// the status and the log, and the monitor carries on with the poll.
+func forwardShortConns(src *shortConnSource, ch chan<- kernelRecord) {
+	defer src.Close()
+	var reported uint64
+	nextCheck := time.Now().Add(time.Minute)
+	for {
+		src.setDeadline(nextCheck)
+		r, err := src.next()
+		switch {
+		case err == nil:
+			ch <- r
+		case errors.Is(err, os.ErrDeadlineExceeded):
+		default:
+			log.Printf("[short] the kernel reader stopped: %v", err)
+			setShortConnStatus("stopped", err.Error())
+			return
+		}
+		if now := time.Now(); !now.Before(nextCheck) {
+			nextCheck = now.Add(time.Minute)
+			if lost := src.lost(); lost > reported {
+				log.Printf("[short] %d records lost in the last minute: the kernel buffer was full", lost-reported)
+				reported = lost
+			}
+		}
+	}
 }

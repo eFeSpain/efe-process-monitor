@@ -294,6 +294,9 @@ select{background:#0d1117;color:#c9d1d9;border:1px solid #30363d;padding:3px 6px
             <div style="color:#484f58;font-size:11px;margin:0 0 12px;">{{ .T.persist_hint }}</div>
             <label class="live-toggle" style="margin-bottom:4px;"><input type="checkbox" id="update-check"> {{ .T.update_check_label }} <span id="update-status" style="color:#8b949e;font-size:11px;"></span></label>
             <div style="color:#484f58;font-size:11px;margin:0 0 12px;">{{ .T.update_check_hint }}</div>
+            <label class="live-toggle" style="margin-bottom:4px;"><input type="checkbox" id="short-conns"> {{ .T.short_conns_label }}</label>
+            <div style="color:#8b949e;font-size:11px;margin:0 0 4px;">⚡ <span id="short-conns-status"></span></div>
+            <div style="color:#484f58;font-size:11px;margin:0 0 12px;">{{ .T.short_conns_hint }}</div>
             <label class="live-toggle" style="margin-bottom:4px;"><input type="checkbox" id="auth-enabled" data-change="authToggled"> 🔒 {{ .T.auth_label }}</label>
             <div id="auth-current-row" style="display:none;margin-bottom:4px;">
                 <input type="password" id="auth-current" autocomplete="current-password" placeholder="{{ .T.auth_current_ph }}" style="width:100%">

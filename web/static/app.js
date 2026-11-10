@@ -188,6 +188,8 @@ function openSettings() {
         document.getElementById('webhook-status').textContent = s.webhook_configured ? `(${s.webhook_hint})` : '✗';
         document.getElementById('webhook-msg').textContent = '';
         document.getElementById('update-check').checked = !!s.update_check;
+        document.getElementById('short-conns').checked = !!s.short_conns;
+        document.getElementById('short-conns-status').textContent = s.short_conns_status || '';
         document.getElementById('update-status').textContent = s.update_check ? '— ' + updateStatusText(s) : '';
         showUpdateNotice(s);
         document.getElementById('notify-desktop').checked = !!s.notify_desktop;
@@ -323,6 +325,7 @@ function settingsPayload() {
         ...(document.getElementById('webhook-url').value.trim() ? { WebhookURL: document.getElementById('webhook-url').value.trim() } : {}),
         WebhookFormat: document.getElementById('webhook-format').value,
         UpdateCheck: document.getElementById('update-check').checked,
+        ShortConns: document.getElementById('short-conns').checked,
         AuthEnabled: document.getElementById('auth-enabled').checked,
         AuthPassword: document.getElementById('auth-password').value,
         CurrentPassword: document.getElementById('auth-current').value,
