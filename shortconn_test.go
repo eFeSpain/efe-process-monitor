@@ -48,6 +48,17 @@ func encode(r kernelRecord, family uint16) []byte {
 	return b
 }
 
+// hostHas stands in for the machine's interface addresses.
+func hostHas(ips ...string) func() []netip.Addr {
+	return func() []netip.Addr {
+		var out []netip.Addr
+		for _, ip := range ips {
+			out = append(out, netip.MustParseAddr(ip))
+		}
+		return out
+	}
+}
+
 func testWho(pid int32) (string, string) {
 	switch pid {
 	case 100:
@@ -216,6 +227,7 @@ func TestTrackerInbound(t *testing.T) {
 	}
 
 	tr := newShortTracker(testWho, false)
+	tr.hostAddrs = hostHas("192.168.1.24")
 	tr.polled([]gnet.ConnectionStat{tcpListen(200, "0.0.0.0", 22)}, time.Now())
 	got := inbound(tr)
 	if len(got) != 1 || !got[0].Inbound || got[0].PID != 200 || got[0].Name != "sshd" || got[0].Exe != "/usr/sbin/sshd" ||
@@ -309,11 +321,28 @@ func TestTrackerPrune(t *testing.T) {
 func TestTrackerVolume(t *testing.T) {
 	tr := newShortTracker(testWho, true)
 	closed := rec(recClosed, tcpEstablished, 1, 200, 0, cliAddr, srvAddr)
-	closed.Sent, closed.Recv = 38_000_000, 1024
+	// The kernel counts in sequence space, where our SYN and FIN take one
+	// number each on the way out and the peer's FIN one on the way in.
+	closed.Sent, closed.Recv = 38_000_002, 1025
 	got := feed(tr, time.Now(), rec(recStart, 7, 1, 0, 100, cliAddr, srvAddr), rec(recEstablished, tcpSynSent, 1, 10, 0, cliAddr, srvAddr), closed)
 	if len(got) != 1 || !got[0].HasBytes || got[0].Sent != 38_000_000 || got[0].Recv != 1024 {
 		t.Errorf("%+v", got)
 	}
+	// A connection that carried nothing says nothing, not "1 B" (seen on the
+	// real machine: a handshake and a close, shown as ↑1 B).
+	for _, raw := range [][2]uint64{{1, 0}, {2, 1}, {0, 0}} {
+		closed.Sock, closed.Sent, closed.Recv = 2, raw[0], raw[1]
+		got = feed(tr, time.Now(), rec(recStart, 7, 2, 0, 100, cliAddr, srvAddr), rec(recEstablished, tcpSynSent, 2, 10, 0, cliAddr, srvAddr), closed)
+		if len(got) != 1 || got[0].Sent != 0 || got[0].Recv != 0 {
+			t.Errorf("raw counters %v: %+v", raw, got)
+		}
+	}
+}
+
+// groupAdd is add() for the tests that only care whether a line is published.
+func groupAdd(g *shortGrouper, c briefConn, now time.Time) bool {
+	publish, _ := g.add(c, now)
+	return publish
 }
 
 func brief(name, exe, remote string) briefConn {
@@ -328,7 +357,7 @@ func TestGrouperFirstThenCounted(t *testing.T) {
 	t0 := time.Now()
 	c := brief("curl", "/usr/bin/curl", srvAddr)
 	for i, want := range []bool{true, false, false} {
-		if got := g.add(c, t0.Add(time.Duration(i)*time.Second)); got != want {
+		if got := groupAdd(g, c, t0.Add(time.Duration(i)*time.Second)); got != want {
 			t.Errorf("add #%d = %v, want %v", i+1, got, want)
 		}
 	}
@@ -338,12 +367,12 @@ func TestGrouperFirstThenCounted(t *testing.T) {
 	in := c
 	in.Inbound = true
 	for name, x := range map[string]briefConn{"another address": other, "another process": otherProc, "the other direction": in} {
-		if !g.add(x, t0.Add(3*time.Second)) {
+		if !groupAdd(g, x, t0.Add(3*time.Second)) {
 			t.Errorf("%s must start its own group", name)
 		}
 	}
 	// Another port of the same address is the same group.
-	if g.add(brief("curl", "/usr/bin/curl", "203.0.113.9:8443"), t0.Add(4*time.Second)) {
+	if groupAdd(g, brief("curl", "/usr/bin/curl", "203.0.113.9:8443"), t0.Add(4*time.Second)) {
 		t.Error("another port of the same remote address is the same group")
 	}
 
@@ -358,7 +387,7 @@ func TestGrouperFirstThenCounted(t *testing.T) {
 		t.Errorf("state left after the flush: %d groups, %d procs", len(g.groups), len(g.procs))
 	}
 	// After the window, the same connection is news again.
-	if !g.add(c, t0.Add(2*shortGroupWindow)) {
+	if !groupAdd(g, c, t0.Add(2*shortGroupWindow)) {
 		t.Error("a new window must publish its first connection")
 	}
 }
@@ -370,13 +399,13 @@ func TestGrouperInboundKey(t *testing.T) {
 		return briefConn{Inbound: true, PID: 200, Name: "sshd", Exe: "/usr/sbin/sshd",
 			Local: netip.MustParseAddrPort(local), Remote: netip.MustParseAddrPort(remote)}
 	}
-	if !g.add(in("192.168.1.24:22", "192.168.1.50:51000"), t0) {
+	if !groupAdd(g, in("192.168.1.24:22", "192.168.1.50:51000"), t0) {
 		t.Fatal("first inbound")
 	}
-	if g.add(in("192.168.1.24:22", "192.168.1.50:51001"), t0) {
+	if groupAdd(g, in("192.168.1.24:22", "192.168.1.50:51001"), t0) {
 		t.Error("the same peer to the same local port, from another source port, is the same group")
 	}
-	if !g.add(in("192.168.1.24:80", "192.168.1.50:51002"), t0) {
+	if !groupAdd(g, in("192.168.1.24:80", "192.168.1.50:51002"), t0) {
 		t.Error("the same peer to another local port is another group")
 	}
 }
@@ -392,7 +421,7 @@ func TestGrouperBurst(t *testing.T) {
 		ip := netip.AddrFrom4([4]byte{198, 18, byte(i >> 8), byte(i)})
 		c := briefConn{PID: 100, Name: "nmap", Exe: "/usr/bin/nmap", Remote: netip.AddrPortFrom(ip, 443)}
 		for j := 0; j < 2; j++ {
-			if g.add(c, t0.Add(time.Duration(i)*100*time.Microsecond)) {
+			if groupAdd(g, c, t0.Add(time.Duration(i)*100*time.Microsecond)) {
 				published++
 			}
 		}
@@ -576,5 +605,138 @@ func TestShortConnStatusTexts(t *testing.T) {
 				t.Errorf("%s/%s: bad format: %q", lang, code, text)
 			}
 		}
+	}
+}
+
+func tcpState(pid int32, status, lip string, lport uint32, rip string, rport uint32) gnet.ConnectionStat {
+	c := tcpEst(pid, lip, lport, rip, rport)
+	c.Status = status
+	return c
+}
+
+// Review I1: the poll only follows ESTABLISHED sockets. One it lists in a
+// closing state was never announced by it, so the tracker must not take it
+// for "the poll has it" — neither source would report the connection. And a
+// socket the poll lists at all is in this network namespace: the 6 s rule
+// (for sockets the poll cannot see) does not apply to it.
+func TestTrackerHalfClosedIsReported(t *testing.T) {
+	for _, state := range []string{"CLOSE_WAIT", "FIN_WAIT1", "FIN_WAIT2", "LAST_ACK", "CLOSING"} {
+		tr := newShortTracker(testWho, false)
+		now := time.Now()
+		feed(tr, now, rec(recStart, 7, 1, 0, 100, cliAddr, srvAddr), rec(recEstablished, tcpSynSent, 1, 10, 0, cliAddr, srvAddr))
+		row := []gnet.ConnectionStat{tcpState(100, state, "192.168.1.24", 50000, "203.0.113.9", 443)}
+		tr.polled(row, now.Add(time.Second))
+		tr.polled(row, now.Add(10*time.Second))
+		if len(tr.flows) != 1 || tr.dropped() != 0 {
+			t.Fatalf("%s: a socket the poll lists only while closing must stay with the tracker", state)
+		}
+		got := feed(tr, now, rec(recClosed, 8, 1, 20_000, 0, cliAddr, srvAddr))
+		if len(got) != 1 || got[0].Failed || got[0].Duration != 20*time.Second {
+			t.Errorf("%s: want it reported at its close with its real duration: %+v", state, got)
+		}
+	}
+}
+
+// Review I1: the 6 s that separate "brief" from "invisible to the poll" run
+// from the moment the connection is established. A handshake that needed
+// SYN retransmissions — which the remote end controls — must not make a
+// short exchange disappear.
+func TestTrackerSlowHandshake(t *testing.T) {
+	tr := newShortTracker(testWho, false)
+	now := time.Now()
+	feed(tr, now, rec(recStart, 7, 1, 0, 100, cliAddr, srvAddr))
+	tr.polled(nil, now.Add(7*time.Second)) // still connecting
+	got := feed(tr, now.Add(7*time.Second), rec(recEstablished, tcpSynSent, 1, 7000, 0, cliAddr, srvAddr),
+		rec(recClosed, tcpEstablished, 1, 7500, 0, cliAddr, srvAddr))
+	if len(got) != 1 || got[0].Failed || got[0].Duration != 7500*time.Millisecond {
+		t.Errorf("7 s of handshake and 0.5 s of connection is a brief connection: %+v", got)
+	}
+	if tr.dropped() != 0 {
+		t.Error("it was counted as invisible to the poll")
+	}
+}
+
+// Review I4: after a lost close, an inbound connection landing on the same
+// socket address must not inherit the old flow's process and direction.
+func TestTrackerInboundReplacesStaleFlow(t *testing.T) {
+	const local, peer = "192.168.1.24:22", "198.51.100.7:51000"
+	tr := newShortTracker(testWho, false)
+	tr.hostAddrs = hostHas("192.168.1.24")
+	now := time.Now()
+	tr.polled([]gnet.ConnectionStat{tcpListen(200, "0.0.0.0", 22)}, now)
+	got := feed(tr, now, rec(recStart, 7, 7, 0, 100, cliAddr, srvAddr), // curl's connection; its close is lost
+		rec(recEstablished, tcpSynRecv, 7, 1000, 0, local, peer),
+		rec(recClosed, tcpEstablished, 7, 1400, 0, local, peer))
+	if len(got) != 1 || !got[0].Inbound || got[0].PID != 200 || got[0].Name != "sshd" ||
+		got[0].Local.String() != local || got[0].Remote.String() != peer || got[0].Duration != 400*time.Millisecond {
+		t.Errorf("want sshd ← %s, got %+v", peer, got)
+	}
+}
+
+// Review I4: a lost "established" must not turn a connection that worked
+// into a failed attempt. A socket only closes from SYN_SENT when the connect
+// never completed.
+func TestTrackerLostEstablished(t *testing.T) {
+	tr := newShortTracker(testWho, true)
+	closed := rec(recClosed, 4 /* FIN_WAIT1 */, 1, 300, 0, cliAddr, srvAddr)
+	closed.Sent, closed.Recv = 1002, 501
+	got := feed(tr, time.Now(), rec(recStart, 7, 1, 0, 100, cliAddr, srvAddr), closed)
+	if len(got) != 1 || got[0].Failed || !got[0].HasBytes || got[0].Sent != 1000 || got[0].Recv != 500 || got[0].Local.String() != cliAddr {
+		t.Errorf("want a brief connection with its bytes, got %+v", got)
+	}
+}
+
+// Review I5: an inbound connection is attributed to a listener on the same
+// address, or to a wildcard listener when the address is this machine's.
+// A wildcard listener on the host does not own a connection to a container's
+// address; and connections to the monitor's own dashboard are not reported.
+func TestTrackerInboundAttribution(t *testing.T) {
+	inbound := func(tr *shortTracker, local string) []briefConn {
+		return feed(tr, time.Now(), rec(recEstablished, tcpSynRecv, 5, 1000, 0, local, "198.51.100.7:51000"),
+			rec(recClosed, tcpEstablished, 5, 1400, 0, local, "198.51.100.7:51000"))
+	}
+	tr := newShortTracker(testWho, false)
+	tr.hostAddrs = hostHas("192.168.1.24")
+	tr.polled([]gnet.ConnectionStat{tcpListen(300, "0.0.0.0", 80), tcpListen(200, "10.0.0.1", 22)}, time.Now())
+
+	if got := inbound(tr, "172.17.0.2:80"); len(got) != 1 || got[0].PID != 0 || got[0].Name != "N/A" {
+		t.Errorf("a container's address: the host's wildcard listener must not be named: %+v", got)
+	}
+	if got := inbound(tr, "192.168.1.24:80"); len(got) != 1 || got[0].PID != 300 {
+		t.Errorf("the host's own address: the wildcard listener owns it: %+v", got)
+	}
+	if got := inbound(tr, "192.168.1.24:22"); len(got) != 1 || got[0].PID != 0 {
+		t.Errorf("a listener bound to another address must not be named: %+v", got)
+	}
+
+	tr.polled([]gnet.ConnectionStat{tcpListen(ownPID, "0.0.0.0", 5000)}, time.Now())
+	if got := inbound(tr, "192.168.1.24:5000"); len(got) != 0 {
+		t.Errorf("connections to the monitor's own dashboard are its own traffic: %+v", got)
+	}
+}
+
+// Review I2: the grouper also says whether this is the first connection of
+// the window to that address from that process — past the per-process cap
+// nothing is shown, but a new address still has to be looked up.
+func TestGrouperFreshAddress(t *testing.T) {
+	g := newShortGrouper()
+	t0 := time.Now()
+	addr := func(i int) briefConn {
+		return briefConn{PID: 100, Name: "x", Exe: "/usr/bin/x", Remote: netip.AddrPortFrom(netip.AddrFrom4([4]byte{198, 18, 0, byte(i)}), 443)}
+	}
+	if publish, fresh := g.add(addr(0), t0); !publish || !fresh {
+		t.Errorf("first: publish=%v fresh=%v", publish, fresh)
+	}
+	if publish, fresh := g.add(addr(0), t0); publish || fresh {
+		t.Errorf("repeat: publish=%v fresh=%v", publish, fresh)
+	}
+	for i := 1; i < shortPerProcPerMin; i++ {
+		g.add(addr(i), t0)
+	}
+	if publish, fresh := g.add(addr(100), t0); publish || !fresh {
+		t.Errorf("past the cap, a new address: publish=%v fresh=%v, want not shown but fresh", publish, fresh)
+	}
+	if publish, fresh := g.add(addr(100), t0); publish || fresh {
+		t.Errorf("past the cap, the same address again: publish=%v fresh=%v", publish, fresh)
 	}
 }

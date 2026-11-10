@@ -5,6 +5,7 @@ import (
 	"encoding/binary"
 	"fmt"
 	"math"
+	"net"
 	"net/netip"
 	"os"
 	"strconv"
@@ -123,8 +124,11 @@ type briefConn struct {
 type flow struct {
 	ts          uint64    // kernel time of its first record: durations are differences of these
 	born        time.Time // wall time, for pruning only
+	estTS       uint64    // kernel time it was established (0: not yet, or that record was lost)
+	estBorn     time.Time // wall time it was established
 	inbound     bool
 	established bool
+	visible     bool // the poll has listed this socket, though never as ESTABLISHED: it is in this network namespace
 	pid         int32
 	name, exe   string
 	local       netip.AddrPort
@@ -139,14 +143,34 @@ type listener struct {
 // shortTracker turns kernel records and poll snapshots into brief connections.
 type shortTracker struct {
 	who       func(pid int32) (name, exe string)
-	volume    bool // the kernel program reads byte counters
+	hostAddrs func() []netip.Addr // this machine's own addresses (a variable for the tests)
+	volume    bool                // the kernel program reads byte counters
 	flows     map[uint64]*flow
 	listeners map[uint16][]listener // local port → who listens there, from the last poll
+	own       map[netip.Addr]bool   // hostAddrs at the last poll
 	lost      int                   // established flows dropped as invisible to the poll
 }
 
 func newShortTracker(who func(pid int32) (name, exe string), volume bool) *shortTracker {
-	return &shortTracker{who: who, volume: volume, flows: map[uint64]*flow{}, listeners: map[uint16][]listener{}}
+	return &shortTracker{who: who, hostAddrs: interfaceAddrs, volume: volume,
+		flows: map[uint64]*flow{}, listeners: map[uint16][]listener{}, own: map[netip.Addr]bool{}}
+}
+
+// interfaceAddrs are the addresses configured on this machine's interfaces.
+func interfaceAddrs() []netip.Addr {
+	addrs, err := net.InterfaceAddrs()
+	if err != nil {
+		return nil
+	}
+	var out []netip.Addr
+	for _, a := range addrs {
+		if n, ok := a.(*net.IPNet); ok {
+			if ip, ok := netip.AddrFromSlice(n.IP); ok {
+				out = append(out, ip.Unmap())
+			}
+		}
+	}
+	return out
 }
 
 // record takes one kernel record and returns a brief connection when the
@@ -173,16 +197,23 @@ func (t *shortTracker) record(r kernelRecord, now time.Time) (briefConn, bool) {
 		t.flows[r.Sock] = &flow{ts: r.TS, born: now, pid: pid, name: name, exe: exe, local: r.Local, remote: r.Remote}
 
 	case recEstablished:
-		if f := t.flows[r.Sock]; f != nil {
-			f.established = true
+		if r.Old == tcpSynRecv {
+			// An inbound connection has no start record: this is its first.
+			// It replaces whatever was under this socket address — a flow
+			// still there lost its close, and its process and direction
+			// belong to another connection.
+			delete(t.flows, r.Sock)
+			if trackable(r) {
+				t.flows[r.Sock] = &flow{ts: r.TS, born: now, estTS: r.TS, estBorn: now,
+					inbound: true, established: true, local: r.Local, remote: r.Remote}
+			}
+		} else if f := t.flows[r.Sock]; f != nil {
+			f.established, f.estTS, f.estBorn = true, r.TS, now
 			// The start record was written before the kernel chose the
 			// local port; from here on the endpoints are complete.
 			if trackable(r) {
 				f.local, f.remote = r.Local, r.Remote
 			}
-		} else if r.Old == tcpSynRecv && trackable(r) {
-			// An inbound connection has no start record: this is its first.
-			t.flows[r.Sock] = &flow{ts: r.TS, born: now, inbound: true, established: true, local: r.Local, remote: r.Remote}
 		}
 
 	case recClosed:
@@ -195,23 +226,39 @@ func (t *shortTracker) record(r kernelRecord, now time.Time) (briefConn, bool) {
 		if r.TS > f.ts { // records from two CPUs can arrive out of order
 			d = time.Duration(r.TS - f.ts) // #nosec G115 -- a difference of monotonic nanoseconds since boot
 		}
-		if !f.established && r.Local.IsValid() && r.Local.Port() != 0 {
-			f.local = r.Local // an attempt never got an "established": its close has the port
+		// A socket only closes from SYN_SENT when the connect never
+		// completed. Closing from any other state it was established, even
+		// if that record was lost.
+		failed := !f.established && r.Old == tcpSynSent
+		if (failed || f.local.Port() == 0) && r.Local.IsValid() && r.Local.Port() != 0 {
+			f.local = r.Local // no "established" was seen: the close has the port
 		}
-		c := briefConn{Inbound: f.inbound, Failed: !f.established, PID: f.pid, Name: f.name, Exe: f.exe,
+		c := briefConn{Inbound: f.inbound, Failed: failed, PID: f.pid, Name: f.name, Exe: f.exe,
 			Local: f.local, Remote: f.remote, Duration: d}
-		switch {
-		case c.Failed:
-			// Reported whatever it lasted: a connect that times out is never
-			// established, so the poll never lists it.
-		case d >= briefBound:
-			t.lost++
-			return briefConn{}, false
-		default:
-			c.Sent, c.Recv, c.HasBytes = r.Sent, r.Recv, t.volume
+		if !failed {
+			// Brief means brief once connected: the handshake's own delay —
+			// SYN retransmissions, which the far end controls — is not held
+			// against it. A socket the poll has listed is in this namespace
+			// whatever it lasted.
+			since := f.ts
+			if f.estTS != 0 {
+				since = f.estTS
+			}
+			if !f.visible && r.TS > since && time.Duration(r.TS-since) >= briefBound { // #nosec G115 -- as above
+				t.lost++
+				return briefConn{}, false
+			}
+			c.HasBytes = t.volume
+			// The kernel counts in sequence space: our SYN and FIN take one
+			// number each on the way out, the peer's FIN one on the way in.
+			// Off by a byte or two for a connection reset instead of closed.
+			c.Sent, c.Recv = r.Sent-min(r.Sent, 2), r.Recv-min(r.Recv, 1)
 		}
 		if c.Inbound {
-			c.PID, c.Name, c.Exe = t.listenerOf(c.Local)
+			var mine bool
+			if c.PID, c.Name, c.Exe, mine = t.listenerOf(c.Local); mine {
+				return briefConn{}, false // someone opening the monitor's own dashboard
+			}
 		}
 		return c, true
 	}
@@ -223,26 +270,30 @@ func trackable(r kernelRecord) bool {
 	return r.Local.IsValid() && r.Remote.IsValid() && !r.Local.Addr().IsLoopback() && !r.Remote.Addr().IsLoopback()
 }
 
-// listenerOf is the process an inbound connection to local belongs to: the
-// one listening on that port, preferring a listener bound to that very
-// address, then a wildcard one.
-func (t *shortTracker) listenerOf(local netip.AddrPort) (pid int32, name, exe string) {
-	ls := t.listeners[local.Port()]
-	if len(ls) == 0 {
-		return 0, "N/A", ""
-	}
-	pick := ls[0]
-	for _, l := range ls {
+// listenerOf is the process an inbound connection to local belongs to: a
+// listener bound to that very address, or a wildcard one when the address is
+// this machine's. A wildcard listener here does not own a connection to an
+// address in another network namespace (a container's port 80 is not the
+// host's nginx). mine reports that the listener is the monitor itself.
+func (t *shortTracker) listenerOf(local netip.AddrPort) (pid int32, name, exe string, mine bool) {
+	var pick *listener
+	for i, l := range t.listeners[local.Port()] {
 		if l.addr == local.Addr() {
-			pick = l
+			pick = &t.listeners[local.Port()][i]
 			break
 		}
-		if l.addr.IsUnspecified() && !pick.addr.IsUnspecified() {
-			pick = l
+		if l.addr.IsUnspecified() && t.own[local.Addr()] && pick == nil {
+			pick = &t.listeners[local.Port()][i]
 		}
 	}
+	if pick == nil {
+		return 0, "N/A", "", false
+	}
+	if pick.pid == ownPID || ownChild(pick.pid) {
+		return 0, "", "", true
+	}
 	name, exe = t.who(pick.pid)
-	return pick.pid, name, exe
+	return pick.pid, name, exe, false
 }
 
 // polled is called with every poll's sockets. A flow the poll can see is no
@@ -250,32 +301,51 @@ func (t *shortTracker) listenerOf(local netip.AddrPort) (pid int32, name, exe st
 // inbound connections will be attributed to.
 func (t *shortTracker) polled(conns []gnet.ConnectionStat, now time.Time) {
 	type pair struct{ local, remote netip.AddrPort }
-	seen := map[pair]bool{}
+	seen := map[pair]bool{}   // listed as ESTABLISHED: the poll announces these itself
+	listed := map[pair]bool{} // listed in a closing state: the poll never announces these
 	clear(t.listeners)
+	clear(t.own)
+	for _, a := range t.hostAddrs() {
+		t.own[a] = true
+	}
 	for _, c := range conns {
 		la, ok := addrPortOf(c.Laddr)
-		if !ok {
+		if !ok || isUDP(c) {
 			continue
 		}
-		if !isUDP(c) && c.Status == "LISTEN" && c.Pid > 0 {
-			t.listeners[la.Port()] = append(t.listeners[la.Port()], listener{la.Addr(), c.Pid})
+		if c.Status == "LISTEN" {
+			if c.Pid > 0 {
+				t.listeners[la.Port()] = append(t.listeners[la.Port()], listener{la.Addr(), c.Pid})
+			}
 			continue
 		}
-		if ra, ok := addrPortOf(c.Raddr); ok && hasPeer(c) {
+		ra, ok := addrPortOf(c.Raddr)
+		if !ok || !hasPeer(c) {
+			continue
+		}
+		// The poll only follows ESTABLISHED sockets (trackConn). One it
+		// lists while closing — CLOSE_WAIT, FIN_WAIT… — it will never
+		// announce, so that connection is still the tracker's to report.
+		if c.Status == "ESTABLISHED" {
 			seen[pair{la, ra}] = true
+		} else {
+			listed[pair{la, ra}] = true
 		}
 	}
 	for sock, f := range t.flows {
-		age := now.Sub(f.born)
+		p := pair{f.local, f.remote}
+		if listed[p] {
+			f.visible = true
+		}
 		switch {
-		case seen[pair{f.local, f.remote}]:
+		case seen[p]:
 			delete(t.flows, sock)
-		case f.established && age >= briefBound:
-			// Established, older than two polls and never listed: not brief,
-			// invisible (another network namespace).
+		case f.established && !f.visible && now.Sub(f.estBorn) >= briefBound:
+			// Established for longer than two polls and never listed: not
+			// brief, invisible (another network namespace).
 			t.lost++
 			delete(t.flows, sock)
-		case age >= flowMaxAge:
+		case now.Sub(f.born) >= flowMaxAge:
 			delete(t.flows, sock)
 		}
 	}
@@ -355,10 +425,12 @@ func briefProc(c briefConn) string {
 	return "comm:" + c.Name
 }
 
-// add reports whether c should be published on its own. A repeat of a group
-// already open is counted; a new group is published unless its process has
-// used up its lines for this window.
-func (g *shortGrouper) add(c briefConn, now time.Time) bool {
+// add reports whether c should be published on its own, and whether it is
+// the first connection of this window from that process to that address. A
+// repeat of a group already open is counted; a new group is published unless
+// its process has used up its lines — but a new address is still new, and
+// still has to be checked, when nothing is shown for it.
+func (g *shortGrouper) add(c briefConn, now time.Time) (publish, fresh bool) {
 	proc := briefProc(c)
 	key := "out|" + proc + "|" + c.Remote.Addr().String()
 	if c.Inbound {
@@ -366,7 +438,7 @@ func (g *shortGrouper) add(c briefConn, now time.Time) bool {
 	}
 	if grp := g.groups[key]; grp != nil {
 		grp.count++
-		return false
+		return false, false
 	}
 	p := g.procs[proc]
 	if p == nil {
@@ -378,12 +450,13 @@ func (g *shortGrouper) add(c briefConn, now time.Time) bool {
 			p.sample = c
 		}
 		p.overflow++
+		fresh = !p.addrs[c.Remote.Addr()]
 		p.addrs[c.Remote.Addr()] = true
-		return false
+		return false, fresh
 	}
 	p.published++
 	g.groups[key] = &shortGroup{start: now, sample: c}
-	return true
+	return true, true
 }
 
 // flush returns the summaries of every window that has closed, and forgets

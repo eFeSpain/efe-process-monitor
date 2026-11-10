@@ -84,6 +84,11 @@ func broadcast(ev Event) {
 var (
 	beaconMu    sync.Mutex
 	beaconTrack = map[string][]float64{}
+	// beaconTold is when the alert for an exe|IP pair was last raised: a
+	// beacon is news once, and while it goes on, once every beaconRepeat.
+	beaconTold = map[string]float64{}
+	// beaconPruned is when the table was last swept.
+	beaconPruned float64
 )
 
 const (
@@ -93,15 +98,43 @@ const (
 	// beaconIdle drops tracking state for an exe+IP pair that has been quiet for
 	// this long. Without it the map keeps an entry for every pair ever seen.
 	beaconIdle = 2 * time.Hour
+	// beaconRepeat is how long a pair already alerted stays quiet. Raised at
+	// every sample it was a notification a minute for an editor phoning home.
+	beaconRepeat = time.Hour
+	// beaconSweep is how often the table is swept. On every sample the sweep
+	// was quadratic, and brief connections feed samples in volume.
+	beaconSweep = time.Minute
 )
 
 // pruneBeacons forgets idle exe|IP pairs. Caller holds beaconMu.
 func pruneBeacons(now float64) {
+	if beaconPruned != 0 && now >= beaconPruned && now-beaconPruned < beaconSweep.Seconds() {
+		return
+	}
+	beaconPruned = now
 	for k, ts := range beaconTrack {
 		if len(ts) == 0 || now-ts[len(ts)-1] > beaconIdle.Seconds() {
 			delete(beaconTrack, k)
 		}
 	}
+	for k, at := range beaconTold {
+		if now-at > beaconIdle.Seconds() {
+			delete(beaconTold, k)
+		}
+	}
+}
+
+// beaconNews reports whether a beacon from exe to remoteIP is to be alerted
+// now: the first time, and then once every beaconRepeat while it goes on.
+func beaconNews(exe, remoteIP string, now float64) bool {
+	key := exe + "|" + remoteIP
+	beaconMu.Lock()
+	defer beaconMu.Unlock()
+	if at, ok := beaconTold[key]; ok && now >= at && now-at < beaconRepeat.Seconds() {
+		return false
+	}
+	beaconTold[key] = now
+	return true
 }
 
 func checkBeacon(exe, remoteIP string, now float64) float64 {
@@ -297,6 +330,7 @@ type connSighting struct {
 	newProc  bool   // first time this PID is seen
 	muted    bool   // whitelisted binary: recorded, never notified
 	quiet    bool   // a grouped repeat of a brief connection: published only if a check fires
+	fresh    bool   // quiet, but the first of this window to that address: its reputation is still looked up
 }
 
 // announceConn runs the checks every new connection gets — where it runs
@@ -309,6 +343,10 @@ func announceConn(s connSighting, nowSec float64) {
 	ev := s.ev
 	T := strings_(currentLang())
 	brief, base := ev.Kind == "short", ev.Detail
+	// loud: news about the binary or its behaviour (replaced on disk,
+	// beaconing), shown even for a grouped repeat. Where it runs from is
+	// not: every connection of such a binary would be shown.
+	loud, beaconAlert := false, false
 	alert := func(reason string) {
 		ev.Kind, ev.Detail = "alert", reason
 		if brief {
@@ -339,6 +377,7 @@ func announceConn(s connSighting, nowSec float64) {
 				// That is what an in-place trojanization looks like, so
 				// it goes to the feed as an alert with the reason.
 				ev.Changed = true
+				loud = true
 				alert(T["ev_binchanged"])
 			}
 		}
@@ -352,23 +391,32 @@ func announceConn(s connSighting, nowSec float64) {
 		}
 		if period := checkBeacon(who, s.remoteIP, nowSec); period > 0 {
 			ev.Beacon = math.Round(period*10) / 10
-			alert(fmt.Sprintf("beaconing ~%.0fs → %s", period, s.remoteIP))
+			if beaconNews(who, s.remoteIP, nowSec) {
+				loud, beaconAlert = true, true
+				alert(fmt.Sprintf("beaconing ~%.0fs → %s", period, s.remoteIP))
+			}
 		}
 	}
-	if s.quiet && ev.Kind != "alert" {
-		return // counted by the grouper; its summary will say how many
+	if s.quiet && !loud {
+		// Counted by the grouper; its summary will say how many. Nothing is
+		// shown — but an address not seen in this window is still looked up:
+		// twenty harmless connections must not hide the one to a listed C2.
+		if s.fresh && public && !s.muted {
+			startIntelCheck(ev, s.remoteIP)
+		}
+		return
 	}
 	publish(ev)
 
 	// Background threat-intel check on new public connections → alert on
 	// bad reputation (AbuseIPDB high, VT-IP, C2, Tor). Cached, so cheap.
 	if public && !s.muted {
-		go alertOnIntel(ev, s.remoteIP)
+		startIntelCheck(ev, s.remoteIP)
 	}
 
 	if !s.muted {
 		switch {
-		case ev.Beacon > 0:
+		case beaconAlert:
 			notify(T["notif_c2"],
 				fmt.Sprintf("%s → %s %s ~%.0fs", ev.Process, s.remoteIP, T["notif_every"], ev.Beacon),
 				"beacon:"+ev.Exe+s.remoteIP)
@@ -386,6 +434,11 @@ func announceConn(s connSighting, nowSec float64) {
 	}
 }
 
+// startIntelCheck runs the reputation check of a new public connection in
+// the background; it publishes an alert only on a hit. A variable so tests
+// can announce an unmuted connection without touching the network.
+var startIntelCheck = func(ev Event, ip string) { go alertOnIntel(ev, ip) }
+
 // briefSighting is a brief connection as an event, checks not yet applied.
 func briefSighting(c briefConn, T map[string]string) connSighting {
 	return connSighting{
@@ -401,7 +454,8 @@ func announceBrief(c briefConn, g *shortGrouper, knownPIDs map[int32]time.Time, 
 	s := briefSighting(c, strings_(currentLang()))
 	s.newProc = c.PID > 0 && knownPIDs[c.PID].IsZero()
 	s.muted = wl[c.Exe]
-	s.quiet = !g.add(c, now)
+	publish, fresh := g.add(c, now)
+	s.quiet, s.fresh = !publish, fresh
 	if c.PID > 0 {
 		knownPIDs[c.PID] = now
 	}

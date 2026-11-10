@@ -317,3 +317,45 @@ tracker belongs to the monitor goroutine. CHANGELOG `[Unreleased]`.
 - **Not exercised by any test:** the reload without byte counters after the
   kernel refuses the program with them (the refusal cannot be induced in the
   VM), and kernels other than 6.12 until CI runs.
+
+## Amendments (2026-11-10, after the independent review and the first real run)
+
+Found by a reviewer with a fresh context and by running the monitor as root
+on the real machine; each fix has a test that failed first.
+
+- **"The poll has it" means listed as ESTABLISHED.** The poll only follows
+  established sockets; one it lists while closing (CLOSE_WAIT, FIN_WAIT…) it
+  never announces, so the tracker keeps that flow and reports it at its
+  close. Being listed at all proves the socket is in this network namespace,
+  which exempts it from the 6 s rule.
+- **The 6 s run from `established`**, not from `connect()`: SYN
+  retransmissions, which the far end controls, are not held against a short
+  exchange.
+- **An inbound `established` always replaces the flow** under its socket
+  address, and **an attempt is "failed" only if its close comes from
+  SYN_SENT**: after a lost record the tracker reported the wrong process and
+  direction, or a working connection as failed.
+- **Inbound attribution**: a listener on the same address, or a wildcard
+  listener when the address is this machine's; otherwise no process (a
+  container's port 80 is not the host's nginx). Connections to the monitor's
+  own dashboard are not reported.
+- **Past the grouping limits the reputation check still runs** for an
+  address not seen in the window, though nothing is shown.
+- **Only news about the binary or its behaviour overrides grouping**
+  (replaced on disk, beaconing). A staging path alone does not: every
+  connection of a `go run` binary or an AppImage was a history row.
+- **Beaconing alert once per pair and hour**; the beacon table is swept once
+  a minute instead of on every sample (it was quadratic).
+- **Byte counts are corrected for sequence space** (our SYN and FIN, the
+  peer's FIN): a connection that carried nothing showed "↑1 B".
+- **The VM harness and the CI step require tests that ran and passed**: a
+  pattern matching nothing, or skipped tests, no longer count as a pass.
+
+Known and not addressed in this delivery (see the changelog of a later one):
+a connection established just before a poll and closed before the next can
+be reported by both sources; loopback records travel the whole path before
+being discarded; the executable path is resolved by the monitor goroutine,
+so a process that exits during a poll pass keeps only its name; summaries
+carry no byte totals; the tracepoint layout is pinned by a test, not checked
+at start-up; an application that abandons a connect (happy eyeballs) is
+worded "failed attempt".

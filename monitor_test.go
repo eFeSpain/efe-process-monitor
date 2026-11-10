@@ -122,6 +122,8 @@ func captureEvents(t *testing.T) func() []Event {
 	setupTestDB(t)
 	beaconMu.Lock()
 	clear(beaconTrack)
+	clear(beaconTold)
+	beaconPruned = 0
 	beaconMu.Unlock()
 	ch := subscribe()
 	t.Cleanup(func() { unsubscribe(ch) })
@@ -244,9 +246,9 @@ func TestAnnounceBriefBeacon(t *testing.T) {
 			alerts = append(alerts, ev)
 		}
 	}
-	if len(evs) < 2 || evs[0].Kind != "short" || len(alerts) == 0 ||
+	if len(evs) != 2 || evs[0].Kind != "short" || len(alerts) != 1 ||
 		!strings.Contains(alerts[0].Detail, "beaconing") || !strings.Contains(alerts[0].Detail, "conexión breve") || alerts[0].Beacon != 60 {
-		t.Errorf("want the first as a brief connection and a beaconing alert later: %+v", evs)
+		t.Errorf("want the first as a brief connection and one beaconing alert later: %+v", evs)
 	}
 
 	// With no path the kernel's name is the identity.
@@ -324,5 +326,132 @@ func TestClosedRecordChannelIsDisabled(t *testing.T) {
 	case <-inactive:
 		t.Error("a nil channel delivered something")
 	default:
+	}
+}
+
+// recordIntel replaces the background reputation lookup with a recorder, so
+// an unmuted sighting can be announced without touching the network.
+func recordIntel(t *testing.T) *[]string {
+	t.Helper()
+	var looked []string
+	old, oldNotify := startIntelCheck, notifyDesktop.Load()
+	startIntelCheck = func(ev Event, ip string) { looked = append(looked, ip) }
+	notifyDesktop.Store(false)
+	t.Cleanup(func() { startIntelCheck = old; notifyDesktop.Store(oldNotify) })
+	return &looked
+}
+
+// Review I2: past the grouping limits nothing is shown for a connection, but
+// an address not seen in this window must still get its reputation check —
+// otherwise twenty harmless connections hide the one to a listed C2.
+func TestQuietFreshAddressIsStillLookedUp(t *testing.T) {
+	drain := captureEvents(t)
+	looked := recordIntel(t)
+	T := strings_("es")
+	s := briefSighting(testBrief("curl", "/usr/bin/curl"), T)
+
+	announceConn(s, 1000) // shown: looked up, as always
+	if len(drain()) != 1 || len(*looked) != 1 || (*looked)[0] != "203.0.113.9" {
+		t.Fatalf("a published brief connection: looked up %v", *looked)
+	}
+	s.quiet, s.fresh = true, true
+	announceConn(s, 1001)
+	if evs := drain(); len(evs) != 0 || len(*looked) != 2 {
+		t.Errorf("quiet and fresh: want nothing published and one more lookup; events %+v, lookups %v", evs, *looked)
+	}
+	s.fresh = false
+	announceConn(s, 1002)
+	if len(*looked) != 2 {
+		t.Errorf("a repeat to an address already looked up must not be looked up again: %v", *looked)
+	}
+	s.muted, s.fresh = true, true
+	announceConn(s, 1003)
+	if len(*looked) != 2 {
+		t.Errorf("a whitelisted binary is not looked up: %v", *looked)
+	}
+}
+
+// Review I3: a binary under a staging directory makes every connection an
+// alert. Grouped repeats of a brief connection must still be grouped —
+// `go run` and AppImages live under /tmp and would write a history row per
+// connection. Only what is news about the binary or its behaviour (replaced
+// on disk, beaconing) is shown despite the grouping.
+func TestStagingPathBriefFollowsGrouping(t *testing.T) {
+	drain := captureEvents(t)
+	T := strings_("es")
+	s := briefSighting(testBrief("tool", "/tmp/go-build1/exe/tool"), T)
+	s.muted = true
+	announceConn(s, 1000)
+	if evs := drain(); len(evs) != 1 || evs[0].Kind != "alert" {
+		t.Fatalf("the first is an alert: %+v", evs)
+	}
+	s.quiet = true
+	for i := 0; i < 50; i++ {
+		announceConn(s, 1001+float64(i)/10)
+	}
+	if evs := drain(); len(evs) != 0 {
+		t.Errorf("%d grouped repeats from a staging path were published", len(evs))
+	}
+}
+
+// Seen on the real machine: an editor that talks to the same host every
+// minute raised the beaconing alert at every sample from the fourth on — a
+// notification a minute until the binary was whitelisted. The alert is news
+// once; while the beacon goes on it is repeated at most once an hour.
+func TestBeaconAlertIsRaisedOncePerHour(t *testing.T) {
+	drain := captureEvents(t)
+	polled := func(nowSec float64) Event {
+		announceConn(connSighting{ev: Event{PID: 10, Process: "agent", Exe: "/usr/bin/agent", Remote: "203.0.113.9:443"},
+			remoteIP: "203.0.113.9", muted: true}, nowSec)
+		evs := drain()
+		if len(evs) != 1 {
+			t.Fatalf("%d events", len(evs))
+		}
+		return evs[0]
+	}
+	var alerts []float64
+	for i := 0; i < 70; i++ { // seventy minutes of a 60 s beacon
+		now := float64(1000 + 60*i)
+		if ev := polled(now); ev.Kind == "alert" {
+			alerts = append(alerts, now)
+		} else if i >= 3 && ev.Beacon == 0 {
+			t.Fatalf("sample %d: the event must still carry the period it beacons at: %+v", i, ev)
+		}
+	}
+	if len(alerts) != 2 || alerts[0] != 1000+60*3 || alerts[1]-alerts[0] < 3600 {
+		t.Errorf("alerts at %v: want one at the fourth sample and one an hour later", alerts)
+	}
+}
+
+// Review: pruning the beacon table scanned every pair on every sample, and
+// brief connections now feed it in volume — tens of thousands of pairs
+// stalled the monitor for seconds. Once a minute is enough.
+func TestBeaconPruneIsRateLimited(t *testing.T) {
+	captureEvents(t)
+	stale := func(key string, at float64) {
+		beaconMu.Lock()
+		beaconTrack[key] = []float64{at}
+		beaconMu.Unlock()
+	}
+	has := func(key string) bool {
+		beaconMu.Lock()
+		defer beaconMu.Unlock()
+		_, ok := beaconTrack[key]
+		return ok
+	}
+	now := 100_000.0
+	stale("old|a", now-beaconIdle.Seconds()-1)
+	checkBeacon("/usr/bin/x", "203.0.113.9", now)
+	if has("old|a") {
+		t.Fatal("the first call prunes")
+	}
+	stale("old|b", now-beaconIdle.Seconds()-1)
+	checkBeacon("/usr/bin/x", "203.0.113.9", now+1)
+	if !has("old|b") {
+		t.Error("pruned again within the same minute")
+	}
+	checkBeacon("/usr/bin/x", "203.0.113.9", now+61)
+	if has("old|b") {
+		t.Error("a minute later the idle pair must go")
 	}
 }

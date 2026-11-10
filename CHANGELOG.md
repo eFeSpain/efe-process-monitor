@@ -93,6 +93,11 @@ Versions follow [Semantic Versioning](https://semver.org/).
   so an IPv6 connection into a hijacked netblock never scored.
 
 ### Changed
+- **The beaconing alert is raised once, then at most once an hour** while the
+  beacon goes on. It was raised again at every new sample: with brief
+  connections feeding the detector, an editor that talks to the same host
+  every minute produced an alert — and a notification — a minute. The event
+  still carries the period.
 - **The CSV/JSON exports and *Delete* follow the history filter**: what is on
   screen is what is exported or deleted. The exports' `ts` is now the full
   date and time (it was the time of day alone, over weeks of history); the
