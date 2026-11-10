@@ -277,7 +277,11 @@ URLhaus lists are downloaded with your abuse.ch Auth-Key and nothing else. Resul
 binary/IP is queried at most once (hourly for IPs). The machine audit runs fully
 locally, and so does the passive DNS listener: it reads DNS answers on your own
 interfaces and stores name↔address pairs in `efemon.db`; nothing is sent
-anywhere. The in-app **🛰 Privacy** panel spells out exactly what goes where.
+anywhere. Two outbound connections exist only if you set them up, both off by
+default: the **alert webhook** (sends each alert's title and text to the URL you
+choose) and the **new-version notice** (one request a day to GitHub's public
+releases API; sends nothing about the machine, downloads and installs nothing).
+The in-app **🛰 Privacy** panel spells out exactly what goes where.
 
 ## Tech stack
 

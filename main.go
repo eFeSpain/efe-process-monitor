@@ -181,7 +181,8 @@ func main() {
 	if n, err := strconv.Atoi(os.Getenv("EVENT_RETENTION_DAYS")); err == nil && n >= 0 {
 		eventRetentionDays.Store(int64(n)) // 0 = keep forever
 	}
-	loadWebhook() // ALERT_WEBHOOK / ALERT_WEBHOOK_FORMAT (webhook.go)
+	loadWebhook()     // ALERT_WEBHOOK / ALERT_WEBHOOK_FORMAT (webhook.go)
+	loadUpdateCheck() // UPDATE_CHECK (update.go); off unless the operator turns it on
 	loadAuth(os.Getenv("AUTH_HASH"))
 	listenAddr.Store(os.Getenv("LISTEN_ADDR"))
 
@@ -195,6 +196,7 @@ func main() {
 	startPassiveDNS()   // DNS answers → hostnames table, outside captures (see dns.go)
 	go vtWorker()       // resolves VT hashes in the background at 4/min
 	go auditScheduler() // machine audit on a schedule; notifies what is new (audit_schedule.go)
+	go updateLoop()     // optional daily "is there a newer release?" (update.go)
 	go sigWorker()      // resolves code signatures off the request path
 	// IP reputation and LAN host lookups off the request path too (see
 	// queue.go): the render reads caches, these resolve the misses.
@@ -365,6 +367,7 @@ func handleSettings(w http.ResponseWriter, r *http.Request) {
 			EventRetentionDays *int
 			WebhookURL         *string
 			WebhookFormat      *string
+			UpdateCheck        *bool
 			AuthEnabled        *bool
 			AuthPassword       *string
 			CurrentPassword    *string
@@ -426,6 +429,9 @@ func handleSettings(w http.ResponseWriter, r *http.Request) {
 		}
 		if err := setWebhook(body.WebhookURL, body.WebhookFormat); err != nil {
 			webhookErr = strings_(langFrom(r))["webhook_invalid"]
+		}
+		if body.UpdateCheck != nil {
+			setUpdateCheck(*body.UpdateCheck)
 		}
 		if body.ListenAddr != nil {
 			setListenAddr(*body.ListenAddr)

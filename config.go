@@ -41,7 +41,7 @@ func mask(k string) string {
 }
 
 func getSettings() map[string]any {
-	return map[string]any{
+	s := map[string]any{
 		"vt_configured":        getVTKey() != "",
 		"vt_hint":              mask(getVTKey()),
 		"abuse_configured":     getAbuseKey() != "",
@@ -62,6 +62,10 @@ func getSettings() map[string]any {
 		"listen_addr":          listenAddr.Load(),
 		"exposed":              listenExposed,
 	}
+	for k, v := range updateSettingsInfo() {
+		s[k] = v
+	}
+	return s
 }
 
 // setListenAddr persists the bind address (takes effect on the next restart).

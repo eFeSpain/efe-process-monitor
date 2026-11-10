@@ -287,7 +287,7 @@ información, la herramienta consulta servicios externos sobre las IPs/hashes qu
 las listas de Feodo / Spamhaus / Tor son descargas públicas que no revelan nada
 de ti, y las listas de ThreatFox y URLhaus se descargan con tu Auth-Key de
 abuse.ch y nada más. Los resultados se cachean, así que cada binario/IP se consulta como mucho
-una vez (cada hora las IPs). La auditoría del equipo corre 100% en local, y el DNS pasivo también: lee las respuestas DNS en tus propias interfaces y guarda los pares nombre↔dirección en `efemon.db`; no envía nada a ningún sitio. El panel
+una vez (cada hora las IPs). La auditoría del equipo corre 100% en local, y el DNS pasivo también: lee las respuestas DNS en tus propias interfaces y guarda los pares nombre↔dirección en `efemon.db`; no envía nada a ningún sitio. Hay dos conexiones salientes que solo existen si las configuras, ambas apagadas por defecto: el **webhook de alertas** (envía el título y el texto de cada aviso a la URL que elijas) y el **aviso de versión nueva** (una consulta al día a la API pública de releases de GitHub; no envía nada sobre el equipo y no descarga ni instala nada). El panel
 **🛰 Privacidad** de la app detalla exactamente qué sale y a dónde.
 
 ## Stack

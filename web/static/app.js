@@ -173,6 +173,9 @@ function openSettings() {
         document.getElementById('webhook-format').value = s.webhook_format || 'json';
         document.getElementById('webhook-status').textContent = s.webhook_configured ? `(${s.webhook_hint})` : '✗';
         document.getElementById('webhook-msg').textContent = '';
+        document.getElementById('update-check').checked = !!s.update_check;
+        document.getElementById('update-status').textContent = s.update_check ? '— ' + updateStatusText(s) : '';
+        showUpdateNotice(s);
         document.getElementById('notify-desktop').checked = !!s.notify_desktop;
         document.getElementById('notify-sound').checked = !!s.notify_sound;
         document.getElementById('persist-whitelist').checked = !!s.persist_whitelist;
@@ -197,6 +200,25 @@ function openSettings() {
     });
     loadServiceBlock();
 }
+
+// ── New-version notice (optional, off by default) ─────────────────────────
+// The link target is fixed in the template; only the version text comes from
+// the server, which accepts nothing but digits and dots.
+function updateStatusText(s) {
+    if (s.update_available) return 'v' + s.update_available + ' · ' + T.update_new;
+    if (s.update_error) return '⚠ ' + T.update_failed;
+    return s.update_latest ? T.update_uptodate : '…';
+}
+function showUpdateNotice(s) {
+    const a = document.getElementById('update-link');
+    a.textContent = s.update_available ? '↑ v' + s.update_available : '';
+    a.style.display = s.update_available ? '' : 'none';
+}
+function refreshUpdateNotice() {
+    fetch('/api/settings').then(r => r.json()).then(showUpdateNotice).catch(() => {});
+}
+refreshUpdateNotice();
+setInterval(refreshUpdateNotice, 6 * 3600 * 1000); // a dashboard left open for days still finds out
 
 // ── Alert webhook ─────────────────────────────────────────────────────────
 function testWebhook() {
@@ -286,6 +308,7 @@ function settingsPayload() {
         // The URL is only sent when typed: an empty field means "leave it".
         ...(document.getElementById('webhook-url').value.trim() ? { WebhookURL: document.getElementById('webhook-url').value.trim() } : {}),
         WebhookFormat: document.getElementById('webhook-format').value,
+        UpdateCheck: document.getElementById('update-check').checked,
         AuthEnabled: document.getElementById('auth-enabled').checked,
         AuthPassword: document.getElementById('auth-password').value,
         CurrentPassword: document.getElementById('auth-current').value,
@@ -743,6 +766,7 @@ function openPrivacy() {
     // download must not read as "no signals".
     fetch('/api/settings').then(r => r.json()).then(s => {
         document.getElementById('priv-webhook').textContent = s.webhook_configured ? s.webhook_hint : '—';
+        document.getElementById('priv-update').textContent = s.update_check ? updateStatusText(s) : T.priv_update_off;
     }).catch(() => {});
     fetch('/api/feeds').then(r => r.json()).then(list => (list || []).forEach(f => {
         const cell = document.querySelector(`#privacy-modal tr[data-feed="${f.id}"] .feed-st`);

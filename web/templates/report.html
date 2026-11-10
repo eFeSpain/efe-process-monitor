@@ -162,6 +162,8 @@ select{background:#0d1117;color:#c9d1d9;border:1px solid #30363d;padding:3px 6px
 .notray-warn{background:#3a2e10;color:#e3b341;border:1px solid #9e7a16;border-radius:6px;margin:8px;padding:8px 16px;font-size:12px;display:flex;align-items:center;gap:14px;flex-wrap:wrap;}
 .aud-ok{border-left-color:#3fb950;} .aud-info{border-left-color:#58a6ff;}
 .ver{color:#484f58;font-size:11px;font-weight:400;margin-left:6px;vertical-align:middle;}
+.upd{margin-left:8px;white-space:nowrap;font-size:11px;font-weight:600;color:#3fb950;border:1px solid #238636;border-radius:10px;padding:1px 8px;text-decoration:none;vertical-align:middle;}
+.upd:hover{background:#238636;color:#fff;}
 .aud-newbadge{background:#1f6feb;color:#fff;border-radius:10px;padding:1px 7px;font-size:10px;font-weight:600;margin-left:6px;vertical-align:middle;}
 .aud-newlist{color:#79c0ff;} .aud-at{color:#8b949e;font-size:11px;margin-left:8px;}
 .details-content, .details-content * { cursor: default; }
@@ -187,7 +189,7 @@ select{background:#0d1117;color:#c9d1d9;border:1px solid #30363d;padding:3px 6px
 <body data-t="{{ json .T }}" data-refresh="{{ .RefreshSecs }}">
 
 <div class="header">
-    <h1><img src="/static/icon.svg" alt="" class="logo"> {{ .T.title }} <span class="ver" title="v{{ .Version }}">v{{ .Version }}</span></h1>
+    <h1><img src="/static/icon.svg" alt="" class="logo"> {{ .T.title }} <span class="ver" title="v{{ .Version }}">v{{ .Version }}</span><a id="update-link" class="upd" href="https://github.com/eFeSpain/efe-process-monitor/releases/latest" target="_blank" rel="noopener noreferrer" title="{{ .T.update_title }}" style="display:none"></a></h1>
     <div class="controls">
         <span id="cap-status" class="status-pill">{{ .T.detecting }}</span>
         <label style="color:#8b949e;font-size:12px;">{{ .T.iface_label }}
@@ -287,6 +289,8 @@ select{background:#0d1117;color:#c9d1d9;border:1px solid #30363d;padding:3px 6px
             <label class="live-toggle" style="margin-bottom:4px;"><input type="checkbox" id="persist-whitelist"> {{ .T.persist_wl }}</label>
             <label class="live-toggle" style="margin-bottom:4px;"><input type="checkbox" id="persist-blocks"> {{ .T.persist_blocks }}</label>
             <div style="color:#484f58;font-size:11px;margin:0 0 12px;">{{ .T.persist_hint }}</div>
+            <label class="live-toggle" style="margin-bottom:4px;"><input type="checkbox" id="update-check"> {{ .T.update_check_label }} <span id="update-status" style="color:#8b949e;font-size:11px;"></span></label>
+            <div style="color:#484f58;font-size:11px;margin:0 0 12px;">{{ .T.update_check_hint }}</div>
             <label class="live-toggle" style="margin-bottom:4px;"><input type="checkbox" id="auth-enabled" data-change="authToggled"> 🔒 {{ .T.auth_label }}</label>
             <div id="auth-current-row" style="display:none;margin-bottom:4px;">
                 <input type="password" id="auth-current" autocomplete="current-password" placeholder="{{ .T.auth_current_ph }}" style="width:100%">
@@ -394,6 +398,7 @@ select{background:#0d1117;color:#c9d1d9;border:1px solid #30363d;padding:3px 6px
                     <tr><td>AbuseIPDB</td><td>{{ .T.priv_sends_ip }}</td><td>{{ .T.priv_when_abuse }}</td><td class="feed-st">—</td></tr>
                     <tr><td>Shodan InternetDB</td><td>{{ .T.priv_sends_ip }}</td><td>{{ .T.priv_when_always }}</td><td class="feed-st">—</td></tr>
                     <tr><td>{{ .T.webhook_label }}</td><td>{{ .T.priv_sends_alerts }}</td><td>{{ .T.priv_when_webhook }}</td><td class="feed-st" id="priv-webhook">—</td></tr>
+                    <tr><td>GitHub Releases</td><td class="priv-safe">{{ .T.priv_sends_update }}</td><td>{{ .T.priv_when_update }}</td><td class="feed-st" id="priv-update">—</td></tr>
                     <tr data-feed="feodo"><td>abuse.ch Feodo Tracker</td><td class="priv-safe">{{ .T.priv_sends_nothing }}</td><td>{{ .T.priv_when_always }}</td><td class="feed-st">…</td></tr>
                     <tr data-feed="threatfox"><td>abuse.ch ThreatFox (API)</td><td class="priv-safe">{{ .T.priv_sends_iocs }}</td><td>{{ .T.priv_when_abusech }}</td><td class="feed-st">…</td></tr>
                     <tr data-feed="urlhaus"><td>abuse.ch URLhaus (API)</td><td class="priv-safe">{{ .T.priv_sends_iocs }}</td><td>{{ .T.priv_when_abusech }}</td><td class="feed-st">…</td></tr>

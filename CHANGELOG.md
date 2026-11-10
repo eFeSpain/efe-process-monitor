@@ -41,6 +41,12 @@ Versions follow [Semantic Versioning](https://semver.org/).
   (ntfy). Off unless configured; the URL is treated as a secret and never
   shown back in full; a *Test* button sends a test alert; the privacy panel
   lists it as an outbound connection.
+- **New-version notice, optional and off by default.** Turned on in ⚙ Settings
+  (`UPDATE_CHECK`), the monitor asks GitHub's public releases API once a day
+  which is the latest release and, if it is newer than the one running, shows
+  a small link in the header. The request carries no key and nothing about
+  the machine or the version it runs; nothing is downloaded or installed; the
+  privacy panel lists it. Off, the monitor never contacts GitHub.
 - **Spamhaus DROP for IPv6** (`drop_v6.json`): only the IPv4 list was loaded,
   so an IPv6 connection into a hijacked netblock never scored.
 
