@@ -71,6 +71,12 @@ var translations = map[string]map[string]string{
 		"hist_none":        "Sin resultados.",
 		"hist_export_hint": "Exporta los eventos que coinciden con el filtro (los 5000 más recientes).",
 
+		"ev_short":           "conexión breve",
+		"ev_short_failed":    "intento fallido",
+		"ev_short_in":        "entrante breve",
+		"ev_short_more":      "×%d más en 60 s",
+		"ev_short_more_proc": "×%d conexiones breves más a %d direcciones",
+
 		"svc_title":              "Arranque con el sistema",
 		"svc_installed":          "instalado y activo",
 		"svc_installed_inactive": "instalado, detenido",
@@ -401,6 +407,12 @@ var translations = map[string]map[string]string{
 		"hist_none":        "No results.",
 		"hist_export_hint": "Exports the events matching the filter (the 5000 most recent).",
 
+		"ev_short":           "brief connection",
+		"ev_short_failed":    "failed attempt",
+		"ev_short_in":        "brief inbound",
+		"ev_short_more":      "×%d more in 60 s",
+		"ev_short_more_proc": "×%d more brief connections to %d addresses",
+
 		"svc_title":              "Run at boot",
 		"svc_installed":          "installed and active",
 		"svc_installed_inactive": "installed, stopped",
@@ -728,6 +740,12 @@ var translations = map[string]map[string]string{
 		"hist_more":        "加载更多",
 		"hist_none":        "没有结果。",
 		"hist_export_hint": "导出符合筛选条件的事件（最近的 5000 条）。",
+
+		"ev_short":           "短连接",
+		"ev_short_failed":    "连接尝试失败",
+		"ev_short_in":        "入站短连接",
+		"ev_short_more":      "60 秒内另有 ×%d 次",
+		"ev_short_more_proc": "另有 ×%d 次短连接，涉及 %d 个地址",
 
 		"svc_title":              "随系统启动",
 		"svc_installed":          "已安装且运行中",

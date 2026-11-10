@@ -3,8 +3,10 @@ package main
 import (
 	"bytes"
 	"encoding/binary"
+	"fmt"
 	"math"
 	"net/netip"
+	"strconv"
 	"time"
 
 	gnet "github.com/shirou/gopsutil/v4/net"
@@ -283,4 +285,141 @@ func addrPortOf(a gnet.Addr) (netip.AddrPort, bool) {
 		return netip.AddrPort{}, false
 	}
 	return netip.AddrPortFrom(ip.Unmap(), uint16(a.Port)), true
+}
+
+// ── Grouping ─────────────────────────────────────────────────────────────────
+//
+// One line per brief connection would bury the feed and the history under a
+// process that makes hundreds of them — a scanner, a torrent client, a build
+// fetching dependencies. The first of a kind is shown at once; repeats are
+// counted and summarised when the window closes.
+
+const (
+	// shortGroupWindow is how long repeats of the same connection are counted
+	// before their summary is published.
+	shortGroupWindow = 60 * time.Second
+	// shortPerProcPerMin caps the individual lines one process gets in a
+	// window; past it, everything goes to a single per-process summary.
+	shortPerProcPerMin = 20
+)
+
+// shortSummary is what was not published individually.
+type shortSummary struct {
+	Sample  briefConn // the first connection of the group
+	Count   int       // connections counted in silence
+	Addrs   int       // distinct remote addresses (per-process summaries only)
+	PerProc bool      // the per-process overflow rather than one group's repeats
+}
+
+type shortGroup struct {
+	start  time.Time
+	sample briefConn
+	count  int
+}
+
+type shortProc struct {
+	start     time.Time
+	published int
+	sample    briefConn // first connection over the cap
+	overflow  int
+	addrs     map[netip.Addr]bool
+}
+
+// shortGrouper decides which brief connections get a line of their own.
+type shortGrouper struct {
+	groups map[string]*shortGroup // direction + process + remote address (+ local port, inbound)
+	procs  map[string]*shortProc  // process
+}
+
+func newShortGrouper() *shortGrouper {
+	return &shortGrouper{groups: map[string]*shortGroup{}, procs: map[string]*shortProc{}}
+}
+
+// briefProc identifies the process of a brief connection: its path, or the
+// name when the path could not be read.
+func briefProc(c briefConn) string {
+	if c.Exe != "" {
+		return c.Exe
+	}
+	return "comm:" + c.Name
+}
+
+// add reports whether c should be published on its own. A repeat of a group
+// already open is counted; a new group is published unless its process has
+// used up its lines for this window.
+func (g *shortGrouper) add(c briefConn, now time.Time) bool {
+	proc := briefProc(c)
+	key := "out|" + proc + "|" + c.Remote.Addr().String()
+	if c.Inbound {
+		key = "in|" + proc + "|" + c.Remote.Addr().String() + "|" + strconv.Itoa(int(c.Local.Port()))
+	}
+	if grp := g.groups[key]; grp != nil {
+		grp.count++
+		return false
+	}
+	p := g.procs[proc]
+	if p == nil {
+		p = &shortProc{start: now, addrs: map[netip.Addr]bool{}}
+		g.procs[proc] = p
+	}
+	if p.published >= shortPerProcPerMin {
+		if p.overflow == 0 {
+			p.sample = c
+		}
+		p.overflow++
+		p.addrs[c.Remote.Addr()] = true
+		return false
+	}
+	p.published++
+	g.groups[key] = &shortGroup{start: now, sample: c}
+	return true
+}
+
+// flush returns the summaries of every window that has closed, and forgets
+// those windows.
+func (g *shortGrouper) flush(now time.Time) []shortSummary {
+	var out []shortSummary
+	for k, grp := range g.groups {
+		if now.Sub(grp.start) < shortGroupWindow {
+			continue
+		}
+		if grp.count > 0 {
+			out = append(out, shortSummary{Sample: grp.sample, Count: grp.count})
+		}
+		delete(g.groups, k)
+	}
+	for k, p := range g.procs {
+		if now.Sub(p.start) < shortGroupWindow {
+			continue
+		}
+		if p.overflow > 0 {
+			out = append(out, shortSummary{Sample: p.sample, Count: p.overflow, Addrs: len(p.addrs), PerProc: true})
+		}
+		delete(g.procs, k)
+	}
+	return out
+}
+
+// briefDetail is the wording of a brief connection in the feed and the
+// history: what it was, how long it lasted, how much it moved.
+func briefDetail(T map[string]string, c briefConn) string {
+	if c.Failed {
+		return T["ev_short_failed"]
+	}
+	s := T["ev_short"]
+	if c.Inbound {
+		s = T["ev_short_in"]
+	}
+	s += fmt.Sprintf(" · %.1f s", c.Duration.Seconds())
+	if c.HasBytes {
+		s += " · ↑" + humanRate(float64(c.Sent)) + " ↓" + humanRate(float64(c.Recv))
+	}
+	return s
+}
+
+func summaryDetail(T map[string]string, s shortSummary) string {
+	if s.PerProc {
+		return fmt.Sprintf(T["ev_short_more_proc"], s.Count, s.Addrs)
+	}
+	return fmt.Sprintf(T["ev_short_more"], s.Count)
 }

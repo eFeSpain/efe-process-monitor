@@ -311,3 +311,144 @@ func TestTrackerVolume(t *testing.T) {
 		t.Errorf("%+v", got)
 	}
 }
+
+func brief(name, exe, remote string) briefConn {
+	return briefConn{PID: 100, Name: name, Exe: exe, Local: netip.MustParseAddrPort(cliAddr),
+		Remote: netip.MustParseAddrPort(remote), Duration: 200 * time.Millisecond}
+}
+
+// The first connection of a kind is shown at once; repeats within the window
+// are counted and summarised in one line when it closes.
+func TestGrouperFirstThenCounted(t *testing.T) {
+	g := newShortGrouper()
+	t0 := time.Now()
+	c := brief("curl", "/usr/bin/curl", srvAddr)
+	for i, want := range []bool{true, false, false} {
+		if got := g.add(c, t0.Add(time.Duration(i)*time.Second)); got != want {
+			t.Errorf("add #%d = %v, want %v", i+1, got, want)
+		}
+	}
+	// Each of these is a group of its own.
+	other := brief("curl", "/usr/bin/curl", "198.51.100.4:443")
+	otherProc := brief("wget", "/usr/bin/wget", srvAddr)
+	in := c
+	in.Inbound = true
+	for name, x := range map[string]briefConn{"another address": other, "another process": otherProc, "the other direction": in} {
+		if !g.add(x, t0.Add(3*time.Second)) {
+			t.Errorf("%s must start its own group", name)
+		}
+	}
+	// Another port of the same address is the same group.
+	if g.add(brief("curl", "/usr/bin/curl", "203.0.113.9:8443"), t0.Add(4*time.Second)) {
+		t.Error("another port of the same remote address is the same group")
+	}
+
+	if got := g.flush(t0.Add(59 * time.Second)); len(got) != 0 {
+		t.Errorf("flushed before the window closed: %+v", got)
+	}
+	got := g.flush(t0.Add(shortGroupWindow + 4*time.Second))
+	if len(got) != 1 || got[0].Count != 3 || got[0].PerProc || got[0].Sample.Remote.String() != srvAddr {
+		t.Errorf("want one summary of 3 repeats (groups with only their first say nothing): %+v", got)
+	}
+	if len(g.groups) != 0 || len(g.procs) != 0 {
+		t.Errorf("state left after the flush: %d groups, %d procs", len(g.groups), len(g.procs))
+	}
+	// After the window, the same connection is news again.
+	if !g.add(c, t0.Add(2*shortGroupWindow)) {
+		t.Error("a new window must publish its first connection")
+	}
+}
+
+func TestGrouperInboundKey(t *testing.T) {
+	g := newShortGrouper()
+	t0 := time.Now()
+	in := func(local, remote string) briefConn {
+		return briefConn{Inbound: true, PID: 200, Name: "sshd", Exe: "/usr/sbin/sshd",
+			Local: netip.MustParseAddrPort(local), Remote: netip.MustParseAddrPort(remote)}
+	}
+	if !g.add(in("192.168.1.24:22", "192.168.1.50:51000"), t0) {
+		t.Fatal("first inbound")
+	}
+	if g.add(in("192.168.1.24:22", "192.168.1.50:51001"), t0) {
+		t.Error("the same peer to the same local port, from another source port, is the same group")
+	}
+	if !g.add(in("192.168.1.24:80", "192.168.1.50:51002"), t0) {
+		t.Error("the same peer to another local port is another group")
+	}
+}
+
+// One process, ten thousand brief connections to five thousand addresses in
+// a second (a scanner, a torrent client): the feed gets twenty lines and a
+// summary, and the grouper keeps nothing afterwards.
+func TestGrouperBurst(t *testing.T) {
+	g := newShortGrouper()
+	t0 := time.Now()
+	published := 0
+	for i := 0; i < 5000; i++ {
+		ip := netip.AddrFrom4([4]byte{198, 18, byte(i >> 8), byte(i)})
+		c := briefConn{PID: 100, Name: "nmap", Exe: "/usr/bin/nmap", Remote: netip.AddrPortFrom(ip, 443)}
+		for j := 0; j < 2; j++ {
+			if g.add(c, t0.Add(time.Duration(i)*100*time.Microsecond)) {
+				published++
+			}
+		}
+	}
+	if published != shortPerProcPerMin {
+		t.Errorf("published %d individually, want %d", published, shortPerProcPerMin)
+	}
+	sums := g.flush(t0.Add(shortGroupWindow + time.Second))
+	var perProc, perAddr []shortSummary
+	for _, s := range sums {
+		if s.PerProc {
+			perProc = append(perProc, s)
+		} else {
+			perAddr = append(perAddr, s)
+		}
+	}
+	if len(perProc) != 1 || perProc[0].Count != 9960 || perProc[0].Addrs != 4980 || perProc[0].Sample.Name != "nmap" {
+		t.Errorf("per-process summary: %+v", perProc)
+	}
+	if len(perAddr) != shortPerProcPerMin {
+		t.Errorf("%d per-address summaries, want %d", len(perAddr), shortPerProcPerMin)
+	}
+	for _, s := range perAddr {
+		if s.Count != 1 {
+			t.Errorf("per-address summary count %d, want 1", s.Count)
+		}
+	}
+	if len(g.groups) != 0 || len(g.procs) != 0 {
+		t.Errorf("state left after the flush: %d groups, %d procs", len(g.groups), len(g.procs))
+	}
+}
+
+func TestBriefDetail(t *testing.T) {
+	T := strings_("es")
+	for _, c := range []struct {
+		conn briefConn
+		want string
+	}{
+		{briefConn{Duration: 200 * time.Millisecond, HasBytes: true, Sent: 38 << 20, Recv: 1024}, "conexión breve · 0.2 s · ↑38 MB ↓1 KB"},
+		{briefConn{Duration: 2400 * time.Millisecond}, "conexión breve · 2.4 s"},
+		{briefConn{Duration: 0}, "conexión breve · 0.0 s"},
+		{briefConn{Failed: true, Duration: 130 * time.Second}, "intento fallido"},
+		{briefConn{Inbound: true, Duration: 400 * time.Millisecond}, "entrante breve · 0.4 s"},
+		{briefConn{Inbound: true, Duration: time.Second, HasBytes: true}, "entrante breve · 1.0 s · ↑0 B ↓0 B"},
+	} {
+		if got := briefDetail(T, c.conn); got != c.want {
+			t.Errorf("briefDetail(%+v) = %q, want %q", c.conn, got, c.want)
+		}
+	}
+	if got := briefDetail(strings_("en"), briefConn{Failed: true}); got != "failed attempt" {
+		t.Errorf("en: %q", got)
+	}
+}
+
+func TestSummaryDetail(t *testing.T) {
+	T := strings_("es")
+	if got := summaryDetail(T, shortSummary{Count: 14}); got != "×14 más en 60 s" {
+		t.Errorf("%q", got)
+	}
+	if got := summaryDetail(T, shortSummary{PerProc: true, Count: 230, Addrs: 61}); got != "×230 conexiones breves más a 61 direcciones" {
+		t.Errorf("%q", got)
+	}
+}
