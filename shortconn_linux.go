@@ -1,0 +1,141 @@
+//go:build linux
+
+package main
+
+import (
+	"errors"
+	"fmt"
+	"time"
+
+	"github.com/cilium/ebpf"
+	"github.com/cilium/ebpf/features"
+	"github.com/cilium/ebpf/link"
+	"github.com/cilium/ebpf/ringbuf"
+	"github.com/cilium/ebpf/rlimit"
+)
+
+// shortConnSource owns everything in the kernel: the program, its attachment
+// to the tracepoint, the ring buffer it writes to and the reader on it.
+type shortConnSource struct {
+	rd     *ringbuf.Reader
+	tp     link.Link
+	prog   *ebpf.Program
+	events *ebpf.Map
+	drops  *ebpf.Map
+	vol    bool
+}
+
+// errNoRingBuf: the kernel predates BPF ring buffers (Linux 5.8).
+var errNoRingBuf = errors.New("kernel without BPF ring buffer")
+
+// ringBufSize is how much the kernel may queue before records are dropped
+// (and counted): about 2,500 records.
+const ringBufSize = 1 << 18
+
+// openShortConnSource loads the program, attaches it and opens the reader.
+// Nothing is left behind on failure.
+func openShortConnSource() (src *shortConnSource, err error) {
+	_ = rlimit.RemoveMemlock() // kernels before 5.11 charge BPF memory to RLIMIT_MEMLOCK
+	// Only "not supported" means an old kernel; any other answer from the
+	// probe (no privileges, a locked-down kernel) is reported as it is.
+	if err := features.HaveMapType(ebpf.RingBuf); errors.Is(err, ebpf.ErrNotSupported) {
+		return nil, errNoRingBuf
+	} else if err != nil {
+		return nil, fmt.Errorf("probing for ring buffer support: %w", err)
+	}
+	s := &shortConnSource{}
+	defer func() {
+		if err != nil {
+			s.Close()
+		}
+	}()
+	if s.events, err = ebpf.NewMap(&ebpf.MapSpec{Name: "efemon_events", Type: ebpf.RingBuf, MaxEntries: ringBufSize}); err != nil {
+		return nil, fmt.Errorf("ring buffer: %w", err)
+	}
+	if s.drops, err = ebpf.NewMap(&ebpf.MapSpec{Name: "efemon_drops", Type: ebpf.Array, KeySize: 4, ValueSize: 8, MaxEntries: 1}); err != nil {
+		return nil, fmt.Errorf("drop counter: %w", err)
+	}
+	if s.prog, err = loadShortConnProgram(s.events.FD(), s.drops.FD(), nil); err != nil {
+		return nil, err
+	}
+	if s.tp, err = link.Tracepoint("sock", "inet_sock_set_state", s.prog, nil); err != nil {
+		return nil, fmt.Errorf("attach to sock:inet_sock_set_state: %w", err)
+	}
+	if s.rd, err = ringbuf.NewReader(s.events); err != nil {
+		return nil, fmt.Errorf("ring buffer reader: %w", err)
+	}
+	return s, nil
+}
+
+// loadShortConnProgram hands the program to the kernel's verifier. When it
+// is refused, the first lines of the verifier's reasoning go into the error:
+// they are what says why.
+func loadShortConnProgram(eventsFD, dropsFD int, vol *volumeOffsets) (*ebpf.Program, error) {
+	prog, err := ebpf.NewProgram(&ebpf.ProgramSpec{
+		Name:         "efemon_tcp",
+		Type:         ebpf.TracePoint,
+		Instructions: shortConnProgram(eventsFD, dropsFD, vol),
+		// The program is this project's (MIT); the kernel only lets
+		// GPL-compatible programs call some helpers, and reads this string.
+		License: "Dual MIT/GPL",
+	})
+	if err != nil {
+		var ve *ebpf.VerifierError
+		if errors.As(err, &ve) && len(ve.Log) > 0 {
+			n := min(len(ve.Log), 6)
+			return nil, fmt.Errorf("verifier: %w — %v", err, ve.Log[len(ve.Log)-n:])
+		}
+		return nil, err
+	}
+	return prog, nil
+}
+
+// next blocks until the kernel has a record (or the deadline passes) and
+// returns it decoded. A record that does not decode is skipped.
+func (s *shortConnSource) next() (kernelRecord, error) {
+	for {
+		raw, err := s.rd.Read()
+		if err != nil {
+			return kernelRecord{}, err
+		}
+		if r, ok := decodeKernelRecord(raw.RawSample); ok {
+			return r, nil
+		}
+	}
+}
+
+func (s *shortConnSource) setDeadline(t time.Time) { s.rd.SetDeadline(t) }
+
+// lost is how many records the kernel could not queue since the program was
+// loaded: the ring buffer was full.
+func (s *shortConnSource) lost() uint64 {
+	var n uint64
+	if err := s.drops.Lookup(uint32(0), &n); err != nil {
+		return 0
+	}
+	return n
+}
+
+// volume reports whether the loaded program reads byte counters.
+func (s *shortConnSource) volume() bool { return s.vol }
+
+// Close detaches the program and releases everything. Safe on a source that
+// was only partly opened.
+func (s *shortConnSource) Close() error {
+	if s.rd != nil {
+		s.rd.Close()
+	}
+	if s.tp != nil {
+		s.tp.Close()
+	}
+	if s.prog != nil {
+		s.prog.Close()
+	}
+	if s.events != nil {
+		s.events.Close()
+	}
+	if s.drops != nil {
+		s.drops.Close()
+	}
+	return nil
+}

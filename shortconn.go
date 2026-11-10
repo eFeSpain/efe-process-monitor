@@ -172,6 +172,11 @@ func (t *shortTracker) record(r kernelRecord, now time.Time) (briefConn, bool) {
 	case recEstablished:
 		if f := t.flows[r.Sock]; f != nil {
 			f.established = true
+			// The start record was written before the kernel chose the
+			// local port; from here on the endpoints are complete.
+			if trackable(r) {
+				f.local, f.remote = r.Local, r.Remote
+			}
 		} else if r.Old == tcpSynRecv && trackable(r) {
 			// An inbound connection has no start record: this is its first.
 			t.flows[r.Sock] = &flow{ts: r.TS, born: now, inbound: true, established: true, local: r.Local, remote: r.Remote}
@@ -186,6 +191,9 @@ func (t *shortTracker) record(r kernelRecord, now time.Time) (briefConn, bool) {
 		var d time.Duration
 		if r.TS > f.ts { // records from two CPUs can arrive out of order
 			d = time.Duration(r.TS - f.ts) // #nosec G115 -- a difference of monotonic nanoseconds since boot
+		}
+		if !f.established && r.Local.IsValid() && r.Local.Port() != 0 {
+			f.local = r.Local // an attempt never got an "established": its close has the port
 		}
 		c := briefConn{Inbound: f.inbound, Failed: !f.established, PID: f.pid, Name: f.name, Exe: f.exe,
 			Local: f.local, Remote: f.remote, Duration: d}

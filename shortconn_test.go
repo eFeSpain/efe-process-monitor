@@ -452,3 +452,33 @@ func TestSummaryDetail(t *testing.T) {
 		t.Errorf("%q", got)
 	}
 }
+
+// Found against the real kernel: when a start record is written the local
+// port has not been chosen yet (the kernel binds it after the state change).
+// The flow's local endpoint is whatever a later record says.
+func TestTrackerLocalPortArrivesLater(t *testing.T) {
+	const unbound = "192.168.1.24:0"
+	now := time.Now()
+
+	tr := newShortTracker(testWho, false)
+	got := feed(tr, now, rec(recStart, 7, 1, 0, 100, unbound, srvAddr),
+		rec(recEstablished, tcpSynSent, 1, 10, 0, cliAddr, srvAddr), rec(recClosed, tcpEstablished, 1, 200, 0, cliAddr, srvAddr))
+	if len(got) != 1 || got[0].Local.String() != cliAddr {
+		t.Errorf("brief: local %v, want %s", got, cliAddr)
+	}
+
+	// The poll must still recognise it as its own.
+	tr = newShortTracker(testWho, false)
+	feed(tr, now, rec(recStart, 7, 1, 0, 100, unbound, srvAddr), rec(recEstablished, tcpSynSent, 1, 10, 0, cliAddr, srvAddr))
+	tr.polled([]gnet.ConnectionStat{tcpEst(100, "192.168.1.24", 50000, "203.0.113.9", 443)}, now.Add(time.Second))
+	if len(tr.flows) != 0 {
+		t.Error("a polled connection whose start had no local port yet was not recognised")
+	}
+
+	// A failed attempt is never established: its close carries the port.
+	tr = newShortTracker(testWho, false)
+	got = feed(tr, now, rec(recStart, 7, 1, 0, 100, unbound, srvAddr), rec(recClosed, tcpSynSent, 1, 5, 0, cliAddr, srvAddr))
+	if len(got) != 1 || !got[0].Failed || got[0].Local.String() != cliAddr {
+		t.Errorf("failed attempt: %+v", got)
+	}
+}

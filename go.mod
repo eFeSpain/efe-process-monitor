@@ -4,6 +4,7 @@ go 1.26.10
 
 require (
 	fyne.io/systray v1.12.2
+	github.com/cilium/ebpf v0.22.0
 	github.com/godbus/dbus/v5 v5.2.4
 	github.com/joho/godotenv v1.5.1
 	github.com/shirou/gopsutil/v4 v4.26.10
