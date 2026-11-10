@@ -193,7 +193,10 @@ func main() {
 	reapplyBlocks() // Linux: iptables/nft rules do not survive a reboot
 	tmpl = template.Must(template.New("").Funcs(funcMap).ParseFS(tmplFS, "web/templates/*.html"))
 	go primeIntel()
-	go monitorLoop()
+	// Brief connections (shortconn.go): started here, not inside the loop, so
+	// its status is settled before the banner and Settings report it.
+	shortRecords, shortVolume := startShortConns()
+	go monitorLoop(shortRecords, shortVolume)
 	startPassiveDNS()   // DNS answers → hostnames table, outside captures (see dns.go)
 	go vtWorker()       // resolves VT hashes in the background at 4/min
 	go auditScheduler() // machine audit on a schedule; notifies what is new (audit_schedule.go)

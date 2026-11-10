@@ -8,6 +8,7 @@ import (
 	"net"
 	"net/netip"
 	"os"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -335,4 +336,71 @@ func TestKernelStartShortConns(t *testing.T) {
 			t.Fatal("the connection's close never arrived on the channel")
 		}
 	}
+}
+
+// From the kernel to the history, with the real pieces: a connection made
+// here, reported by the kernel, tracked, announced and stored. The VM has
+// only a loopback interface and the tracker discards loopback, so the
+// records' addresses are rewritten to routable ones on the way in — the one
+// thing in this chain that is not what production does.
+func TestKernelEndToEnd(t *testing.T) {
+	requireKernelTest(t)
+	setupTestDB(t)
+	oldOn := shortConnsEnabled.Load()
+	shortConnsEnabled.Store(true)
+	t.Cleanup(func() { shortConnsEnabled.Store(oldOn) })
+	ch, volume := startShortConns()
+	if ch == nil {
+		t.Fatal("the kernel source did not start")
+	}
+
+	exe, _ := os.Executable()
+	// The connection is made by this very process, whose traffic the tracker
+	// discards as the monitor's own: the start is passed on under another PID.
+	const otherPID = 4242
+	who := func(pid int32) (string, string) {
+		if pid == otherPID {
+			return "vmtest", exe
+		}
+		return "N/A", ""
+	}
+	tracker := newShortTracker(who, volume)
+	grouper := newShortGrouper()
+	known := map[int32]time.Time{}
+	wl := map[string]bool{exe: true} // muted: no reputation lookups from a test
+
+	_, server := exchange(t, "127.0.0.1:0", 1000, 0)
+	routable := func(ap netip.AddrPort, ip string) netip.AddrPort {
+		return netip.AddrPortFrom(netip.MustParseAddr(ip), ap.Port())
+	}
+	var clientSock uint64
+	deadline := time.After(3 * time.Second)
+	for done := false; !done; {
+		select {
+		case r := <-ch:
+			if r.Kind == recStart && r.PID == uint32(os.Getpid()) && r.Remote.Port() == server.Port() {
+				clientSock = r.Sock
+			}
+			if r.Sock != clientSock || clientSock == 0 {
+				continue // the accepted socket and anything else on the machine
+			}
+			r.Local, r.Remote = routable(r.Local, "192.0.2.1"), routable(r.Remote, "203.0.113.9")
+			if r.Kind == recStart {
+				r.PID = otherPID
+			}
+			if c, ok := tracker.record(r, time.Now()); ok {
+				announceBrief(c, grouper, known, wl, time.Now())
+			}
+			done = r.Kind == recClosed
+		case <-deadline:
+			t.Fatal("the connection's records never arrived")
+		}
+	}
+
+	rows, _ := searchEvents(eventFilter{Kind: "short"})
+	want := "203.0.113.9:" + strconv.Itoa(int(server.Port()))
+	if len(rows) != 1 || rows[0].Remote != want || rows[0].Process != "vmtest" || rows[0].PID != otherPID || !strings.HasPrefix(rows[0].Detail, strings_(currentLang())["ev_short"]) {
+		t.Fatalf("history: want one brief connection to %s, got %+v", want, rows)
+	}
+	t.Logf("history row: %s %s (%d) → %s — %s", rows[0].At, rows[0].Process, rows[0].PID, rows[0].Remote, rows[0].Detail)
 }

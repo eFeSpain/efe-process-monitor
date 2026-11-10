@@ -383,3 +383,12 @@ func TestSettingsHasShortConns(t *testing.T) {
 		t.Errorf("short-conns checkbox (%d) and status (%d) must be in the Settings body, before the footer (%d)", box, status, foot)
 	}
 }
+
+// Brief connections are a kind of their own in the history, with their own
+// colour in the feed.
+func TestHistoryKindShort(t *testing.T) {
+	page := renderedPages(t)["report.html"]
+	if !strings.Contains(page, `<option value="short">`) || !strings.Contains(page, ".ev-short{") {
+		t.Error("the history kind selector lacks `short`, or the feed has no style for it")
+	}
+}

@@ -2,6 +2,7 @@ package main
 
 import (
 	"fmt"
+	"log"
 	"math"
 	"strings"
 	"sync"
@@ -27,6 +28,7 @@ type Event struct {
 	Beacon     float64 `json:"beacon,omitempty"`
 	Changed    bool    `json:"changed,omitempty"` // known path, different content: replaced on disk
 	Level      string  `json:"level,omitempty"`   // alert severity: "low" | "med" | "high" (see intelAlert)
+	Inbound    bool    `json:"inbound,omitempty"` // brief inbound connection: the feed draws the arrow the other way (not stored)
 	Detail     string  `json:"detail,omitempty"`
 }
 
@@ -286,7 +288,153 @@ func describe(c gnet.ConnectionStat) Event {
 // something that merely reconnects a moment later.
 const knownPIDTTL = time.Hour
 
-func monitorLoop() {
+// connSighting is a connection the monitor has just learned about, from
+// either source: the poll, or the kernel's records of the ones the poll
+// missed (shortconn.go).
+type connSighting struct {
+	ev       Event  // Kind and Detail preset for a brief connection; empty for a polled one
+	remoteIP string // "" when there is no peer
+	newProc  bool   // first time this PID is seen
+	muted    bool   // whitelisted binary: recorded, never notified
+	quiet    bool   // a grouped repeat of a brief connection: published only if a check fires
+}
+
+// announceConn runs the checks every new connection gets — where it runs
+// from, whether the binary is new or was replaced, beaconing, reputation —
+// and publishes it. Both sources come through here, so they cannot drift.
+//
+// A brief connection keeps its kind ("short") unless a check turns it into
+// an alert; the alert's reason is then followed by the brief wording.
+func announceConn(s connSighting, nowSec float64) {
+	ev := s.ev
+	T := strings_(currentLang())
+	brief, base := ev.Kind == "short", ev.Detail
+	alert := func(reason string) {
+		ev.Kind, ev.Detail = "alert", reason
+		if brief {
+			ev.Detail = reason + " · " + base
+		}
+	}
+	public := s.remoteIP != "" && !isPrivateIP(s.remoteIP)
+
+	switch {
+	case isSuspiciousPath(ev.Exe):
+		if brief {
+			alert(T["ev_suspicious"])
+		} else {
+			ev.Kind = "alert" // no detail: the feed words it itself
+		}
+	case brief:
+	case public:
+		ev.Kind = "remote"
+	default:
+		ev.Kind = "new"
+	}
+	ev.NewProcess = s.newProc
+	if ev.Exe != "" {
+		if seen, changed := baselineSeen(ev.Exe, fileHash(ev.Exe)); !seen {
+			ev.Anomaly = true
+			if changed {
+				// Same path, different bytes: the binary was replaced.
+				// That is what an in-place trojanization looks like, so
+				// it goes to the feed as an alert with the reason.
+				ev.Changed = true
+				alert(T["ev_binchanged"])
+			}
+		}
+	}
+	// Beaconing is this machine calling out at regular intervals; someone
+	// connecting in every minute is a monitoring probe, not that.
+	if public && !ev.Inbound {
+		who := ev.Exe
+		if who == "" && brief {
+			who = "comm:" + ev.Process // the process was gone before its path could be read
+		}
+		if period := checkBeacon(who, s.remoteIP, nowSec); period > 0 {
+			ev.Beacon = math.Round(period*10) / 10
+			alert(fmt.Sprintf("beaconing ~%.0fs → %s", period, s.remoteIP))
+		}
+	}
+	if s.quiet && ev.Kind != "alert" {
+		return // counted by the grouper; its summary will say how many
+	}
+	publish(ev)
+
+	// Background threat-intel check on new public connections → alert on
+	// bad reputation (AbuseIPDB high, VT-IP, C2, Tor). Cached, so cheap.
+	if public && !s.muted {
+		go alertOnIntel(ev, s.remoteIP)
+	}
+
+	if !s.muted {
+		switch {
+		case ev.Beacon > 0:
+			notify(T["notif_c2"],
+				fmt.Sprintf("%s → %s %s ~%.0fs", ev.Process, s.remoteIP, T["notif_every"], ev.Beacon),
+				"beacon:"+ev.Exe+s.remoteIP)
+		case ev.Changed:
+			notify(T["notif_binchanged"],
+				fmt.Sprintf("%s (%d) — %s", ev.Process, ev.PID, ev.Exe), "changed:"+ev.Exe)
+		case ev.Kind == "alert":
+			notify(T["notif_susp"],
+				fmt.Sprintf("%s (%d) → %s", ev.Process, ev.PID, ev.Remote),
+				"susp:"+ev.Exe)
+		case ev.Anomaly:
+			notify(T["notif_newbin"],
+				fmt.Sprintf("%s (%d)", ev.Process, ev.PID), "anom:"+ev.Exe)
+		}
+	}
+}
+
+// briefSighting is a brief connection as an event, checks not yet applied.
+func briefSighting(c briefConn, T map[string]string) connSighting {
+	return connSighting{
+		ev: Event{Kind: "short", PID: c.PID, Process: c.Name, Exe: c.Exe, Inbound: c.Inbound,
+			Local: c.Local.String(), Remote: c.Remote.String(), Detail: briefDetail(T, c)},
+		remoteIP: c.Remote.Addr().String(),
+	}
+}
+
+// announceBrief is what the loop does with a brief connection: the grouper
+// decides whether it gets a line of its own, and its PID becomes known.
+func announceBrief(c briefConn, g *shortGrouper, knownPIDs map[int32]time.Time, wl map[string]bool, now time.Time) {
+	s := briefSighting(c, strings_(currentLang()))
+	s.newProc = c.PID > 0 && knownPIDs[c.PID].IsZero()
+	s.muted = wl[c.Exe]
+	s.quiet = !g.add(c, now)
+	if c.PID > 0 {
+		knownPIDs[c.PID] = now
+	}
+	announceConn(s, float64(now.UnixNano())/1e9)
+}
+
+// publishShortSummary says how many brief connections were counted in
+// silence: repeats of one group, or a process's overflow past its cap.
+func publishShortSummary(s shortSummary) {
+	ev := Event{Kind: "short", PID: s.Sample.PID, Process: s.Sample.Name, Exe: s.Sample.Exe, Inbound: s.Sample.Inbound,
+		Detail: summaryDetail(strings_(currentLang()), s)}
+	if !s.PerProc {
+		ev.Remote = s.Sample.Remote.Addr().String()
+	}
+	publish(ev)
+}
+
+// afterRecv is what the loop does with its record channel after a receive:
+// keep it, or — had it been closed — stop selecting on it. A closed channel
+// is always ready; left in the select it would spin.
+func afterRecv(ch <-chan kernelRecord, ok bool) <-chan kernelRecord {
+	if !ok {
+		return nil
+	}
+	return ch
+}
+
+// monitorLoop is the live monitor. Two sources feed it: the poll of the
+// socket table every monitorInterval, and — when the kernel source is
+// running (records non-nil) — a record for every TCP connection as it
+// happens, from which it learns about the ones too brief for the poll.
+// Everything here runs on this one goroutine.
+func monitorLoop(records <-chan kernelRecord, volume bool) {
 	prev := snapshot()
 	for prev == nil {
 		// A failed first enumeration must not stand in for "nothing was open":
@@ -309,12 +457,16 @@ func monitorLoop() {
 	// started listening while the monitor was not running (newlisten.go).
 	listeners := newListenWatch()
 	seedListeners := listeners.empty()
+	// Brief connections (shortconn.go).
+	tracker := newShortTracker(procNameExe, volume)
+	grouper := newShortGrouper()
+	lastDropLog := time.Now()
 
-	for {
-		time.Sleep(monitorInterval)
+	// poll is one pass over the socket table.
+	poll := func() {
 		conns, err := gnet.Connections("inet")
 		if err != nil {
-			continue
+			return
 		}
 		snap := snapshotOf(conns)
 		if time.Since(lastPrune) > 24*time.Hour {
@@ -337,67 +489,8 @@ func monitorLoop() {
 				continue
 			}
 			ev := describe(c)
-			remoteIP := c.Raddr.IP
-			muted := wl[ev.Exe]
-
-			switch {
-			case isSuspiciousPath(ev.Exe):
-				ev.Kind = "alert"
-			case remoteIP != "" && !isPrivateIP(remoteIP):
-				ev.Kind = "remote"
-			default:
-				ev.Kind = "new"
-			}
-			if c.Pid > 0 && knownPIDs[c.Pid].IsZero() {
-				ev.NewProcess = true
-			}
-			if ev.Exe != "" {
-				if seen, changed := baselineSeen(ev.Exe, fileHash(ev.Exe)); !seen {
-					ev.Anomaly = true
-					if changed {
-						// Same path, different bytes: the binary was replaced.
-						// That is what an in-place trojanization looks like, so
-						// it goes to the feed as an alert with the reason.
-						ev.Changed = true
-						ev.Kind = "alert"
-						ev.Detail = strings_(currentLang())["ev_binchanged"]
-					}
-				}
-			}
-			if remoteIP != "" && !isPrivateIP(remoteIP) {
-				if period := checkBeacon(ev.Exe, remoteIP, now); period > 0 {
-					ev.Beacon = math.Round(period*10) / 10
-					ev.Kind = "alert"
-					ev.Detail = fmt.Sprintf("beaconing ~%.0fs → %s", period, remoteIP)
-				}
-			}
-			publish(ev)
-
-			// Background threat-intel check on new public connections → alert on
-			// bad reputation (AbuseIPDB high, VT-IP, C2, Tor). Cached, so cheap.
-			if remoteIP != "" && !isPrivateIP(remoteIP) && !muted {
-				go alertOnIntel(ev, remoteIP)
-			}
-
-			if !muted {
-				T := strings_(currentLang())
-				switch {
-				case ev.Beacon > 0:
-					notify(T["notif_c2"],
-						fmt.Sprintf("%s → %s %s ~%.0fs", ev.Process, remoteIP, T["notif_every"], ev.Beacon),
-						"beacon:"+ev.Exe+remoteIP)
-				case ev.Changed:
-					notify(T["notif_binchanged"],
-						fmt.Sprintf("%s (%d) — %s", ev.Process, ev.PID, ev.Exe), "changed:"+ev.Exe)
-				case ev.Kind == "alert":
-					notify(T["notif_susp"],
-						fmt.Sprintf("%s (%d) → %s", ev.Process, ev.PID, ev.Remote),
-						"susp:"+ev.Exe)
-				case ev.Anomaly:
-					notify(T["notif_newbin"],
-						fmt.Sprintf("%s (%d)", ev.Process, ev.PID), "anom:"+ev.Exe)
-				}
-			}
+			announceConn(connSighting{ev: ev, remoteIP: c.Raddr.IP,
+				newProc: c.Pid > 0 && knownPIDs[c.Pid].IsZero(), muted: wl[ev.Exe]}, now)
 		}
 
 		for k, c := range prev {
@@ -417,6 +510,35 @@ func monitorLoop() {
 			if now2.Sub(at) > knownPIDTTL {
 				delete(knownPIDs, pid)
 			}
+		}
+
+		// What the poll can see is no longer the tracker's; what the grouper
+		// counted in silence gets its one line when its window closes.
+		tracker.polled(conns, now2)
+		for _, s := range grouper.flush(now2) {
+			publishShortSummary(s)
+		}
+		if now2.Sub(lastDropLog) >= time.Minute {
+			lastDropLog = now2
+			if n := tracker.dropped(); n > 0 {
+				log.Printf("[short] %d connections outside the poll's view (another network namespace) were not shown as brief", n)
+			}
+		}
+	}
+
+	timer := time.NewTimer(monitorInterval)
+	for {
+		select {
+		case r, ok := <-records:
+			if records = afterRecv(records, ok); records == nil {
+				continue
+			}
+			if c, isBrief := tracker.record(r, time.Now()); isBrief {
+				announceBrief(c, grouper, knownPIDs, whitelist(), time.Now())
+			}
+		case <-timer.C:
+			poll()
+			timer.Reset(monitorInterval) // three seconds after the pass ends, as before
 		}
 	}
 }

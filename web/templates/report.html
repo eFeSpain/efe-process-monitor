@@ -99,7 +99,7 @@ td { padding:6px 12px; border-bottom:1px solid #21262d; white-space:nowrap; vert
 .live-feed{height:160px;min-height:54px;max-height:70vh;resize:vertical;overflow:auto;padding:6px 12px;font-size:12px;line-height:1.7;}
 .live-feed:empty::after{content:attr(data-empty);color:#484f58;}
 .live-ev{white-space:nowrap;} .live-ev .t{color:#484f58;}
-.ev-new{color:#3fb950;} .ev-remote{color:#58a6ff;} .ev-closed{color:#6e7681;} .ev-alert{color:#f85149;font-weight:bold;}
+.ev-new{color:#3fb950;} .ev-remote{color:#58a6ff;} .ev-closed{color:#6e7681;} .ev-short{color:#a371f7;} .ev-alert{color:#f85149;font-weight:bold;}
 /* reputation alerts are graded: one VirusTotal engine is a note, two a warning, three or a curated-feed hit stays red */
 .ev-alert.lvl-low{color:#d29922;font-weight:normal;} .ev-alert.lvl-med{color:#e3b341;}
 th{cursor:pointer;user-select:none;} th:hover{color:#58a6ff;}
@@ -337,7 +337,7 @@ select{background:#0d1117;color:#c9d1d9;border:1px solid #30363d;padding:3px 6px
         <div class="modal-head"><span>{{ .T.history }}</span>
             <span class="hist-tools">
                 <input type="search" id="hist-q" class="hist-sel" placeholder="🔍 {{ .T.hist_q_ph }}" title="{{ .T.hist_q_hint }}" style="width:210px" data-input="searchHistory">
-                <select id="hist-kind" class="hist-sel" data-change="searchHistory"><option value="">{{ .T.hist_kind_all }}</option><option value="alert">alert</option><option value="remote">remote</option><option value="new">new</option><option value="closed">closed</option></select>
+                <select id="hist-kind" class="hist-sel" data-change="searchHistory"><option value="">{{ .T.hist_kind_all }}</option><option value="alert">alert</option><option value="remote">remote</option><option value="new">new</option><option value="short">short</option><option value="closed">closed</option></select>
                 <input type="datetime-local" id="hist-from" class="hist-sel" title="{{ .T.hist_from }}" aria-label="{{ .T.hist_from }}" data-change="searchHistory">
                 <input type="datetime-local" id="hist-to" class="hist-sel" title="{{ .T.hist_to }}" aria-label="{{ .T.hist_to }}" data-change="searchHistory">
                 <span id="hist-count" class="hist-count"></span>

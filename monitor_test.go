@@ -1,6 +1,7 @@
 package main
 
 import (
+	"net/netip"
 	"os"
 	"strings"
 	"testing"
@@ -109,5 +110,219 @@ func TestLocalAlertDedupe(t *testing.T) {
 	}
 	if !d.fresh(42, "spawn", t0.Add(knownPIDTTL+31*time.Minute)) {
 		t.Error("after the entry expires (PID reuse) it alerts again")
+	}
+}
+
+// captureEvents gives the test a fresh history and returns a function that
+// drains what has been published since the last call. Sightings in these
+// tests are muted (a whitelisted binary): an unmuted one starts reputation
+// lookups and desktop notifications, which are not this file's business.
+func captureEvents(t *testing.T) func() []Event {
+	t.Helper()
+	setupTestDB(t)
+	beaconMu.Lock()
+	clear(beaconTrack)
+	beaconMu.Unlock()
+	ch := subscribe()
+	t.Cleanup(func() { unsubscribe(ch) })
+	return func() []Event {
+		var out []Event
+		for {
+			select {
+			case ev := <-ch:
+				out = append(out, ev)
+			default:
+				return out
+			}
+		}
+	}
+}
+
+// The checks a polled connection goes through were moved into announceConn
+// so that brief connections go through the very same ones. For a polled
+// connection nothing may have changed.
+func TestAnnouncePolledUnchanged(t *testing.T) {
+	drain := captureEvents(t)
+	polled := func(exe, remote, remoteIP string, newProc bool) Event {
+		announceConn(connSighting{ev: Event{PID: 10, Process: "a", Exe: exe, Local: "192.168.1.24:50000", Remote: remote},
+			remoteIP: remoteIP, newProc: newProc, muted: true}, 1000)
+		evs := drain()
+		if len(evs) != 1 {
+			t.Fatalf("%s → %s: %d events, want 1: %+v", exe, remote, len(evs), evs)
+		}
+		return evs[0]
+	}
+	if ev := polled("/usr/bin/a", "203.0.113.9:443", "203.0.113.9", true); ev.Kind != "remote" || !ev.NewProcess || !ev.Anomaly || ev.Detail != "" {
+		t.Errorf("public remote, first sighting of the binary: %+v", ev)
+	}
+	if ev := polled("/usr/bin/a", "203.0.113.9:443", "203.0.113.9", false); ev.Kind != "remote" || ev.NewProcess || ev.Anomaly {
+		t.Errorf("same binary again: %+v", ev)
+	}
+	if ev := polled("/usr/bin/a", "192.168.1.5:445", "192.168.1.5", false); ev.Kind != "new" {
+		t.Errorf("private remote: %+v", ev)
+	}
+	if ev := polled("/usr/bin/a", "", "0.0.0.0", false); ev.Kind != "new" {
+		t.Errorf("listening socket: %+v", ev)
+	}
+	if ev := polled("/tmp/x/evil", "203.0.113.9:443", "203.0.113.9", false); ev.Kind != "alert" || ev.Detail != "" {
+		t.Errorf("staging path: %+v", ev)
+	}
+}
+
+func testBrief(name, exe string) briefConn {
+	return briefConn{PID: 100, Name: name, Exe: exe, Local: netip.MustParseAddrPort("192.168.1.24:50000"),
+		Remote: netip.MustParseAddrPort("203.0.113.9:443"), Duration: 200 * time.Millisecond}
+}
+
+func TestAnnounceBrief(t *testing.T) {
+	drain := captureEvents(t)
+	T := strings_("es")
+
+	s := briefSighting(testBrief("curl", "/usr/bin/curl"), T)
+	s.muted = true
+	announceConn(s, 1000)
+	evs := drain()
+	if len(evs) != 1 || evs[0].Kind != "short" || evs[0].Process != "curl" || evs[0].PID != 100 || evs[0].Exe != "/usr/bin/curl" ||
+		evs[0].Remote != "203.0.113.9:443" || !strings.HasPrefix(evs[0].Detail, "conexión breve · 0.2 s") || evs[0].Inbound {
+		t.Fatalf("brief connection event: %+v", evs)
+	}
+	// It is in the history under its own kind.
+	if rows, _ := searchEvents(eventFilter{Kind: "short"}); len(rows) != 1 || rows[0].Process != "curl" {
+		t.Errorf("history: %+v", rows)
+	}
+
+	// A grouped repeat is published only if a check fires.
+	s.quiet = true
+	announceConn(s, 1001)
+	if evs := drain(); len(evs) != 0 {
+		t.Errorf("a quiet repeat was published: %+v", evs)
+	}
+
+	in := testBrief("sshd", "/usr/sbin/sshd")
+	in.Inbound, in.Local, in.Remote = true, netip.MustParseAddrPort("192.168.1.24:22"), netip.MustParseAddrPort("192.168.1.50:51000")
+	s = briefSighting(in, T)
+	s.muted = true
+	announceConn(s, 1002)
+	evs = drain()
+	if len(evs) != 1 || !evs[0].Inbound || evs[0].Kind != "short" || evs[0].Local != "192.168.1.24:22" || evs[0].Remote != "192.168.1.50:51000" ||
+		!strings.HasPrefix(evs[0].Detail, "entrante breve") {
+		t.Errorf("inbound: %+v", evs)
+	}
+
+	// A brief connection from a staging directory is an alert that still
+	// says it was brief.
+	s = briefSighting(testBrief("nc", "/tmp/.x/nc"), T)
+	s.muted = true
+	announceConn(s, 1003)
+	evs = drain()
+	if len(evs) != 1 || evs[0].Kind != "alert" || !strings.Contains(evs[0].Detail, "conexión breve") || !strings.Contains(evs[0].Detail, T["ev_suspicious"]) {
+		t.Errorf("staging path: %+v", evs)
+	}
+}
+
+// A check-in of 200 ms every minute is what beaconing looks like, and the
+// poll almost never catches one. Brief connections feed the detector — the
+// grouped ones too, which is where a beacon's repeats end up.
+func TestAnnounceBriefBeacon(t *testing.T) {
+	drain := captureEvents(t)
+	T := strings_("es")
+	run := func(c briefConn) []Event {
+		var all []Event
+		for i := 0; i < 5; i++ {
+			s := briefSighting(c, T)
+			s.muted, s.quiet = true, i > 0
+			announceConn(s, float64(1000+60*i))
+			all = append(all, drain()...)
+		}
+		return all
+	}
+
+	evs := run(testBrief("implant", "/usr/bin/implant"))
+	var alerts []Event
+	for _, ev := range evs {
+		if ev.Kind == "alert" {
+			alerts = append(alerts, ev)
+		}
+	}
+	if len(evs) < 2 || evs[0].Kind != "short" || len(alerts) == 0 ||
+		!strings.Contains(alerts[0].Detail, "beaconing") || !strings.Contains(alerts[0].Detail, "conexión breve") || alerts[0].Beacon != 60 {
+		t.Errorf("want the first as a brief connection and a beaconing alert later: %+v", evs)
+	}
+
+	// With no path the kernel's name is the identity.
+	evs = run(testBrief("x", ""))
+	found := false
+	for _, ev := range evs {
+		found = found || (ev.Kind == "alert" && strings.Contains(ev.Detail, "beaconing"))
+	}
+	if !found {
+		t.Errorf("a process known only by name must still be tracked for beaconing: %+v", evs)
+	}
+
+	// Someone connecting to us every minute is a monitoring probe, not this
+	// machine beaconing out.
+	in := testBrief("sshd", "/usr/sbin/sshd")
+	in.Inbound = true
+	for _, ev := range run(in) {
+		if ev.Kind == "alert" {
+			t.Errorf("inbound connections must not feed the beacon detector: %+v", ev)
+		}
+	}
+}
+
+// The glue the loop runs for each brief connection: grouping decides what is
+// shown, and the PID becomes known.
+func TestAnnounceBriefGrouped(t *testing.T) {
+	drain := captureEvents(t)
+	g := newShortGrouper()
+	known := map[int32]time.Time{}
+	wl := map[string]bool{"/usr/bin/curl": true}
+	now := time.Now()
+	c := testBrief("curl", "/usr/bin/curl")
+	announceBrief(c, g, known, wl, now)
+	announceBrief(c, g, known, wl, now.Add(time.Second))
+	evs := drain()
+	if len(evs) != 1 || !evs[0].NewProcess || evs[0].Kind != "short" {
+		t.Fatalf("two identical brief connections: want one event, flagged as a new process: %+v", evs)
+	}
+	if known[100].IsZero() {
+		t.Error("the PID of a brief connection must become known")
+	}
+
+	for _, s := range g.flush(now.Add(shortGroupWindow + time.Second)) {
+		publishShortSummary(s)
+	}
+	evs = drain()
+	if len(evs) != 1 || evs[0].Kind != "short" || evs[0].Process != "curl" || evs[0].Remote != "203.0.113.9" ||
+		evs[0].Detail != summaryDetail(strings_(currentLang()), shortSummary{Count: 1}) {
+		t.Errorf("summary event: %+v", evs)
+	}
+	publishShortSummary(shortSummary{Sample: c, Count: 230, Addrs: 61, PerProc: true})
+	if evs = drain(); len(evs) != 1 || evs[0].Remote != "" || evs[0].Process != "curl" {
+		t.Errorf("per-process summary names no single address: %+v", evs)
+	}
+}
+
+// The reader never closes the channel, but if it ever were closed the loop
+// must stop selecting on it rather than spin on zero values. A nil channel
+// — the feature inactive — is never ready.
+func TestClosedRecordChannelIsDisabled(t *testing.T) {
+	ch := make(chan kernelRecord, 1)
+	ch <- kernelRecord{Kind: recStart}
+	var in <-chan kernelRecord = ch
+	_, ok := <-in
+	if got := afterRecv(in, ok); got == nil {
+		t.Error("a channel that delivered a value must stay")
+	}
+	close(ch)
+	_, ok = <-in
+	if got := afterRecv(in, ok); got != nil {
+		t.Error("a closed channel must be replaced by nil")
+	}
+	var inactive <-chan kernelRecord
+	select {
+	case <-inactive:
+		t.Error("a nil channel delivered something")
+	default:
 	}
 }

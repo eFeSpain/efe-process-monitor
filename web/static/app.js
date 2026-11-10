@@ -434,6 +434,7 @@ function eventLabel(ev) {
     if (ev.beacon) return `⚠ ${T.ev_beacon} ~${ev.beacon}s — ${proc} (${pid}) → ${ev.remote}${tags}`;
     switch (ev.kind) {
         case 'closed':  return `✕ ${T.ev_closed} — ${proc} (${pid})${ev.remote ? ' → ' + ev.remote : ''}`;
+        case 'short':   return `⚡ ${ev.detail || T.ev_short} — ${proc} (${pid})${ev.remote ? (ev.inbound ? ' ← ' : ' → ') + ev.remote : ''}${tags}`;
         case 'alert':   return `⚠ ${ev.detail || T.ev_suspicious} — ${proc} (${pid})${ev.remote || ev.local ? ' → ' + (ev.remote || ev.local) : ''}${tags}`;
         case 'remote':  return `→ ${T.ev_new} — ${proc} (${pid}) → ${ev.remote}${tags}`;
         default:        return `+ ${T.ev_new} — ${proc} (${pid}) ${ev.remote ? '→ ' + ev.remote : (ev.local || '')}${tags}`;

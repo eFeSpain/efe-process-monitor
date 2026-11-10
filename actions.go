@@ -297,6 +297,11 @@ func startupBanner() {
 	} else {
 		log.Printf("[-] DNS pasivo      %s", passiveDNSStatus)
 	}
+	if text, active := shortConnStatusText(strings_(currentLang())); active {
+		log.Printf("[+] Conex. breves   %s", text)
+	} else {
+		log.Printf("[-] Conex. breves   %s", text)
+	}
 	if listenExposed {
 		log.Printf("[!] Access          EXPOSED on %s over HTTPS — reachable from the network (login required)", listenAddr.Load())
 	} else {
