@@ -17,6 +17,15 @@ Versions follow [Semantic Versioning](https://semver.org/).
   every process that holds a socket — when it appears and once a minute — and
   raises a red alert with a desktop notification, once per process and signal.
   With the monitor running as a service, nobody has to be looking.
+- **C2 domains against what processes ask for.** ThreatFox's C2 domains
+  (thousands a week) were discarded — only its addresses were used. They are
+  now matched against the names observed for each connection (TLS SNI and
+  passive DNS): an exact match or a subdomain of a listed domain scores like a
+  listed address (+55, never twice) and raises a red alert. More specific than
+  the address on shared hosting. Payload-delivery domains and URLhaus hosts
+  are deliberately not matched: they include the likes of `github.com`.
+- **Spamhaus DROP for IPv6** (`drop_v6.json`): only the IPv4 list was loaded,
+  so an IPv6 connection into a hijacked netblock never scored.
 
 ## [0.5.0] — 2026-11-09
 

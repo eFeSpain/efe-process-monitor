@@ -62,6 +62,7 @@ func rowsTestConns() []Conn {
 		Undetected: "60",
 		Cached:     true, Suspicious: true, SuspPort: false,
 		Blockable: true, Capturable: true, Public: true,
+		IOCName: "cdn.evil-c2.tk", IOCLabel: "Cobalt Strike",
 		Sig:       Signature{Status: "NotSigned"},
 		Partial:   true,
 		Breakdown: "ruta sospechosa (+25)",
@@ -142,7 +143,7 @@ func TestRowsTemplateExecutes(t *testing.T) {
 		}
 		out := sb.String()
 		for _, want := range []string{
-			"suspicious.exe", "UDP", "UDP-BOUND", "Cobalt Strike", "URLhaus", "Mozi",
+			"suspicious.exe", "UDP", "UDP-BOUND", "Cobalt Strike", "URLhaus", "Mozi", "cdn.evil-c2.tk",
 			`class="udp"`,                // the bound-UDP row must get its own state class
 			"12.5 %", "150 MB", "SYSTEM", // the resource column and its detail line
 			"Back Orifice (RAT) <span class=\"vt-na\"",                           // legacy port label plus the localized note

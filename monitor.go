@@ -236,6 +236,11 @@ func intelAlert(e *Enrichment) (reasons []string, level string) {
 func alertOnIntel(ev Event, ip string) {
 	e := enrichIP(ip) // cached
 	reasons, level := intelAlert(e)
+	// The name the process asked for (SNI / passive DNS) against the C2
+	// domains: more specific than the address on shared hosting.
+	if name, label := iocNameHit(dbHostnames(ip)); name != "" {
+		reasons, level = append(reasons, "ThreatFox: "+label+" ("+name+")"), "high"
+	}
 	if len(reasons) == 0 {
 		return
 	}

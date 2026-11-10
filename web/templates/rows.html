@@ -66,6 +66,7 @@
         {{ if $c.Hostnames }}<div class="detail-line"><span class="detail-label" title="{{ $T.asked_for_hint }}">{{ $T.asked_for }}</span><span>
             {{ range $c.Hostnames }}<span class="hostchip {{ if eq .Source "sni" }}hostchip-sni{{ end }}" title="{{ if eq .Source "sni" }}{{ $T.src_sni }}{{ else }}{{ $T.src_dns }}{{ end }} · {{ .At }}">{{ .Name }}</span> {{ end }}
         </span></div>{{ end }}
+        {{ if $c.IOCName }}<div class="detail-line"><span class="detail-label">ThreatFox</span><span class="vt-bad">⚠ {{ $c.IOCLabel }} — {{ $c.IOCName }}</span></div>{{ end }}
         {{ if $e }}
         <div class="detail-line"><span class="detail-label" title="{{ $T.rdns_hint }}">rDNS</span><span>{{ $e.DNS }}</span></div>
         <div class="detail-line"><span class="detail-label">Geo</span><span>{{ $e.City }}, {{ $e.Country }}</span></div>

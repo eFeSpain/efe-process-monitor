@@ -122,6 +122,8 @@ type Conn struct {
 	Partial       bool // key signals (VT/enrichment) couldn't be resolved → low score ≠ clean
 	Enrich        *Enrichment
 	Hostnames     []Hostname // names observed bound to RemoteIP (TLS SNI / DNS answers)
+	IOCName       string     // an observed name that is (or is under) a ThreatFox C2 domain
+	IOCLabel      string     // the family ThreatFox gives that domain
 	LAN           *LANInfo
 	Details       *ProcDetails
 	Breakdown     string   // the reasons, rendered in the UI language (see localizeBreakdown)
@@ -784,6 +786,12 @@ func threatScore(c *Conn) int {
 	default:
 		add(wBadSignature, "sig", c.Sig.Status)
 	}
+	// What the process asked for is a ThreatFox C2 domain. Same weight as the
+	// address being listed, and counted once: when the address is listed too
+	// that reason already carries the 55 points.
+	if c.IOCName != "" && (c.Enrich == nil || c.Enrich.ThreatFox == "") {
+		add(wThreatFox, "iocname", c.IOCLabel, c.IOCName)
+	}
 	if e := c.Enrich; e != nil {
 		if e.VTMalicious != nil && *e.VTMalicious > 0 {
 			n := *e.VTMalicious
@@ -1143,6 +1151,7 @@ func analyzeConnections(hideSelf bool) []Conn {
 			conn.Info = &fi
 		}
 		conn.Hostnames = hostMap[conn.RemoteIP]
+		conn.IOCName, conn.IOCLabel = iocNameHit(conn.Hostnames)
 		rate := rateFor(r.c.Pid)
 		conn.RateIn, conn.RateOut, conn.HighEgress = rate.In, rate.Out, rate.HighEgress
 		conn.CPU, conn.RSS, conn.Threads, conn.User, conn.ResOK =

@@ -113,13 +113,20 @@ const tfAPIFixture = `{"query_status":"ok","data":[
  {"id":"2","ioc":"bad.example.com","threat_type":"botnet_cc","ioc_type":"domain","malware_printable":"Dridex","confidence_level":50},
  {"id":"3","ioc":"198.51.100.7:443","threat_type":"payload_delivery","ioc_type":"ip:port","malware_printable":"","confidence_level":100},
  {"id":"4","ioc":"not-an-ip-port","threat_type":"botnet_cc","ioc_type":"ip:port","malware_printable":"X","confidence_level":50},
- {"id":"5","ioc":"abcd","threat_type":"botnet_cc","ioc_type":"sha256_hash","malware_printable":"Y","confidence_level":50}
+ {"id":"5","ioc":"abcd","threat_type":"botnet_cc","ioc_type":"sha256_hash","malware_printable":"Y","confidence_level":50},
+ {"id":"6","ioc":"files.example.org","threat_type":"payload_delivery","ioc_type":"domain","malware_printable":"Loader","confidence_level":50}
 ]}`
 
 func TestParseThreatFoxAPI(t *testing.T) {
-	m, err := parseThreatFoxAPI(strings.NewReader(tfAPIFixture))
+	m, doms, err := parseThreatFoxAPI(strings.NewReader(tfAPIFixture))
 	if err != nil {
 		t.Fatal(err)
+	}
+	// Domains: only C2 ones. A payload-delivery domain is often somebody's
+	// compromised or shared hosting; matching names against it would flag
+	// ordinary traffic.
+	if len(doms) != 1 || doms["bad.example.com"] != "Dridex" {
+		t.Errorf("domains = %v, want only the botnet_cc one", doms)
 	}
 	if len(m) != 2 {
 		t.Fatalf("got %d entries, want 2 (ip:port only): %v", len(m), m)
@@ -133,10 +140,10 @@ func TestParseThreatFoxAPI(t *testing.T) {
 	if _, ok := m["bad.example.com"]; ok {
 		t.Error("domain IOC leaked into the ip map")
 	}
-	if _, err := parseThreatFoxAPI(strings.NewReader(`{"query_status":"unknown_auth_key"}`)); err == nil {
+	if _, _, err := parseThreatFoxAPI(strings.NewReader(`{"query_status":"unknown_auth_key"}`)); err == nil {
 		t.Error("a non-ok query_status must be an error, not an empty feed")
 	}
-	if _, err := parseThreatFoxAPI(strings.NewReader(`{"query_status":"ok","data":[]}`)); err != nil {
+	if _, _, err := parseThreatFoxAPI(strings.NewReader(`{"query_status":"ok","data":[]}`)); err != nil {
 		t.Errorf("an empty but ok answer is not an error: %v", err)
 	}
 }
@@ -268,5 +275,55 @@ func TestFeedMetaOwnTTL(t *testing.T) {
 	short.done(nil, 1, now)
 	if short.due(now.Add(5*time.Hour)) || !short.due(now.Add(7*time.Hour)) {
 		t.Error("a 6 h ttl is due after 7 h and not after 5 h")
+	}
+}
+
+// Spamhaus publishes DROP for both families; only the IPv4 list was loaded,
+// so an IPv6 connection into a hijacked netblock never scored.
+func TestSpamhausCoversIPv6(t *testing.T) {
+	joined := strings.Join(spamhausURLs, " ")
+	if !strings.Contains(joined, "drop_v4.json") || !strings.Contains(joined, "drop_v6.json") {
+		t.Fatalf("both DROP lists must be fetched, got %v", spamhausURLs)
+	}
+	nets := parseSpamhaus(`{"cidr":"203.0.113.0/24","sblid":"SBL1"}` + "\n" + `{"cidr":"2001:db8:bad::/48","sblid":"SBL2"}`)
+	if len(nets) != 2 {
+		t.Fatalf("parsed %d nets, want 2", len(nets))
+	}
+	spamhaus.mu.Lock()
+	old, oldMeta := spamhaus.nets, spamhaus.feedMeta
+	spamhaus.nets = nets
+	spamhaus.feedMeta = feedMeta{}
+	spamhaus.feedMeta.done(nil, len(nets), time.Now())
+	spamhaus.mu.Unlock()
+	t.Cleanup(func() { spamhaus.mu.Lock(); spamhaus.nets, spamhaus.feedMeta = old, oldMeta; spamhaus.mu.Unlock() })
+	if !spamhausHit("2001:db8:bad::1") || !spamhausHit("203.0.113.9") {
+		t.Error("addresses inside listed v4 and v6 blocks must hit")
+	}
+	if spamhausHit("2001:db8:900d::1") {
+		t.Error("an address outside the blocks must not hit")
+	}
+}
+
+// What the process asked for (TLS SNI, DNS answers) against the C2 domains of
+// ThreatFox: an exact match, or a subdomain of a listed domain. The parent of
+// a listed domain must not match — "x.duckdns.org" being a C2 says nothing
+// about duckdns.org.
+func TestMatchIOCDomain(t *testing.T) {
+	doms := map[string]string{"evil-c2.tk": "Cobalt Strike", "x.duckdns.org": "Remcos"}
+	for _, tc := range []struct{ name, wantName, wantLabel string }{
+		{"evil-c2.tk", "evil-c2.tk", "Cobalt Strike"},
+		{"cdn.evil-c2.tk", "cdn.evil-c2.tk", "Cobalt Strike"},
+		{"x.duckdns.org", "x.duckdns.org", "Remcos"},
+		{"duckdns.org", "", ""},
+		{"notevil-c2.tk", "", ""},
+		{"evil-c2.tk.example.com", "", ""},
+	} {
+		n, l := matchIOCDomain([]Hostname{{Name: "www.example.com"}, {Name: tc.name}}, doms)
+		if n != tc.wantName || l != tc.wantLabel {
+			t.Errorf("%s: got (%q, %q), want (%q, %q)", tc.name, n, l, tc.wantName, tc.wantLabel)
+		}
+	}
+	if n, _ := matchIOCDomain(nil, doms); n != "" {
+		t.Error("no names, no hit")
 	}
 }

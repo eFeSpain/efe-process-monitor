@@ -438,7 +438,8 @@ const threatFoxAPI = "https://threatfox-api.abuse.ch/api/v1/"
 type tfFeed struct {
 	mu sync.Mutex
 	feedMeta
-	m map[string]string // ip -> malware family/label
+	m       map[string]string // ip -> malware family/label
+	domains map[string]string // C2 domain -> malware family/label
 }
 
 var threatFox tfFeed
@@ -461,20 +462,23 @@ func (f *tfFeed) refresh() map[string]string {
 		return f.m
 	}
 	defer resp.Body.Close()
-	m, err := parseThreatFoxAPI(io.LimitReader(resp.Body, maxFeedBytes))
+	m, domains, err := parseThreatFoxAPI(io.LimitReader(resp.Body, maxFeedBytes))
 	if err != nil {
 		f.done(err, 0, now)
 		return f.m
 	}
-	f.m = m
-	f.done(nil, len(m), now)
+	f.m, f.domains = m, domains
+	f.done(nil, len(m)+len(domains), now)
 	return f.m
 }
 
-// parseThreatFoxAPI turns a get_iocs answer into an ip→malware-family map. Only
-// ip:port IOCs apply here; domains, URLs and hashes are other things. The label
-// is the printable family, or the threat type when the family is unknown.
-func parseThreatFoxAPI(r io.Reader) (map[string]string, error) {
+// parseThreatFoxAPI turns a get_iocs answer into an ip→family map and a
+// domain→family map. ip:port IOCs feed the first. Domains feed the second only
+// when they are C2 (botnet_cc): a payload-delivery domain is often somebody's
+// compromised or shared hosting, and matching what processes ask for against
+// those would flag ordinary traffic. URLs and hashes are other things. The
+// label is the printable family, or the threat type when the family is unknown.
+func parseThreatFoxAPI(r io.Reader) (ips, domains map[string]string, err error) {
 	var resp struct {
 		QueryStatus string `json:"query_status"`
 		Data        []struct {
@@ -485,27 +489,64 @@ func parseThreatFoxAPI(r io.Reader) (map[string]string, error) {
 		} `json:"data"`
 	}
 	if err := json.NewDecoder(r).Decode(&resp); err != nil {
-		return nil, fmt.Errorf("threatfox: %w", err)
+		return nil, nil, fmt.Errorf("threatfox: %w", err)
 	}
 	if resp.QueryStatus != "ok" {
-		return nil, fmt.Errorf("threatfox: %s", resp.QueryStatus)
+		return nil, nil, fmt.Errorf("threatfox: %s", resp.QueryStatus)
 	}
-	m := map[string]string{}
+	ips, domains = map[string]string{}, map[string]string{}
 	for _, d := range resp.Data {
-		if d.IOCType != "ip:port" {
-			continue
-		}
-		host, _, err := net.SplitHostPort(d.IOC)
-		if err != nil || net.ParseIP(host) == nil {
-			continue
-		}
 		label := d.MalwarePrintable
 		if label == "" || label == "None" {
 			label = d.ThreatType
 		}
-		m[host] = label
+		switch d.IOCType {
+		case "ip:port":
+			if host, _, err := net.SplitHostPort(d.IOC); err == nil && net.ParseIP(host) != nil {
+				ips[host] = label
+			}
+		case "domain":
+			if name := cleanHostname(d.IOC); name != "" && d.ThreatType == "botnet_cc" {
+				domains[name] = label
+			}
+		}
 	}
-	return m, nil
+	return ips, domains, nil
+}
+
+// matchIOCDomain looks the names a process asked for up in a domain IOC map:
+// an exact match, or a subdomain of a listed domain. Never the parent of a
+// listed one — "x.duckdns.org" being a C2 says nothing about duckdns.org.
+func matchIOCDomain(names []Hostname, domains map[string]string) (name, label string) {
+	if len(domains) == 0 {
+		return "", ""
+	}
+	for _, h := range names {
+		n := h.Name
+		for {
+			if l, ok := domains[n]; ok {
+				return h.Name, l
+			}
+			i := strings.IndexByte(n, '.')
+			if i < 0 {
+				break
+			}
+			n = n[i+1:]
+		}
+	}
+	return "", ""
+}
+
+// iocNameHit is matchIOCDomain against the loaded ThreatFox C2 domains.
+func iocNameHit(names []Hostname) (name, label string) {
+	if len(names) == 0 {
+		return "", ""
+	}
+	threatFox.refresh()
+	threatFox.mu.Lock()
+	doms := threatFox.domains
+	threatFox.mu.Unlock()
+	return matchIOCDomain(names, doms)
 }
 
 func threatFoxLookup(ip string) string { return threatFox.refresh()[ip] }
@@ -623,6 +664,14 @@ type cidrFeed struct {
 
 var spamhaus cidrFeed
 
+// spamhausURLs are the DROP lists, one per address family. Only the IPv4 one
+// used to be loaded, so an IPv6 connection into a hijacked netblock never
+// scored.
+var spamhausURLs = []string{
+	"https://www.spamhaus.org/drop/drop_v4.json",
+	"https://www.spamhaus.org/drop/drop_v6.json",
+}
+
 func (f *cidrFeed) refresh() []*net.IPNet {
 	f.mu.Lock()
 	defer f.mu.Unlock()
@@ -630,19 +679,25 @@ func (f *cidrFeed) refresh() []*net.IPNet {
 	if !f.due(now) {
 		return f.nets
 	}
-	body, err := getText("https://www.spamhaus.org/drop/drop_v4.json")
-	if err != nil {
-		f.done(err, 0, now)
-		return f.nets
+	// Both families or nothing: half a list would read as "updated" while
+	// every IPv6 (or IPv4) connection silently went unchecked.
+	var nets []*net.IPNet
+	for _, u := range spamhausURLs {
+		body, err := getText(u)
+		if err != nil {
+			f.done(err, 0, now)
+			return f.nets
+		}
+		nets = append(nets, parseSpamhaus(body)...)
 	}
-	if nets := parseSpamhaus(body); len(nets) > 0 {
+	if len(nets) > 0 {
 		f.nets = nets
 	}
 	f.done(nil, len(f.nets), now)
 	return f.nets
 }
 
-// parseSpamhaus turns the Spamhaus DROP drop_v4.json (one JSON object per line)
+// parseSpamhaus turns a Spamhaus DROP list (drop_v4.json / drop_v6.json: one JSON object per line)
 // into a list of networks, skipping blanks and the trailing metadata line.
 func parseSpamhaus(body string) []*net.IPNet {
 	var nets []*net.IPNet
