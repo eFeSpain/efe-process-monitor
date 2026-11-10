@@ -6,6 +6,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	gnet "github.com/shirou/gopsutil/v4/net"
 )
 
 // The monitor hides its own PID, but the subprocesses the tool itself starts
@@ -467,5 +469,98 @@ func TestBriefSightingAddressFormat(t *testing.T) {
 	c = testBrief("curl", "/usr/bin/curl")
 	if s = briefSighting(c, strings_("es")); s.ev.Remote != "203.0.113.9:443" {
 		t.Errorf("IPv4: %q", s.ev.Remote)
+	}
+}
+
+// fakePID is above any PID the kernel hands out (pid_max is 4194304), so
+// nothing these tests do can touch a real process.
+const fakePID = 4_200_000
+
+func kindsOf(evs []Event) map[string]int {
+	out := map[string]int{}
+	for _, ev := range evs {
+		out[ev.Kind]++
+	}
+	return out
+}
+
+// Review: nothing exercised the monitor with both of its sources. One
+// connection is over before any poll (brief); another is caught by a poll
+// and its kernel records arrive around it (polled, and only polled).
+func TestLiveMonitorBothSources(t *testing.T) {
+	drain := captureEvents(t)
+	looked := recordIntel(t)
+	t0 := time.Now()
+	m := newLiveMonitor(map[connKey]gnet.ConnectionStat{}, false)
+	m.tracker.who = func(int32) (string, string) { return "N/A", "" }
+
+	const briefLocal, briefRemote = "192.168.1.24:50000", "203.0.113.9:443"
+	const polledLocal, polledRemote = "192.168.1.24:50001", "198.51.100.4:443"
+	start := func(sock uint64, remote string) kernelRecord {
+		r := rec(recStart, 7, sock, 0, fakePID, "192.168.1.24:0", remote)
+		r.Comm = "implant"
+		return r
+	}
+
+	// A: opens and closes between two polls.
+	m.record(start(1, briefRemote), t0)
+	m.record(rec(recEstablished, tcpSynSent, 1, 10, 0, briefLocal, briefRemote), t0)
+	m.record(rec(recClosed, tcpEstablished, 1, 300, 0, briefLocal, briefRemote), t0)
+	evs := drain()
+	if len(evs) != 1 || evs[0].Kind != "short" || evs[0].Process != "implant" || evs[0].PID != fakePID || evs[0].Remote != briefRemote {
+		t.Fatalf("the brief connection: %+v", evs)
+	}
+
+	// B: its start arrives, then a poll lists it, then the rest.
+	m.record(start(2, polledRemote), t0.Add(time.Second))
+	m.record(rec(recEstablished, tcpSynSent, 2, 1010, 0, polledLocal, polledRemote), t0.Add(time.Second))
+	listed := []gnet.ConnectionStat{tcpEst(fakePID, "192.168.1.24", 50001, "198.51.100.4", 443)}
+	m.poll(listed, t0.Add(3*time.Second))
+	evs = drain()
+	if k := kindsOf(evs); len(evs) != 1 || k["remote"] != 1 {
+		t.Fatalf("the polled connection is announced once, by the poll: %+v", evs)
+	}
+	m.poll(nil, t0.Add(6*time.Second))
+	m.record(rec(recClosed, tcpEstablished, 2, 5000, 0, polledLocal, polledRemote), t0.Add(6*time.Second))
+	evs = drain()
+	if k := kindsOf(evs); len(evs) != 1 || k["closed"] != 1 {
+		t.Errorf("its end is the poll's `closed`, and nothing brief: %+v", evs)
+	}
+
+	// C: established just before a poll reads the table; its records are
+	// only processed after that pass. Announced by the poll, once.
+	const lateLocal, lateRemote = "192.168.1.24:50002", "198.51.100.5:443"
+	m.poll([]gnet.ConnectionStat{tcpEst(fakePID, "192.168.1.24", 50002, "198.51.100.5", 443)}, t0.Add(9*time.Second))
+	m.record(start(3, lateRemote), t0.Add(9*time.Second))
+	m.record(rec(recEstablished, tcpSynSent, 3, 8990, 0, lateLocal, lateRemote), t0.Add(9*time.Second))
+	m.record(rec(recClosed, tcpEstablished, 3, 9500, 0, lateLocal, lateRemote), t0.Add(9*time.Second))
+	evs = drain()
+	if k := kindsOf(evs); len(evs) != 1 || k["remote"] != 1 || k["short"] != 0 {
+		t.Errorf("announced by the poll and not again as brief: %+v", evs)
+	}
+
+	// Every new public address went to the reputation check, once.
+	if got := strings.Join(*looked, " "); got != "203.0.113.9 198.51.100.4 198.51.100.5" {
+		t.Errorf("reputation lookups: %q", got)
+	}
+
+	// Repeats of A are counted, and summarised when the window closes.
+	for i := uint64(0); i < 3; i++ {
+		m.record(start(10+i, briefRemote), t0.Add(10*time.Second))
+		m.record(rec(recEstablished, tcpSynSent, 10+i, 10_000, 0, briefLocal, briefRemote), t0.Add(10*time.Second))
+		m.record(rec(recClosed, tcpEstablished, 10+i, 10_200, 0, briefLocal, briefRemote), t0.Add(10*time.Second))
+	}
+	if evs = drain(); len(evs) != 0 {
+		t.Errorf("repeats within the window were published: %+v", evs)
+	}
+	m.poll(nil, t0.Add(shortGroupWindow+12*time.Second))
+	evs = drain()
+	if len(evs) != 2 { // the poll's `closed` for C, and the summary
+		t.Fatalf("%+v", evs)
+	}
+	for _, ev := range evs {
+		if ev.Kind == "short" && !strings.HasPrefix(ev.Detail, "×3") {
+			t.Errorf("summary: %+v", ev)
+		}
 	}
 }

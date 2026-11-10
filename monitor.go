@@ -493,11 +493,112 @@ func afterRecv(ch <-chan kernelRecord, ok bool) <-chan kernelRecord {
 	return ch
 }
 
-// monitorLoop is the live monitor. Two sources feed it: the poll of the
-// socket table every monitorInterval, and — when the kernel source is
-// running (records non-nil) — a record for every TCP connection as it
-// happens, from which it learns about the ones too brief for the poll.
-// Everything here runs on this one goroutine.
+// liveMonitor is the state of the live monitor. Two sources feed it: the
+// poll of the socket table every monitorInterval, and — when the kernel
+// source is running — a record for every TCP connection as it happens, from
+// which it learns about the ones too brief for the poll. It belongs to the
+// goroutine that runs monitorLoop: no locks, no other callers.
+type liveMonitor struct {
+	prev      map[connKey]gnet.ConnectionStat // the previous poll
+	knownPIDs map[int32]time.Time
+	lastPrune time.Time
+	// Listening ports: on the very first run whatever is already listening is
+	// the baseline; from then on anything not in it is news — including what
+	// started listening while the monitor was not running (newlisten.go).
+	listeners     *listenWatch
+	seedListeners bool
+	// Brief connections (shortconn.go).
+	tracker     *shortTracker
+	grouper     *shortGrouper
+	lastDropLog time.Time
+}
+
+// newLiveMonitor starts from what was open when the monitor did: none of it
+// is news, and the binaries behind it are the baseline.
+func newLiveMonitor(first map[connKey]gnet.ConnectionStat, volume bool) *liveMonitor {
+	m := &liveMonitor{prev: first, knownPIDs: map[int32]time.Time{}, lastPrune: time.Now(),
+		listeners: newListenWatch(), tracker: newShortTracker(procNameExe, volume), grouper: newShortGrouper(),
+		lastDropLog: time.Now()}
+	m.seedListeners = m.listeners.empty()
+	seen := time.Now()
+	for _, c := range first {
+		m.knownPIDs[c.Pid] = seen
+		if exe := describe(c).Exe; exe != "" {
+			baselineSeen(exe, fileHash(exe))
+		}
+	}
+	return m
+}
+
+// poll is one pass over the socket table.
+func (m *liveMonitor) poll(conns []gnet.ConnectionStat, at time.Time) {
+	snap := snapshotOf(conns)
+	if at.Sub(m.lastPrune) > 24*time.Hour {
+		m.lastPrune = at
+		pruneEvents()
+	}
+	// Refresh the per-process traffic rates. Only processes holding a socket
+	// are polled, which is exactly the set in the snapshot.
+	sampleProcessIO(snap)
+	now := float64(at.UnixNano()) / 1e9
+	wl := whitelist()
+	// Spawn chain, credential access, anomalous executable memory: alerted
+	// here, not only scored when someone renders the table (localsignals.go).
+	checkLocalSignals(snap, wl, at)
+	announceListeners(m.listeners.fresh(listenersOf(conns), procNameExe, m.seedListeners), wl)
+	m.seedListeners = false
+
+	for k, c := range snap {
+		if _, ok := m.prev[k]; ok {
+			continue
+		}
+		ev := describe(c)
+		announceConn(connSighting{ev: ev, remoteIP: c.Raddr.IP,
+			newProc: c.Pid > 0 && m.knownPIDs[c.Pid].IsZero(), muted: wl[ev.Exe]}, now)
+	}
+
+	for k, c := range m.prev {
+		if _, ok := snap[k]; !ok {
+			ev := describe(c)
+			ev.Kind = "closed"
+			publish(ev)
+		}
+	}
+
+	m.prev = snap
+	for _, c := range snap {
+		m.knownPIDs[c.Pid] = at
+	}
+	for pid, seen := range m.knownPIDs {
+		if at.Sub(seen) > knownPIDTTL {
+			delete(m.knownPIDs, pid)
+		}
+	}
+
+	// What the poll can see is no longer the tracker's; what the grouper
+	// counted in silence gets its one line when its window closes.
+	m.tracker.polled(conns, at)
+	for _, s := range m.grouper.flush(at) {
+		publishShortSummary(s)
+	}
+	if at.Sub(m.lastDropLog) >= time.Minute {
+		m.lastDropLog = at
+		if n := m.tracker.dropped(); n > 0 {
+			log.Printf("[short] %d connections outside the poll's view (another network namespace) were not shown as brief", n)
+		}
+	}
+}
+
+// record takes one record from the kernel.
+func (m *liveMonitor) record(r kernelRecord, at time.Time) {
+	if c, isBrief := m.tracker.record(r, at); isBrief {
+		announceBrief(c, m.grouper, m.knownPIDs, whitelist(), at)
+	}
+}
+
+// monitorLoop runs the live monitor: the poll every monitorInterval and,
+// when the kernel source is running (records non-nil), its records as they
+// arrive.
 func monitorLoop(records <-chan kernelRecord, volume bool) {
 	prev := snapshot()
 	for prev == nil {
@@ -507,88 +608,7 @@ func monitorLoop(records <-chan kernelRecord, volume bool) {
 		time.Sleep(monitorInterval)
 		prev = snapshot()
 	}
-	knownPIDs := map[int32]time.Time{}
-	seen := time.Now()
-	for _, c := range prev {
-		knownPIDs[c.Pid] = seen
-		if exe := describe(c).Exe; exe != "" {
-			baselineSeen(exe, fileHash(exe))
-		}
-	}
-	lastPrune := time.Now()
-	// Listening ports: on the very first run whatever is already listening is
-	// the baseline; from then on anything not in it is news — including what
-	// started listening while the monitor was not running (newlisten.go).
-	listeners := newListenWatch()
-	seedListeners := listeners.empty()
-	// Brief connections (shortconn.go).
-	tracker := newShortTracker(procNameExe, volume)
-	grouper := newShortGrouper()
-	lastDropLog := time.Now()
-
-	// poll is one pass over the socket table.
-	poll := func() {
-		conns, err := gnet.Connections("inet")
-		if err != nil {
-			return
-		}
-		snap := snapshotOf(conns)
-		if time.Since(lastPrune) > 24*time.Hour {
-			lastPrune = time.Now()
-			pruneEvents()
-		}
-		// Refresh the per-process traffic rates. Only processes holding a socket
-		// are polled, which is exactly the set in the snapshot.
-		sampleProcessIO(snap)
-		now := float64(time.Now().UnixNano()) / 1e9
-		wl := whitelist()
-		// Spawn chain, credential access, anomalous executable memory: alerted
-		// here, not only scored when someone renders the table (localsignals.go).
-		checkLocalSignals(snap, wl, time.Now())
-		announceListeners(listeners.fresh(listenersOf(conns), procNameExe, seedListeners), wl)
-		seedListeners = false
-
-		for k, c := range snap {
-			if _, ok := prev[k]; ok {
-				continue
-			}
-			ev := describe(c)
-			announceConn(connSighting{ev: ev, remoteIP: c.Raddr.IP,
-				newProc: c.Pid > 0 && knownPIDs[c.Pid].IsZero(), muted: wl[ev.Exe]}, now)
-		}
-
-		for k, c := range prev {
-			if _, ok := snap[k]; !ok {
-				ev := describe(c)
-				ev.Kind = "closed"
-				publish(ev)
-			}
-		}
-
-		prev = snap
-		now2 := time.Now()
-		for _, c := range snap {
-			knownPIDs[c.Pid] = now2
-		}
-		for pid, at := range knownPIDs {
-			if now2.Sub(at) > knownPIDTTL {
-				delete(knownPIDs, pid)
-			}
-		}
-
-		// What the poll can see is no longer the tracker's; what the grouper
-		// counted in silence gets its one line when its window closes.
-		tracker.polled(conns, now2)
-		for _, s := range grouper.flush(now2) {
-			publishShortSummary(s)
-		}
-		if now2.Sub(lastDropLog) >= time.Minute {
-			lastDropLog = now2
-			if n := tracker.dropped(); n > 0 {
-				log.Printf("[short] %d connections outside the poll's view (another network namespace) were not shown as brief", n)
-			}
-		}
-	}
+	m := newLiveMonitor(prev, volume)
 
 	timer := time.NewTimer(monitorInterval)
 	for {
@@ -597,11 +617,11 @@ func monitorLoop(records <-chan kernelRecord, volume bool) {
 			if records = afterRecv(records, ok); records == nil {
 				continue
 			}
-			if c, isBrief := tracker.record(r, time.Now()); isBrief {
-				announceBrief(c, grouper, knownPIDs, whitelist(), time.Now())
-			}
+			m.record(r, time.Now())
 		case <-timer.C:
-			poll()
+			if conns, err := gnet.Connections("inet"); err == nil {
+				m.poll(conns, time.Now())
+			}
 			timer.Reset(monitorInterval) // three seconds after the pass ends, as before
 		}
 	}
