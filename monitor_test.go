@@ -4,6 +4,7 @@ import (
 	"os"
 	"strings"
 	"testing"
+	"time"
 )
 
 // The monitor hides its own PID, but the subprocesses the tool itself starts
@@ -57,5 +58,56 @@ func TestIntelAlertLevels(t *testing.T) {
 		if tc.reason != "" && (len(reasons) == 0 || !strings.Contains(strings.Join(reasons, ", "), tc.reason)) {
 			t.Errorf("%s: reasons %v lack %q", tc.name, reasons, tc.reason)
 		}
+	}
+}
+
+// The three high-precision local signals — a spawn chain that should never
+// happen, a foreign process holding a credential store, executable memory from
+// a memfd — were only computed when somebody rendered the table. With the
+// monitor running as a service and nobody watching, a macro launching a
+// payload raised nothing. localSignals is the decision, shared with the live
+// monitor.
+func TestLocalSignals(t *testing.T) {
+	keys := func(rs []reason) string {
+		var k []string
+		for _, r := range rs {
+			k = append(k, r.key+":"+strings.Join(r.args, ","))
+		}
+		return strings.Join(k, " ")
+	}
+	macro := []Ancestor{{PID: 10, Name: "WINWORD.EXE"}, {PID: 4, Name: "explorer.exe"}}
+	if got := keys(localSignals("powershell.exe", macro, nil)); got != "spawn:winword.exe → powershell.exe" {
+		t.Errorf("macro chain: %q", got)
+	}
+	scan := &procScan{files: []string{"browser: /home/x/.config/google-chrome/Default/Login Data", "ssh: /home/x/.ssh/id_ed25519"}, scored: 2,
+		execMap: []string{"memfd: /memfd:payload (deleted) (r-xp)"}, media: []string{"media: /dev/video0"}}
+	if got := keys(localSignals("updater", nil, scan)); got != "creds:2 execmap:1" {
+		t.Errorf("creds + execmap: %q", got)
+	}
+	// Camera/microphone are context, never a signal; a clean process has none.
+	if got := localSignals("zoom", []Ancestor{{PID: 1, Name: "systemd"}}, &procScan{media: []string{"media: /dev/video0"}}); len(got) != 0 {
+		t.Errorf("media alone must not alert: %v", got)
+	}
+	if got := localSignals("bash", []Ancestor{{PID: 9, Name: "konsole"}}, nil); len(got) != 0 {
+		t.Errorf("a user shell under a terminal is normal: %v", got)
+	}
+}
+
+// One alert per process and signal, not one per monitor tick; a PID that is
+// reused after the entry expired alerts again.
+func TestLocalAlertDedupe(t *testing.T) {
+	var d localAlertDedupe
+	t0 := time.Now()
+	if !d.fresh(42, "spawn", t0) {
+		t.Fatal("first sighting must alert")
+	}
+	if d.fresh(42, "spawn", t0.Add(3*time.Second)) || d.fresh(42, "spawn", t0.Add(30*time.Minute)) {
+		t.Error("the same signal on the same process must not repeat")
+	}
+	if !d.fresh(42, "creds", t0.Add(4*time.Second)) || !d.fresh(43, "spawn", t0.Add(4*time.Second)) {
+		t.Error("another signal, or another process, is a new alert")
+	}
+	if !d.fresh(42, "spawn", t0.Add(knownPIDTTL+31*time.Minute)) {
+		t.Error("after the entry expires (PID reuse) it alerts again")
 	}
 }

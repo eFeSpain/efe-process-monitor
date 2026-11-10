@@ -310,6 +310,9 @@ func monitorLoop() {
 		sampleProcessIO(snap)
 		now := float64(time.Now().UnixNano()) / 1e9
 		wl := whitelist()
+		// Spawn chain, credential access, anomalous executable memory: alerted
+		// here, not only scored when someone renders the table (localsignals.go).
+		checkLocalSignals(snap, wl, time.Now())
 
 		for k, c := range snap {
 			if _, ok := prev[k]; ok {

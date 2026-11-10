@@ -6,6 +6,18 @@ Versions follow [Semantic Versioning](https://semver.org/).
 
 ---
 
+## [Unreleased]
+
+### Added
+- **Local signals alert live.** A spawn chain that should never happen (a
+  document or a browser launching a script host, a web server launching a
+  shell), a foreign process holding a credential store or an input device,
+  and executable memory from a memfd, a staging directory or a deleted file
+  were only computed when the table was rendered. The monitor loop now checks
+  every process that holds a socket — when it appears and once a minute — and
+  raises a red alert with a desktop notification, once per process and signal.
+  With the monitor running as a service, nobody has to be looking.
+
 ## [0.5.0] — 2026-11-09
 
 ### Security
