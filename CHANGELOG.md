@@ -66,6 +66,12 @@ Versions follow [Semantic Versioning](https://semver.org/).
   so an IPv6 connection into a hijacked netblock never scored.
 
 ### Changed
+- **Browser sessions survive a restart.** With the monitor running as a
+  service, a reboot or an update turned every open dashboard into the gate
+  page (or the login). Live sessions are now kept in `efemon.db` — by the
+  SHA-256 of their token, never the token, so the file holds nothing usable
+  as a cookie. Logging out, changing or removing the password and expiry end
+  them on disk too.
 - **Blocking an IP blocks both directions.** It was outbound only, so a
   blocked host could still connect to anything listening on the machine.
   Blocks saved by an earlier version get their inbound rule when the monitor

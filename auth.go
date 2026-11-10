@@ -2,6 +2,7 @@ package main
 
 import (
 	"crypto/rand"
+	"crypto/sha256"
 	"crypto/subtle"
 	"encoding/base64"
 	"encoding/hex"
@@ -45,6 +46,8 @@ var errPwTooShort = errors.New("password too short")
 var (
 	authMu   sync.RWMutex
 	authHash string // bcrypt hash of the access password ("" = login disabled)
+	// sessions is keyed by sessionKey(token), never by the token itself, and
+	// mirrored in the database so a restart does not log every browser out.
 	sessions = map[string]time.Time{}
 
 	// Brute-force backoff is tracked per client IP, not globally: a global
@@ -179,6 +182,7 @@ func setAuthPassword(pw string) error {
 	authMu.Lock()
 	defer authMu.Unlock()
 	sessions = map[string]time.Time{} // force re-login
+	dbClearSessions()                 // …after a restart too
 	if pw == "" {
 		authHash = ""
 		writeEnv(map[string]string{"AUTH_HASH": ""})
@@ -265,6 +269,7 @@ func newSession(ttl time.Duration) string {
 		return ""
 	}
 	tok := hex.EncodeToString(b)
+	key := sessionKey(tok)
 	authMu.Lock()
 	// Expired sessions were only dropped when someone presented them again, so
 	// abandoned ones accumulated for the life of the process. Sweep on mint:
@@ -275,25 +280,56 @@ func newSession(ttl time.Duration) string {
 			delete(sessions, t)
 		}
 	}
-	sessions[tok] = now.Add(ttl)
+	exp := now.Add(ttl)
+	sessions[key] = exp
 	authMu.Unlock()
+	dbPruneSessions(now)
+	dbSaveSession(key, exp)
 	return tok
+}
+
+// sessionKey is what the store knows a session by: the SHA-256 of its token.
+// The token is 256 random bits, so the hash cannot be turned back into a
+// cookie — which is the point of persisting this and not the token: reading
+// efemon.db does not hand out a working session.
+func sessionKey(tok string) string {
+	sum := sha256.Sum256([]byte(tok))
+	return hex.EncodeToString(sum[:])
+}
+
+// loadSessions brings back the sessions that were live when the monitor last
+// stopped. With the monitor running as a service, a reboot or an update used
+// to turn every open dashboard into the gate page (or the login). Called
+// once at start-up, after the database is open.
+func loadSessions() {
+	now := time.Now()
+	dbPruneSessions(now)
+	saved := dbLoadSessions()
+	authMu.Lock()
+	for k, exp := range saved {
+		if now.Before(exp) {
+			sessions[k] = exp
+		}
+	}
+	authMu.Unlock()
 }
 
 func validSession(tok string) bool {
 	if tok == "" {
 		return false
 	}
+	key := sessionKey(tok)
 	authMu.RLock()
-	exp, ok := sessions[tok]
+	exp, ok := sessions[key]
 	authMu.RUnlock()
 	if !ok {
 		return false
 	}
 	if time.Now().After(exp) {
 		authMu.Lock()
-		delete(sessions, tok)
+		delete(sessions, key)
 		authMu.Unlock()
+		dbDeleteSession(key)
 		return false
 	}
 	return true
@@ -566,9 +602,11 @@ func handleLogout(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if c, err := r.Cookie("sid"); err == nil {
+		key := sessionKey(c.Value)
 		authMu.Lock()
-		delete(sessions, c.Value)
+		delete(sessions, key)
 		authMu.Unlock()
+		dbDeleteSession(key)
 	}
 	// Same attributes as the cookie being replaced, so the browser reliably
 	// overwrites it rather than keeping both.

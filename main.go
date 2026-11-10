@@ -186,7 +186,8 @@ func main() {
 	listenAddr.Store(os.Getenv("LISTEN_ADDR"))
 
 	initDB()
-	loadState() // seed session whitelist/blocked from the DB
+	loadState()    // seed session whitelist/blocked from the DB
+	loadSessions() // browsers let in before the restart stay in (auth.go)
 	elevated = isElevated()
 	reapplyBlocks() // Linux: iptables/nft rules do not survive a reboot
 	tmpl = template.Must(template.New("").Funcs(funcMap).ParseFS(tmplFS, "web/templates/*.html"))

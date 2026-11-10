@@ -35,6 +35,9 @@ CREATE TABLE IF NOT EXISTS baseline    (exe TEXT PRIMARY KEY, first_seen TEXT);
 CREATE TABLE IF NOT EXISTS baseline_hash (exe TEXT, hash TEXT, first_seen TEXT, PRIMARY KEY (exe, hash));
 -- Who has been seen listening on what (newlisten.go): program + protocol/port.
 CREATE TABLE IF NOT EXISTS listen_baseline (key TEXT PRIMARY KEY, first_seen TEXT);
+-- Live browser sessions, by the SHA-256 of their token (auth.go): they survive
+-- a restart, and the file never holds something usable as a cookie.
+CREATE TABLE IF NOT EXISTS sessions (token_hash TEXT PRIMARY KEY, expires INTEGER);
 CREATE TABLE IF NOT EXISTS whitelist   (exe TEXT PRIMARY KEY, added TEXT);
 CREATE TABLE IF NOT EXISTS ip_whitelist(ip TEXT PRIMARY KEY, added TEXT);
 CREATE TABLE IF NOT EXISTS blocked     (ip TEXT PRIMARY KEY, at TEXT, report TEXT);
@@ -357,6 +360,56 @@ func baselineSeen(exe, hash string) (seen, changed bool) {
 	default:
 		return false, false
 	}
+}
+
+// ── Sessions (see auth.go) ───────────────────────────────────────────────────
+//
+// db is nil until initDB: a session minted before that (or in a test that
+// never opens a database) simply is not persisted.
+
+func dbSaveSession(key string, exp time.Time) {
+	if db != nil {
+		db.Exec("INSERT OR REPLACE INTO sessions VALUES (?,?)", key, exp.Unix())
+	}
+}
+
+func dbDeleteSession(key string) {
+	if db != nil {
+		db.Exec("DELETE FROM sessions WHERE token_hash=?", key)
+	}
+}
+
+func dbClearSessions() {
+	if db != nil {
+		db.Exec("DELETE FROM sessions")
+	}
+}
+
+func dbPruneSessions(now time.Time) {
+	if db != nil {
+		db.Exec("DELETE FROM sessions WHERE expires <= ?", now.Unix())
+	}
+}
+
+func dbLoadSessions() map[string]time.Time {
+	out := map[string]time.Time{}
+	if db == nil {
+		return out
+	}
+	rows, err := db.Query("SELECT token_hash, expires FROM sessions")
+	if err != nil {
+		return out
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var k string
+		var exp int64
+		if rows.Scan(&k, &exp) == nil {
+			out[k] = time.Unix(exp, 0)
+		}
+	}
+	rowsDone(rows, "sessions")
+	return out
 }
 
 // dbListenBaseline loads every program+port ever seen listening.
