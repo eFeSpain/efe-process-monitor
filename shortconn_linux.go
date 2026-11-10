@@ -37,7 +37,12 @@ const ringBufSize = 1 << 18
 
 // openShortConnSource loads the program, attaches it and opens the reader.
 // Nothing is left behind on failure.
-func openShortConnSource() (src *shortConnSource, err error) {
+func openShortConnSource() (*shortConnSource, error) { return openShortConnSourceSized(ringBufSize) }
+
+// openShortConnSourceSized is openShortConnSource with a ring buffer of the
+// given size (a power of two, at least a page): the tests use a small one to
+// see what happens when it fills.
+func openShortConnSourceSized(ringBytes uint32) (src *shortConnSource, err error) {
 	_ = rlimit.RemoveMemlock() // kernels before 5.11 charge BPF memory to RLIMIT_MEMLOCK
 	// Only "not supported" means an old kernel; any other answer from the
 	// probe (no privileges, a locked-down kernel) is reported as it is.
@@ -61,7 +66,7 @@ func openShortConnSource() (src *shortConnSource, err error) {
 			s.Close()
 		}
 	}()
-	if s.events, err = ebpf.NewMap(&ebpf.MapSpec{Name: "efemon_events", Type: ebpf.RingBuf, MaxEntries: ringBufSize}); err != nil {
+	if s.events, err = ebpf.NewMap(&ebpf.MapSpec{Name: "efemon_events", Type: ebpf.RingBuf, MaxEntries: ringBytes}); err != nil {
 		return nil, fmt.Errorf("ring buffer: %w", err)
 	}
 	if s.drops, err = ebpf.NewMap(&ebpf.MapSpec{Name: "efemon_drops", Type: ebpf.Array, KeySize: 4, ValueSize: 8, MaxEntries: 1}); err != nil {
@@ -99,6 +104,7 @@ func readTracepointFormat() (string, error) {
 	var err error
 	for _, dir := range []string{"/sys/kernel/tracing", "/sys/kernel/debug/tracing"} {
 		var b []byte
+		// #nosec G304 -- one of the two fixed tracefs mount points above, nothing from outside
 		if b, err = os.ReadFile(dir + "/events/sock/inet_sock_set_state/format"); err == nil {
 			return string(b), nil
 		}

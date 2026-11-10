@@ -4,6 +4,7 @@ package main
 
 import (
 	"fmt"
+	"net"
 	"os"
 	"testing"
 
@@ -17,7 +18,18 @@ import (
 // powers the VM off.
 // Run any other way, it is the ordinary test main.
 func TestMain(m *testing.M) {
-	if os.Getpid() != 1 {
+	// A kernel test needs a connection made by another process: it runs
+	// this same binary with an address to dial, and that is all it does.
+	if addr := os.Getenv(dialAndExit); addr != "" {
+		if c, err := net.Dial("tcp", addr); err == nil {
+			c.Close()
+		}
+		os.Exit(0)
+	}
+	// PID 1 alone is not enough to take over a machine: a test binary used
+	// as a container's entrypoint is PID 1 too. The script that builds the
+	// VM leaves a marker in its initramfs.
+	if _, err := os.Stat(vmMarker); os.Getpid() != 1 || err != nil {
 		os.Exit(m.Run())
 	}
 	if os.Getenv(vmReady) == "" {
@@ -37,11 +49,16 @@ func TestMain(m *testing.M) {
 	os.Exit(code) // not reached if the power-off worked
 }
 
-const vmReady = "EFEMON_VMTEST_READY"
+const (
+	vmReady     = "EFEMON_VMTEST_READY"
+	vmMarker    = "/efemon-vmtest"
+	dialAndExit = "EFEMON_TEST_DIAL"
+)
 
 // vmPrepare does what an init system would have done before any program ran.
 func vmPrepare() {
 	for _, mnt := range []struct{ src, dir, fs string }{
+		{"devtmpfs", "/dev", "devtmpfs"}, // /dev/null, for the helper process a test starts
 		{"proc", "/proc", "proc"},
 		{"sysfs", "/sys", "sysfs"},
 		{"tracefs", "/sys/kernel/tracing", "tracefs"},

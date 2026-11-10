@@ -3,6 +3,7 @@
 package main
 
 import (
+	"encoding/binary"
 	"errors"
 	"io"
 	"net"
@@ -12,6 +13,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"golang.org/x/sys/unix"
 )
 
 // Kernel tests: they load the eBPF program into the running kernel and need
@@ -434,5 +437,247 @@ func TestKernelVolume(t *testing.T) {
 	}
 	if recs[0].Sent != 0 || recs[1].Sent != 0 || recs[0].Recv != 0 || recs[1].Recv != 0 {
 		t.Errorf("only the close carries byte counts: %+v", recs[:2])
+	}
+}
+
+// Review: every kernel test made its connections from the test process
+// itself. The point of the feature is naming *another* process — including
+// one that is gone by the time anyone asks who it was.
+func TestKernelOtherProcess(t *testing.T) {
+	src := openTestSource(t)
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer ln.Close()
+	go func() {
+		for {
+			c, err := ln.Accept()
+			if err != nil {
+				return
+			}
+			c.Close()
+		}
+	}()
+	port := ln.Addr().(*net.TCPAddr).AddrPort().Port()
+
+	cmd := command(os.Args[0])
+	cmd.Env = append(os.Environ(), dialAndExit+"="+ln.Addr().String())
+	if err := cmd.Run(); err != nil {
+		t.Fatalf("the helper process: %v", err)
+	}
+	child := uint32(cmd.Process.Pid)
+
+	recs := collect(t, src, []uint16{port}, func(recs []kernelRecord) bool {
+		for _, r := range recs {
+			if r.Kind == recStart && r.PID == child {
+				return true
+			}
+		}
+		return false
+	})
+	comm, _ := os.ReadFile("/proc/self/comm")
+	found := false
+	for _, r := range recs {
+		if r.Kind == recStart && r.Remote.Port() == port {
+			found = true
+			if r.PID != child || r.PID == uint32(os.Getpid()) || r.Comm != strings.TrimSpace(string(comm)) {
+				t.Errorf("start: pid %d comm %q, want the helper's pid %d and comm %q", r.PID, r.Comm, child, strings.TrimSpace(string(comm)))
+			}
+		}
+	}
+	if !found {
+		t.Fatalf("no start record for the helper's connection: %+v", recs)
+	}
+	// The helper has exited: asking the system who it was gets nothing, and
+	// the name the kernel recorded is all there is.
+	if name, exe := procNameExe(int32(child)); name != "N/A" || exe != "" {
+		t.Errorf("the helper is gone, yet procNameExe says %q %q", name, exe)
+	}
+}
+
+// Review: nothing made the kernel buffer overflow. When it does, records
+// are lost, the loss is counted, and reading carries on.
+func TestKernelLostRecordsAreCounted(t *testing.T) {
+	requireKernelTest(t)
+	src, err := openShortConnSourceSized(4096) // room for some thirty records
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer src.Close()
+	for i := 0; i < 40; i++ { // five records each, none read
+		exchange(t, "127.0.0.1:0", 0, 0)
+	}
+	lost := src.lost()
+	if lost == 0 {
+		t.Fatal("two hundred records into a buffer for thirty, and none counted as lost")
+	}
+	// What did fit is still readable, and new records keep coming.
+	src.setDeadline(time.Now().Add(time.Second))
+	n := 0
+	for {
+		if _, err := src.next(); err != nil {
+			break
+		}
+		n++
+	}
+	if n == 0 {
+		t.Error("nothing readable after the overflow")
+	}
+	client, server := exchange(t, "127.0.0.1:0", 0, 0)
+	isClient := func(r kernelRecord) bool { return r.Local == client && r.Remote == server }
+	if recs := socketOf(collect(t, src, []uint16{client.Port(), server.Port()}, closedWith(isClient)), isClient); len(recs) != 3 {
+		t.Errorf("after an overflow a new connection must still be reported in full: %v", kinds(recs))
+	}
+	t.Logf("%d records lost, %d read", lost, n)
+}
+
+// Review: with the monitor not reading, the reader goroutine must leave the
+// records in the kernel (where an overflow is counted) rather than queue
+// them without bound; when the monitor reads again, records flow.
+func TestKernelReaderBackPressure(t *testing.T) {
+	requireKernelTest(t)
+	src, err := openShortConnSourceSized(4096)
+	if err != nil {
+		t.Fatal(err)
+	}
+	ch := make(chan kernelRecord, 1) // a monitor that reads nothing
+	go forwardShortConns(src, ch)
+	for i := 0; i < 40; i++ {
+		exchange(t, "127.0.0.1:0", 0, 0)
+	}
+	time.Sleep(200 * time.Millisecond)
+	if src.lost() == 0 {
+		t.Error("with nobody reading, the overflow must happen in the kernel buffer and be counted")
+	}
+	if len(ch) != 1 {
+		t.Errorf("the channel holds %d records, want it full at 1 and the reader blocked", len(ch))
+	}
+	// The monitor comes back.
+	deadline := time.After(3 * time.Second)
+	for got := 0; got < 10; {
+		select {
+		case <-ch:
+			got++
+		case <-deadline:
+			t.Fatalf("only %d records after the monitor resumed reading", got)
+		}
+	}
+	if code, _ := shortConnStatus(); code == "stopped" {
+		t.Error("the reader gave up")
+	}
+}
+
+// loopbackAlias gives lo a second, routable-looking address (TEST-NET-1) for
+// the length of a test: the VM has no other interface, and the monitor does
+// not follow loopback addresses.
+func loopbackAlias(t *testing.T) string {
+	t.Helper()
+	const alias = "192.0.2.1"
+	lo, err := net.InterfaceByName("lo")
+	if err != nil {
+		t.Skipf("no loopback interface: %v", err)
+	}
+	if err := netlinkAddr(unix.RTM_NEWADDR, lo.Index, netip.MustParseAddr(alias)); err != nil && !errors.Is(err, unix.EEXIST) {
+		t.Skipf("cannot add %s to lo: %v", alias, err)
+	}
+	t.Cleanup(func() { _ = netlinkAddr(unix.RTM_DELADDR, lo.Index, netip.MustParseAddr(alias)) })
+	return alias
+}
+
+// netlinkAddr adds or removes an IPv4 /32 on an interface (rtnetlink).
+func netlinkAddr(msgType uint16, ifindex int, addr netip.Addr) error {
+	fd, err := unix.Socket(unix.AF_NETLINK, unix.SOCK_RAW|unix.SOCK_CLOEXEC, unix.NETLINK_ROUTE)
+	if err != nil {
+		return err
+	}
+	defer unix.Close(fd)
+	ip := addr.As4()
+	ne := binary.NativeEndian
+	msg := make([]byte, 16+8+8+8)
+	ne.PutUint32(msg[0:], uint32(len(msg)))
+	ne.PutUint16(msg[4:], msgType)
+	ne.PutUint16(msg[6:], unix.NLM_F_REQUEST|unix.NLM_F_ACK|unix.NLM_F_CREATE|unix.NLM_F_EXCL)
+	ne.PutUint32(msg[8:], 1)                // sequence
+	msg[16], msg[17] = unix.AF_INET, 32     // ifaddrmsg: family, prefix length
+	msg[19] = unix.RT_SCOPE_UNIVERSE        // scope
+	ne.PutUint32(msg[20:], uint32(ifindex)) // interface
+	for i, attr := range []uint16{unix.IFA_LOCAL, unix.IFA_ADDRESS} {
+		off := 24 + 8*i
+		ne.PutUint16(msg[off:], 8)
+		ne.PutUint16(msg[off+2:], attr)
+		copy(msg[off+4:], ip[:])
+	}
+	if err := unix.Sendto(fd, msg, 0, &unix.SockaddrNetlink{Family: unix.AF_NETLINK}); err != nil {
+		return err
+	}
+	ack := make([]byte, 4096)
+	n, _, err := unix.Recvfrom(fd, ack, 0)
+	if err != nil {
+		return err
+	}
+	if n >= 20 && ne.Uint16(ack[4:]) == unix.NLMSG_ERROR {
+		if code := int32(ne.Uint32(ack[16:])); code != 0 {
+			return unix.Errno(-code)
+		}
+	}
+	return nil
+}
+
+// Review: every kernel test ran over 127.0.0.1, which the reader drops and
+// the tracker discards — so the path a real connection takes was never
+// taken. With a routable-looking address on lo, a connection goes through
+// the reader's filter and the tracker as it would in production, while a
+// loopback one made alongside does not.
+func TestKernelNonLoopbackPath(t *testing.T) {
+	requireKernelTest(t)
+	alias := loopbackAlias(t)
+	shortConnKeepLoopback = false
+	t.Cleanup(func() { shortConnKeepLoopback = true })
+	src, err := openShortConnSource()
+	if err != nil {
+		t.Fatal(err)
+	}
+	ch := make(chan kernelRecord, 256)
+	go forwardShortConns(src, ch)
+
+	loClient, _ := exchange(t, "127.0.0.1:0", 0, 0)
+	client, server := exchange(t, alias+":0", 0, 0)
+
+	// The tracker, with one change from production: the connection is made
+	// by this process, whose traffic it discards as the monitor's own, so
+	// the start is passed on under another PID.
+	const otherPID = 4242
+	tracker := newShortTracker(func(int32) (string, string) { return "vmtest", "/init" }, false)
+	var brief []briefConn
+	deadline := time.After(3 * time.Second)
+	for done := false; !done; {
+		select {
+		case r := <-ch:
+			if r.Local.Port() == loClient.Port() || r.Remote.Port() == loClient.Port() {
+				t.Fatalf("a loopback record reached the monitor: %+v", r)
+			}
+			if r.Kind == recStart {
+				r.PID, r.Name, r.Exe = otherPID, "", ""
+			}
+			if c, ok := tracker.record(r, time.Now()); ok {
+				brief = append(brief, c)
+				done = len(brief) == 2 // the client's side and the accepted side
+			}
+		case <-deadline:
+			done = true
+		}
+	}
+	var out *briefConn
+	for i := range brief {
+		if !brief[i].Inbound {
+			out = &brief[i]
+		}
+	}
+	if out == nil || out.Local != client || out.Remote != server || out.PID != otherPID || out.Failed {
+		t.Fatalf("want the outbound brief connection %v → %v, got %+v", client, server, brief)
+	}
+	if !out.Remote.Addr().Is4() || out.Remote.Addr().IsLoopback() {
+		t.Errorf("remote %v", out.Remote)
 	}
 }

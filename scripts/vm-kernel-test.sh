@@ -27,6 +27,7 @@ mkdir "$tmp/root"
 
 # The test binary is /init: statically linked, no libc, no shell needed.
 CGO_ENABLED=0 go test -c -o "$tmp/root/init" .
+: > "$tmp/root/efemon-vmtest" # tells the binary it is in this VM, not merely PID 1 somewhere
 (cd "$tmp/root" && find . | cpio -o -H newc --quiet) > "$tmp/initramfs.cpio"
 
 set +e
