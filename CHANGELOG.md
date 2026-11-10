@@ -47,10 +47,25 @@ Versions follow [Semantic Versioning](https://semver.org/).
   a small link in the header. The request carries no key and nothing about
   the machine or the version it runs; nothing is downloaded or installed; the
   privacy panel lists it. Off, the monitor never contacts GitHub.
+- **New listening port.** A port that starts accepting connections from the
+  network — a bind shell, a rogue proxy, a forgotten debug server — reached
+  the feed as one more "new connection". The monitor now keeps a baseline of
+  who listens on what (program + protocol/port, on disk) and raises a
+  specific alert, with a notification, for anything outside it: TCP in
+  LISTEN and bound UDP on a non-ephemeral port, on any non-loopback address.
+  Seeded silently the first time; after that a listener that appeared while
+  the monitor was stopped is announced when it starts. All the random high
+  ports of one program count as a single entry.
 - **Spamhaus DROP for IPv6** (`drop_v6.json`): only the IPv4 list was loaded,
   so an IPv6 connection into a hijacked netblock never scored.
 
 ### Fixed
+- **Linux: every unconnected UDP socket was logged as a connection to
+  `0.0.0.0:0`.** The filter that keeps ephemeral UDP binds (one per DNS
+  query) out of the feed and the history looked for an empty remote address,
+  which is how Windows reports them; Linux reports `0.0.0.0:0`. They are
+  filtered on both now, and such a socket is labelled `UDP-BOUND` in the
+  table instead of `UDP`.
 - Ticking *require login* without typing a password did nothing and said
   nothing; it now says a password is needed and that nothing changed.
 - The Settings window had outgrown the screen — neither its title nor *Save*

@@ -54,6 +54,9 @@ var translations = map[string]map[string]string{
 		"priv_when_update":   "solo si activas el aviso de versión nueva",
 		"priv_update_off":    "desactivado",
 
+		"ev_newlisten":    "puerto nuevo a la escucha: %s/%d",
+		"notif_newlisten": "⚠ Puerto nuevo a la escucha",
+
 		"svc_title":              "Arranque con el sistema",
 		"svc_installed":          "instalado y activo",
 		"svc_installed_inactive": "instalado, detenido",
@@ -368,6 +371,9 @@ var translations = map[string]map[string]string{
 		"priv_when_update":   "only if you turn on the new-version notice",
 		"priv_update_off":    "off",
 
+		"ev_newlisten":    "new listening port: %s/%d",
+		"notif_newlisten": "⚠ New listening port",
+
 		"svc_title":              "Run at boot",
 		"svc_installed":          "installed and active",
 		"svc_installed_inactive": "installed, stopped",
@@ -679,6 +685,9 @@ var translations = map[string]map[string]string{
 		"priv_sends_update":  "无 — 仅查询最新发布的版本",
 		"priv_when_update":   "仅在开启新版本提醒时",
 		"priv_update_off":    "已关闭",
+
+		"ev_newlisten":    "新的监听端口：%s/%d",
+		"notif_newlisten": "⚠ 新的监听端口",
 
 		"svc_title":              "随系统启动",
 		"svc_installed":          "已安装且运行中",

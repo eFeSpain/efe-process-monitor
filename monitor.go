@@ -153,6 +153,11 @@ func snapshot() map[connKey]gnet.ConnectionStat {
 	if err != nil {
 		return nil
 	}
+	return snapshotOf(conns)
+}
+
+// snapshotOf keeps the sockets the live monitor follows.
+func snapshotOf(conns []gnet.ConnectionStat) map[connKey]gnet.ConnectionStat {
 	out := map[connKey]gnet.ConnectionStat{}
 	for _, c := range conns {
 		if !trackConn(c) {
@@ -161,7 +166,7 @@ func snapshot() map[connKey]gnet.ConnectionStat {
 		// A UDP socket with no peer is usually an ephemeral bind — every DNS
 		// query opens and closes one — so tracking them here would flood the feed
 		// and the history with noise. Connected UDP (QUIC, UDP C2) is tracked.
-		if isUDP(c) && c.Raddr.IP == "" {
+		if isUDP(c) && !hasPeer(c) {
 			continue
 		}
 		if c.Pid == ownPID || ownChild(c.Pid) { // never monitor our own API traffic, nor our own subprocesses
@@ -269,7 +274,7 @@ func describe(c gnet.ConnectionStat) Event {
 	if c.Laddr.IP != "" {
 		ev.Local = fmt.Sprintf("%s:%d", c.Laddr.IP, c.Laddr.Port)
 	}
-	if c.Raddr.IP != "" {
+	if hasPeer(c) {
 		ev.Remote = fmt.Sprintf("%s:%d", c.Raddr.IP, c.Raddr.Port)
 	}
 	return ev
@@ -299,13 +304,19 @@ func monitorLoop() {
 		}
 	}
 	lastPrune := time.Now()
+	// Listening ports: on the very first run whatever is already listening is
+	// the baseline; from then on anything not in it is news — including what
+	// started listening while the monitor was not running (newlisten.go).
+	listeners := newListenWatch()
+	seedListeners := listeners.empty()
 
 	for {
 		time.Sleep(monitorInterval)
-		snap := snapshot()
-		if snap == nil {
+		conns, err := gnet.Connections("inet")
+		if err != nil {
 			continue
 		}
+		snap := snapshotOf(conns)
 		if time.Since(lastPrune) > 24*time.Hour {
 			lastPrune = time.Now()
 			pruneEvents()
@@ -318,6 +329,8 @@ func monitorLoop() {
 		// Spawn chain, credential access, anomalous executable memory: alerted
 		// here, not only scored when someone renders the table (localsignals.go).
 		checkLocalSignals(snap, wl, time.Now())
+		announceListeners(listeners.fresh(listenersOf(conns), procNameExe, seedListeners), wl)
+		seedListeners = false
 
 		for k, c := range snap {
 			if _, ok := prev[k]; ok {

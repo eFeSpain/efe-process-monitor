@@ -355,6 +355,15 @@ func isLoopback(ip string) bool {
 // isUDP reports whether a socket is a datagram socket.
 func isUDP(c gnet.ConnectionStat) bool { return c.Type == uint32(syscall.SOCK_DGRAM) }
 
+// hasPeer reports whether the socket is connected to something. An unconnected
+// one has no remote address, which Windows reports as "" and Linux as
+// 0.0.0.0:0 (or [::]:0) — checking only for "" let every bound UDP socket on
+// Linux pass for a connection to 0.0.0.0.
+func hasPeer(c gnet.ConnectionStat) bool {
+	ip := c.Raddr.IP
+	return c.Raddr.Port != 0 && ip != "" && ip != "0.0.0.0" && ip != "::" && ip != "*"
+}
+
 // trackConn reports whether a socket belongs in the dashboard: for TCP only the
 // two interesting states, for UDP always (there are no states to filter on).
 func trackConn(c gnet.ConnectionStat) bool {
@@ -368,7 +377,7 @@ func trackConn(c gnet.ConnectionStat) bool {
 // (has a remote address, e.g. QUIC) and a plain bound socket.
 func connStatus(c gnet.ConnectionStat) string {
 	if isUDP(c) {
-		if c.Raddr.IP != "" {
+		if hasPeer(c) {
 			return "UDP"
 		}
 		return "UDP-BOUND"

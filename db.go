@@ -33,6 +33,8 @@ CREATE TABLE IF NOT EXISTS baseline    (exe TEXT PRIMARY KEY, first_seen TEXT);
 -- The path-only table is kept and still written, so a downgrade keeps working
 -- and pre-upgrade rows are adopted instead of re-announced as new.
 CREATE TABLE IF NOT EXISTS baseline_hash (exe TEXT, hash TEXT, first_seen TEXT, PRIMARY KEY (exe, hash));
+-- Who has been seen listening on what (newlisten.go): program + protocol/port.
+CREATE TABLE IF NOT EXISTS listen_baseline (key TEXT PRIMARY KEY, first_seen TEXT);
 CREATE TABLE IF NOT EXISTS whitelist   (exe TEXT PRIMARY KEY, added TEXT);
 CREATE TABLE IF NOT EXISTS ip_whitelist(ip TEXT PRIMARY KEY, added TEXT);
 CREATE TABLE IF NOT EXISTS blocked     (ip TEXT PRIMARY KEY, at TEXT, report TEXT);
@@ -355,6 +357,28 @@ func baselineSeen(exe, hash string) (seen, changed bool) {
 	default:
 		return false, false
 	}
+}
+
+// dbListenBaseline loads every program+port ever seen listening.
+func dbListenBaseline() map[string]bool {
+	out := map[string]bool{}
+	rows, err := db.Query("SELECT key FROM listen_baseline")
+	if err != nil {
+		return out
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var k string
+		if rows.Scan(&k) == nil {
+			out[k] = true
+		}
+	}
+	rowsDone(rows, "listen_baseline")
+	return out
+}
+
+func dbListenAdd(key string) {
+	db.Exec("INSERT OR IGNORE INTO listen_baseline VALUES (?,?)", key, time.Now().Format("2006-01-02 15:04:05"))
 }
 
 // These are the pure SQLite persistence layer. The session-aware public API
