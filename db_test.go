@@ -63,7 +63,7 @@ func TestPruneHostnamesFollowsRetention(t *testing.T) {
 	hostMu.Lock()
 	hostSeen = map[string]map[string]bool{}
 	hostMu.Unlock()
-	eventRetentionDays = 30
+	eventRetentionDays.Store(30)
 	old := time.Now().AddDate(0, 0, -31).Format("2006-01-02 15:04:05")
 	dbSaveHostname("1.1.1.1", "old.example", "dns", old)
 	recordHostname("2.2.2.2", "fresh.example", srcDNS)

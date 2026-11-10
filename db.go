@@ -5,6 +5,8 @@ import (
 	"log"
 	"os"
 	"path/filepath"
+	"strconv"
+	"sync/atomic"
 	"time"
 
 	_ "modernc.org/sqlite"
@@ -112,15 +114,33 @@ func rowsDone(rows *sql.Rows, what string) {
 // eventRetentionDays bounds the forensic history. The events table grows with
 // every connection change; without a cap it grows for as long as the tool runs.
 // 0 disables pruning (keep everything).
-var eventRetentionDays = 30
+// Atomic: Settings writes it while the monitor goroutine prunes.
+var eventRetentionDays atomic.Int64
+
+func init() { eventRetentionDays.Store(30) }
+
+// setEventRetention changes the retention window (days; 0 = keep forever) and
+// persists it as EVENT_RETENTION_DAYS. It takes effect at the next prune
+// (start-up and daily).
+func setEventRetention(n int) {
+	if n < 0 {
+		n = 0
+	}
+	if n > 3650 {
+		n = 3650
+	}
+	eventRetentionDays.Store(int64(n))
+	writeEnv(map[string]string{"EVENT_RETENTION_DAYS": strconv.Itoa(n)})
+}
 
 // pruneEvents drops events older than the retention window and is called at
 // startup and once a day by the monitor loop.
 func pruneEvents() {
-	if eventRetentionDays <= 0 {
+	days := int(eventRetentionDays.Load())
+	if days <= 0 {
 		return
 	}
-	cutoffAt := time.Now().AddDate(0, 0, -eventRetentionDays)
+	cutoffAt := time.Now().AddDate(0, 0, -days)
 	cutoff := float64(cutoffAt.Unix())
 	res, err := db.Exec("DELETE FROM events WHERE epoch < ?", cutoff)
 	if err != nil {
@@ -138,7 +158,7 @@ func pruneEvents() {
 		log.Printf("[!] incremental_vacuum: %v", err)
 	}
 	if n, _ := res.RowsAffected(); n > 0 {
-		log.Printf("[+] histórico purgado: %d eventos con más de %d días", n, eventRetentionDays)
+		log.Printf("[+] histórico purgado: %d eventos con más de %d días", n, days)
 	}
 }
 

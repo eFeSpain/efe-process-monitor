@@ -290,3 +290,52 @@ func TestServiceInstallRefusedInServiceMode(t *testing.T) {
 		t.Errorf("install while running as the service: %d, want 400", w.Code)
 	}
 }
+
+// Ticking "require login" without typing a password used to do nothing and
+// say nothing: the operator believed the panel was protected.
+func TestSettingsEnableLoginNeedsPassword(t *testing.T) {
+	withTempEnv(t)
+	w := jsonPost(handleSettings, "/api/settings", `{"AuthEnabled":true}`)
+	var out map[string]any
+	if err := json.Unmarshal(w.Body.Bytes(), &out); err != nil {
+		t.Fatal(err)
+	}
+	if authEnabled() || out["auth_error"] == nil || out["auth_error"] == "" {
+		t.Errorf("enabling login with no password must be refused with a message, got %v", out["auth_error"])
+	}
+	// With login already on, saving other settings with the box ticked and no
+	// new password is not an error: nothing about the password changes.
+	if err := setAuthPassword("longenough8"); err != nil {
+		t.Fatal(err)
+	}
+	w = jsonPost(handleSettings, "/api/settings", `{"AuthEnabled":true}`)
+	out = map[string]any{}
+	json.Unmarshal(w.Body.Bytes(), &out)
+	if out["auth_error"] != nil || !checkPassword("longenough8") {
+		t.Errorf("keeping the login on must not error: %v", out["auth_error"])
+	}
+}
+
+// The history retention was only reachable by editing .env.
+func TestEventRetentionSetting(t *testing.T) {
+	withTempEnv(t)
+	t.Cleanup(func() { eventRetentionDays.Store(30) })
+	setEventRetention(90)
+	if eventRetentionDays.Load() != 90 || getSettings()["event_retention_days"] != int64(90) {
+		t.Errorf("not applied: %v", getSettings()["event_retention_days"])
+	}
+	setEventRetention(-5)
+	if eventRetentionDays.Load() != 0 {
+		t.Error("negative means keep forever (0)")
+	}
+	setEventRetention(99999)
+	if eventRetentionDays.Load() != 3650 {
+		t.Error("capped at ten years")
+	}
+	if b, _ := os.ReadFile(envPath); !strings.Contains(string(b), "EVENT_RETENTION_DAYS=3650") {
+		t.Errorf(".env: %q", b)
+	}
+	if w := jsonPost(handleSettings, "/api/settings", `{"EventRetentionDays":45}`); w.Code != 200 || eventRetentionDays.Load() != 45 {
+		t.Errorf("via the API: code %d, value %d", w.Code, eventRetentionDays.Load())
+	}
+}

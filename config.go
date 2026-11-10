@@ -42,21 +42,22 @@ func mask(k string) string {
 
 func getSettings() map[string]any {
 	return map[string]any{
-		"vt_configured":      getVTKey() != "",
-		"vt_hint":            mask(getVTKey()),
-		"abuse_configured":   getAbuseKey() != "",
-		"abuse_hint":         mask(getAbuseKey()),
-		"abusech_configured": getAbuseChKey() != "",
-		"abusech_hint":       mask(getAbuseChKey()),
-		"notify_desktop":     notifyDesktop.Load(),
-		"notify_sound":       notifySound.Load(),
-		"persist_whitelist":  persistWhitelist.Load(),
-		"persist_blocks":     persistBlocks.Load(),
-		"refresh_secs":       refreshSecs.Load(),
-		"audit_every_hours":  auditEveryHours.Load(),
-		"auth_enabled":       authEnabled(),
-		"listen_addr":        listenAddr.Load(),
-		"exposed":            listenExposed,
+		"vt_configured":        getVTKey() != "",
+		"vt_hint":              mask(getVTKey()),
+		"abuse_configured":     getAbuseKey() != "",
+		"abuse_hint":           mask(getAbuseKey()),
+		"abusech_configured":   getAbuseChKey() != "",
+		"abusech_hint":         mask(getAbuseChKey()),
+		"notify_desktop":       notifyDesktop.Load(),
+		"notify_sound":         notifySound.Load(),
+		"persist_whitelist":    persistWhitelist.Load(),
+		"persist_blocks":       persistBlocks.Load(),
+		"refresh_secs":         refreshSecs.Load(),
+		"audit_every_hours":    auditEveryHours.Load(),
+		"event_retention_days": eventRetentionDays.Load(),
+		"auth_enabled":         authEnabled(),
+		"listen_addr":          listenAddr.Load(),
+		"exposed":              listenExposed,
 	}
 }
 

@@ -179,7 +179,7 @@ func main() {
 		auditEveryHours.Store(int64(n)) // 0 = scheduled audit off
 	}
 	if n, err := strconv.Atoi(os.Getenv("EVENT_RETENTION_DAYS")); err == nil && n >= 0 {
-		eventRetentionDays = n // 0 = keep forever
+		eventRetentionDays.Store(int64(n)) // 0 = keep forever
 	}
 	loadAuth(os.Getenv("AUTH_HASH"))
 	listenAddr.Store(os.Getenv("LISTEN_ADDR"))
@@ -352,18 +352,19 @@ func handleSettings(w http.ResponseWriter, r *http.Request) {
 	var authErr string
 	if r.Method == "POST" {
 		var body struct {
-			VTKey, AbuseKey  string
-			AbuseChKey       string
-			NotifyDesktop    *bool
-			NotifySound      *bool
-			PersistWhitelist *bool
-			PersistBlocks    *bool
-			RefreshSecs      *int
-			AuditEveryHours  *int
-			AuthEnabled      *bool
-			AuthPassword     *string
-			CurrentPassword  *string
-			ListenAddr       *string
+			VTKey, AbuseKey    string
+			AbuseChKey         string
+			NotifyDesktop      *bool
+			NotifySound        *bool
+			PersistWhitelist   *bool
+			PersistBlocks      *bool
+			RefreshSecs        *int
+			AuditEveryHours    *int
+			EventRetentionDays *int
+			AuthEnabled        *bool
+			AuthPassword       *string
+			CurrentPassword    *string
+			ListenAddr         *string
 		}
 		if !decodeJSON(w, r, &body) {
 			return
@@ -391,6 +392,11 @@ func handleSettings(w http.ResponseWriter, r *http.Request) {
 				} else {
 					http.SetCookie(w, sessionCookie()) // keep the operator logged in
 				}
+			case !authEnabled():
+				// The box is ticked, no password typed, and none is set: nothing
+				// would change, and saying nothing left the operator believing
+				// the panel was now protected.
+				authErr = T["auth_need_pw"]
 			}
 		}
 		if body.NotifyDesktop != nil {
@@ -410,6 +416,9 @@ func handleSettings(w http.ResponseWriter, r *http.Request) {
 		}
 		if body.AuditEveryHours != nil {
 			setAuditEvery(*body.AuditEveryHours)
+		}
+		if body.EventRetentionDays != nil {
+			setEventRetention(*body.EventRetentionDays)
 		}
 		if body.ListenAddr != nil {
 			setListenAddr(*body.ListenAddr)

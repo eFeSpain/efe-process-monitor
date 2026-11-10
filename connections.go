@@ -98,6 +98,7 @@ type Conn struct {
 	Known         string
 	VT            string
 	Undetected    string
+	SHA256        string // of the executable; "" when unreadable (shown with a link to its VirusTotal report)
 	Cached        bool
 	Suspicious    bool // runs from a staging directory (temp, public, /dev/shm)
 	Untrusted     bool // runs from a downloads directory: weak signal
@@ -1142,6 +1143,9 @@ func analyzeConnections(hideSelf bool) []Conn {
 			Sig:         sigMap[r.exe],
 			Whitelist:   wl[r.exe],
 			IPWhitelist: ipwl[r.c.Raddr.IP],
+		}
+		if pathKnown(r.exe) {
+			conn.SHA256 = fileHash(r.exe) // cached by path+mtime+size: the VT pass above already computed it
 		}
 		if conn.RemoteIP != "" && !isPrivateIP(conn.RemoteIP) {
 			conn.Public = true

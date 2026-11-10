@@ -63,6 +63,7 @@ func rowsTestConns() []Conn {
 		Cached:     true, Suspicious: true, SuspPort: false,
 		Blockable: true, Capturable: true, Public: true,
 		IOCName: "cdn.evil-c2.tk", IOCLabel: "Cobalt Strike",
+		SHA256:    "9670902667b25e76747b0f6e07528179ee1b34e6d9c8a495a5b250962a10ee2d",
 		Sig:       Signature{Status: "NotSigned"},
 		Partial:   true,
 		Breakdown: "ruta sospechosa (+25)",
@@ -144,6 +145,7 @@ func TestRowsTemplateExecutes(t *testing.T) {
 		out := sb.String()
 		for _, want := range []string{
 			"suspicious.exe", "UDP", "UDP-BOUND", "Cobalt Strike", "URLhaus", "Mozi", "cdn.evil-c2.tk",
+			"https://www.virustotal.com/gui/file/9670902667b25e76747b0f6e07528179ee1b34e6d9c8a495a5b250962a10ee2d", // the hash, linked to its report
 			`class="udp"`,                // the bound-UDP row must get its own state class
 			"12.5 %", "150 MB", "SYSTEM", // the resource column and its detail line
 			"Back Orifice (RAT) <span class=\"vt-na\"",                           // legacy port label plus the localized note

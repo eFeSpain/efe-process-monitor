@@ -30,8 +30,16 @@ Versions follow [Semantic Versioning](https://semver.org/).
   **new** against the baseline: a Run key, a cron job, a systemd unit, an
   authorized SSH key, a UID-0 account. Each new item once, in the live feed,
   the history and a desktop notification.
+- The executable's **SHA-256** in the process details, linked to its
+  VirusTotal report (the link is followed by your browser, on click).
+- **History retention in ⚙ Settings** (`EVENT_RETENTION_DAYS` was only
+  reachable by editing `.env`).
 - **Spamhaus DROP for IPv6** (`drop_v6.json`): only the IPv4 list was loaded,
   so an IPv6 connection into a hijacked netblock never scored.
+
+### Fixed
+- Ticking *require login* without typing a password did nothing and said
+  nothing; it now says a password is needed and that nothing changed.
 
 ## [0.5.0] — 2026-11-09
 
